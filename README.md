@@ -1,195 +1,107 @@
-# EVENT HQ — BMSIT Operations & Live Control Dashboard
+# EVENT HQ — BMSIT 2026 Tournament Operations Platform
 
-A multi-round college competition event management and live operations dashboard built for **BMSIT**. Orchestrates 32 teams (5 participants per team = 160 participants) through progressive elimination rounds, hidden code hunts, secret agent activities, and the grand finale.
-
----
-
-## 1. Project Overview
-
-EVENT HQ serves as the mission-control console for event organizers, marshals, and judges. 
-
-### Event Tournament Structure
-* **Field**: 32 registered teams, 5 participants each (160 participants total).
-* **Round 1 — The Great Expedition**: Physical checkpoint problem solving & outdoor navigation ($32 \rightarrow 24$ teams qualify).
-* **Round 2 — Cabo**: Tactical card memory and risk deduction ($24 \rightarrow 12$ teams qualify).
-* **Round 3 — The Black Market**: Dynamic resource trading and token asset economy ($12 \rightarrow 8$ teams qualify).
-* **Round 4 — The Legal Battle**: Moot court adversarial debating and judges rubric scoring ($8 \rightarrow$ Finalist teams).
-* **Finale**: Secret agent deduction unmasking, point verification, and Top 3 podium championship awards.
-* **Passive Track**: Campus-wide hidden QR code fragments and undercover secret agent assignments running throughout all rounds.
+Production-grade tournament management and operations dashboard built for **EVENT HQ** at BMSIT 2026. This full-stack repository combines a responsive React/Vite/TypeScript frontend, a FastAPI asynchronous backend, tournament scoring engines across all 5 competition rounds, and automated Google Forms team registration integration.
 
 ---
 
-## 2. Technology Stack
+## 1. Monorepo Architecture
 
-### Current Frontend Stack (Prompt 00 Foundation)
-* **Framework**: [React 18](https://react.dev/) + [Vite 5](https://vitejs.dev/)
-* **Language**: [TypeScript](https://www.typescriptlang.org/) (Strict mode enabled)
-* **Styling**: [Tailwind CSS v3](https://tailwindcss.com/) with custom navy palette
-* **Routing**: [React Router DOM v6](https://reactrouter.com/)
-* **Icons**: [Lucide React](https://lucide.dev/)
-
-### Future Backend Stack (Later Phases)
-* **API**: Python 3.14 + FastAPI
-* **Database**: PostgreSQL with SQLAlchemy ORM (SQLite fallback for local dev)
-* **Live Telemetry**: WebSockets live stream
+```text
+sihnew/
+├── event-dashboard/     # React 18, Vite, TypeScript, Tailwind CSS, Lucide icons, Three.js 3D
+│   ├── src/
+│   │   ├── components/  # Cyberpunk UI, modals, metrics, settings, layout
+│   │   ├── pages/       # Overview, Teams, Participants, Rounds 1-5, Grand Finale, Settings, Register
+│   │   ├── routes/      # React Router route definitions
+│   │   ├── services/    # apiClient, backendApiService, authService, eventService
+│   │   └── types/       # TypeScript contracts, interfaces, and scoring models
+│   └── package.json
+│
+├── backend/             # FastAPI, Python 3.11+, SQLAlchemy 2.0, Pydantic v2, Alembic
+│   ├── app/
+│   │   ├── api/routes/  # auth, dashboard, health, integrations, participants, rounds, settings, teams
+│   │   ├── core/        # config, dependencies, security (bcrypt & JWT)
+│   │   ├── db/          # engine, session factory, declarative base
+│   │   ├── models/      # User, Team, Participant, EventSettings, RegistrationSubmission, RoundModels
+│   │   ├── schemas/     # Pydantic request/response schemas & ApiResponse envelope
+│   │   └── services/    # Business logic: team, participant, round, integration, dashboard
+│   ├── alembic/         # Database migrations
+│   └── requirements.txt
+│
+└── scripts/             # External integration utilities
+    └── google_forms_webhook.js  # Production-ready Google Apps Script for form submissions
+```
 
 ---
 
-## 3. Prerequisites
+## 2. Key Capabilities
 
-* **Node.js**: v18.0.0 or later (Tested on v22.20.0)
-* **npm**: v9.0.0 or later (Tested on 10.9.3)
+* **Tournament Operations & Live Dashboard**: Real-time operations overview with squad status, round progress, dynamic check-ins, and projector views.
+* **Combined Team & Participant Registration**: Register a squad with all 5 members (1 Leader, 4 Members) atomically with intra-form collision checks, duplicate USN/email safeguards, and a 32-squad tournament limit.
+* **Google Forms & External Webhook Integration**:
+  * External teams submit Google Forms or public web registration (`/register`).
+  * **Manual Review Default**: Submissions are queued with status `PENDING` in the Submissions Audit Queue for Organizer inspection and 1-click approval.
+  * **Security**: Webhook endpoint protected by constant-time secret verification (`hmac.compare_digest`), timing-safe authentication, and idempotency deduplication.
+* **5 Tournament Competition Rounds**:
+  1. **Round 1 — Expedition**: Clue hunt tracking, hint penalties, and qualifying leaderboards.
+  2. **Round 2 — Cabo**: Card elimination, placement tracking, and score penalties.
+  3. **Round 3 — Black Market**: Cyber economy, transaction ledger, and code fragments trading.
+  4. **Round 4 — Legal Battle**: Head-to-head debate matchmaking, secret agent deduction, and judge scoring.
+  5. **Grand Finale / Championship**: Multi-criteria weighted judging matrix, agent verdicts, and tiebreak resolution.
+* **Role-Based Access Control (RBAC)**: Distinct permissions for `ORGANIZER`, `MARSHAL`, `JUDGE`, and `PUBLIC_PROJECTOR` with automatic PII masking for unauthenticated viewers.
 
 ---
 
-## 4. Installation & Setup
+## 3. Quick Start
 
-Navigate into the `event-dashboard` directory:
+### Backend (FastAPI on Port 8001)
+
+```bash
+cd backend
+python -m venv .venv
+# Windows:
+..\.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+* API Health Check: `http://127.0.0.1:8001/api/v1/health`
+* Interactive API Documentation: `http://127.0.0.1:8001/docs`
+
+### Frontend (React/Vite on Port 5173)
 
 ```bash
 cd event-dashboard
-```
-
-Install all required frontend dependencies:
-
-```bash
 npm install
-```
-
-### Environment Variable Setup
-
-Copy the template `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Default configuration variables in `.env`:
-```env
-VITE_API_BASE_URL=http://localhost:8000
-VITE_EVENT_NAME="EVENT HQ · BMSIT 2026"
-VITE_ENABLE_MOCK_DATA=true
-```
-
----
-
-## 5. Running the Application
-
-### Development Server
-Start the local Vite dev server:
-
-```bash
 npm run dev
 ```
 
-Open your browser at: `http://localhost:5173`
-
-### Production Build & Type-Check
-Verify compilation and produce optimized assets:
-
-```bash
-npm run build
-```
-
-Preview the production build locally:
-
-```bash
-npm run preview
-```
+* Dashboard UI: `http://localhost:5173/`
+* Public Squad Registration: `http://localhost:5173/register`
 
 ---
 
-## 6. Project Folder Structure
+## 4. Google Forms Setup
 
-```text
-event-dashboard/
-├── public/
-├── src/
-│   ├── assets/               # Static assets
-│   ├── components/
-│   │   ├── layout/           # Persistent layout wrappers
-│   │   │   ├── MainLayout.tsx
-│   │   │   ├── Sidebar.tsx   # Dark navy responsive sidebar (11 routes)
-│   │   │   └── TopNavbar.tsx # Header with search, status, profile, alerts
-│   │   ├── ui/               # Reusable atomic UI components
-│   │   │   ├── Badge.tsx     # Standardized status badges
-│   │   │   ├── Banner.tsx    # Demo mode indicator banner
-│   │   │   ├── Button.tsx    # Accessible multi-variant buttons
-│   │   │   ├── Card.tsx      # Clean rounded cards with subtle borders
-│   │   │   ├── EmptyState.tsx
-│   │   │   └── LoadingSkeleton.tsx # Shimmer skeleton states
-│   │   └── dashboard/        # Dashboard widgets
-│   │       ├── MetricCard.tsx
-│   │       ├── QuickActionsPanel.tsx
-│   │       ├── RecentActivityFeed.tsx
-│   │       └── RoundProgressCard.tsx
-│   ├── pages/                # Navigable application pages
-│   │   ├── OverviewPage.tsx  # Mission control overview & KPIs
-│   │   ├── TeamsPage.tsx     # 32 teams table & check-in search
-│   │   ├── ParticipantsPage.tsx # 160 participants directory
-│   │   ├── RoundsPage.tsx    # 5 rounds progression breakdown
-│   │   ├── ScoreboardPage.tsx # Live leaderboard & cutoff tracker
-│   │   ├── SecretAgentsPage.tsx # Confidential agent security console
-│   │   ├── CodeFragmentsPage.tsx # QR code hunt checkpoint ledger
-│   │   ├── BlackMarketPage.tsx # Round 3 trading floor preview
-│   │   ├── JudgesPage.tsx    # Round 4 moot court portal preview
-│   │   ├── FinalePage.tsx    # Awards podium & unmasking preview
-│   │   ├── SettingsPage.tsx  # API connection & event parameters
-│   │   └── NotFoundPage.tsx  # 404 fallback page
-│   ├── routes/               # Centralized React Router configuration
-│   │   └── index.tsx
-│   ├── services/             # Service abstraction layer
-│   │   ├── apiConfig.ts      # Base URL & environment configuration
-│   │   ├── apiClient.ts      # HTTP fetch client with error handling
-│   │   └── eventService.ts   # Centralized data service with mock switch
-│   ├── types/                # Strict domain TypeScript models
-│   │   ├── api.ts            # ApiResponse, PaginatedResponse, ApiError
-│   │   ├── dashboard.ts      # Metric and activity log types
-│   │   ├── round.ts          # RoundInfo, progression steps
-│   │   ├── team.ts           # Team, Participant, statuses
-│   │   └── index.ts
-│   ├── data/
-│   │   └── mockData.ts       # 32 teams, 160 students, 5 rounds mock data
-│   ├── utils/
-│   │   ├── cn.ts             # Tailwind classnames merge utility
-│   │   └── formatters.ts     # Timestamps, USN formatting, ordinals
-│   ├── App.tsx               # Root app router
-│   ├── main.tsx              # React DOM entry
-│   └── index.css             # Tailwind base & Inter typography
-├── .env.example
-├── .gitignore
-├── index.html
-├── package.json
-├── postcss.config.js
-├── tailwind.config.js
-├── tsconfig.json
-├── tsconfig.node.json
-├── vite.config.ts
-└── README.md
-```
+1. In your Google Form / Google Sheet, navigate to **Extensions > Apps Script**.
+2. Paste the script from [`scripts/google_forms_webhook.js`](scripts/google_forms_webhook.js).
+3. Set `WEBHOOK_URL` to your live public HTTPS endpoint.
+4. Copy your private secret from **Event Settings > Google Forms Integration** in Event HQ and paste it into `WEBHOOK_SECRET`.
+5. Add an `onFormSubmit` trigger in Google Apps Script.
 
 ---
 
-## 7. Current Implementation Status (Prompt 00)
+## 5. Verification & Testing
 
-* [x] Complete React + Vite + TypeScript project initialized.
-* [x] Tailwind CSS configured with dark navy sidebar palette (`#0A1128`) and clean neutral canvas.
-* [x] Persistent responsive sidebar with 11 navigation links and mobile drawer.
-* [x] Top navigation bar with BMSIT event branding, live badge, search placeholder, notification center dropdown, and operator profile.
-* [x] Operations overview page with 4 KPI cards, secondary metrics, visual round progression stepper, live activity log, and quick action panel.
-* [x] 10 navigable pages populated with clearly labeled demo data and mock indicators.
-* [x] Centralized service layer (`eventService`, `apiClient`, `apiConfig`) configured for seamless future FastAPI integration.
-* [x] Loading shimmer skeletons and error handling states implemented.
-* [x] Strict confidentiality guardrails on Secret Agent information.
+* **Backend Tests**: `pytest` (62 passing tests covering auth, RBAC, rounds scoring, webhook security, and database integrity).
+* **Frontend Production Build**: `npm run build` (Clean Vite build with chunk separation).
+* **End-to-End Test Suites**: Dedicated TypeScript test runners in `event-dashboard/src/` testing full-stack workflows against live backend APIs.
 
 ---
 
-## 8. Features Intentionally Deferred to Later Prompts
+## 6. License & Organization
 
-Per Prompt 00 requirements, the following features are scheduled for subsequent prompts:
-* **Official Event Documentation Rules Ingestion**: Precise formulas and rubrics once uploaded.
-* **Backend Database & Models**: FastAPI backend, PostgreSQL schemas, and SQLAlchemy ORM models.
-* **Authentication & RBAC**: JWT tokens, organizer roles, judge logins, and participant views.
-* **Live Scoring Engine**: Round 1 checkpoint grading, Cabo card tabulation, Black Market automated market-maker formulas, and Judges scorecard submission.
-* **Automated Bracket Progression**: Automated qualification cutoff calculation and elimination dispatch.
-* **WebSockets**: Real-time push updates for live scoreboard and broadcast alerts.
+Developed for **EVENT HQ · BMSIT 2026**. All rights reserved.
