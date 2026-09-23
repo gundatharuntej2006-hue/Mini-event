@@ -16,6 +16,7 @@ from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
 from app.models.user import User, UserRole
+from app.models.core import seed_default_teams
 from app.core.security import get_password_hash, create_access_token
 from app.services.dashboard_service import get_or_create_settings
 
@@ -88,6 +89,14 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def auto_seed_round_teams_if_needed(request, db_session: Session):
+    """Automatically seeds the 32 standard squads for round test files."""
+    node_id = getattr(request.node, "nodeid", "")
+    if "tests/rounds" in node_id.replace("\\", "/"):
+        seed_default_teams(db_session)
 
 
 @pytest.fixture

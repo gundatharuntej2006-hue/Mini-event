@@ -1,4 +1,4 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -51,7 +51,8 @@ def root_health():
     with SessionLocal() as db:
         return health_check(db)
 
-# Include API v1 Router
+# Include API Routers (/api and /api/v1 for compatibility)
+app.include_router(api_router, prefix="/api")
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 

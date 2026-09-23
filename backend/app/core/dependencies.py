@@ -1,4 +1,4 @@
-﻿from typing import Generator, List, Optional
+from typing import Generator, List, Optional, Union
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -48,16 +48,49 @@ def get_current_user(
     return user
 
 
-def require_role(allowed_roles: List[UserRole]):
-    """Role-Based Access Control dependency factory."""
+ROLE_ALIASES = {
+    "organizer": UserRole.ORGANIZER,
+    "admin": UserRole.ORGANIZER,
+    "lead_organizer": UserRole.ORGANIZER,
+    "marshal": UserRole.MARSHAL,
+    "scorekeeper": UserRole.MARSHAL,
+    "lead_marshal": UserRole.MARSHAL,
+    "judge": UserRole.JUDGE,
+    "lead_judge": UserRole.JUDGE,
+    "chief_judge": UserRole.JUDGE,
+    "public_projector": UserRole.PUBLIC_PROJECTOR,
+    "projector": UserRole.PUBLIC_PROJECTOR,
+}
+
+
+def require_role(allowed_roles: List[Union[UserRole, str]]):
+    """Role-Based Access Control dependency factory supporting UserRole enums and role aliases."""
+    normalized_roles: set[UserRole] = set()
+    for r in allowed_roles:
+        if isinstance(r, UserRole):
+            normalized_roles.add(r)
+        elif isinstance(r, str):
+            clean = r.strip().lower()
+            if clean in ROLE_ALIASES:
+                normalized_roles.add(ROLE_ALIASES[clean])
+            else:
+                try:
+                    normalized_roles.add(UserRole(r))
+                except ValueError:
+                    try:
+                        normalized_roles.add(UserRole[r.upper()])
+                    except KeyError:
+                        pass
+
     def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
+        if current_user.role not in normalized_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access forbidden: requires one of [{', '.join([r.value for r in allowed_roles])}] permissions",
+                detail=f"Access forbidden: requires one of [{', '.join(sorted([r.value for r in normalized_roles]))}] permissions",
             )
         return current_user
     return role_checker
+
 
 
 def get_optional_user(
