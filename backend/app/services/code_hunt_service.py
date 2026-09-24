@@ -352,8 +352,40 @@ def recover_missing_fragment(
 
     record.updated_at = now
 
+    # A purchased fragment has no physical QR to read, so give it a value if the
+    # caller supplied none - otherwise the code can never assemble and the team
+    # stays locked out of Round 4 despite having paid for it.
+    if fragment_number == 1 and not record.fragment_1_value:
+        record.fragment_1_value = f"PURCHASED-1-{team_id[:8]}"
+    if fragment_number == 2 and not record.fragment_2_value:
+        record.fragment_2_value = f"PURCHASED-2-{team_id[:8]}"
+
     if record.fragment_1_value and record.fragment_2_value:
         record.final_code_assembled = f"{record.fragment_1_value.strip()}{record.fragment_2_value.strip()}"
+
+        # Section 6.2 prices this item as the thing that "completes the Final
+        # Code needed for Round 4". So completing the pair by purchase has to
+        # satisfy the gate, which checks final_code_verified.
+        #
+        # It did not. A team that bought both fragments for 800 points still
+        # read as ineligible, because verification is a separate desk step that
+        # an organiser had to remember after taking the money. Found by
+        # scripts/rehearsal.py: buy both, gate stays False.
+        #
+        # There is nothing left to verify by hand here - the organiser sold the
+        # fragments, so the platform already knows the team holds them.
+        both_owned = (
+            record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+            and record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+        )
+        if both_owned and not record.final_code_verified:
+            record.final_code_verified = True
+            # The columns are verified_at / verified_by, not
+            # final_code_verified_at / _by. Assigning the longer names would
+            # have set instance attributes that never reach the database, so
+            # the gate would open while the audit trail stayed empty.
+            record.verified_at = now
+            record.verified_by = actor or "black-market"
 
     log_audit_event(
         db=db,

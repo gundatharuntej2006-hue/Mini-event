@@ -1,5 +1,5 @@
-"""
-Round 3 — The Black Market & Qualification Engine Service for EVENT HQ.
+﻿"""
+Round 3 â€” The Black Market & Qualification Engine Service for EVENT HQ.
 Source of Truth: Authoritative Event Documentation (Reconciled in Step 6B & Step 7).
 
 Manages:
@@ -31,6 +31,7 @@ from app.models.black_market import (
 from app.models.team import Team, TeamStatus
 from app.models.wallet import TeamWallet, TransactionType
 from app.models.code_hunt import FinalCodeRecord, FragmentStatus
+from app.services.code_hunt_service import MissingFragmentPurchaseError
 from app.models.round3 import BlackMarketConfigModel, default_hidden_code_config
 from app.models.round_models import RoundState
 from app.models.progression import RoundQualification, TieReview
@@ -214,9 +215,34 @@ def purchase_market_asset(
 
     # Route Missing Fragment Recovery to dedicated Code Hunt service
     if clean_asset in ("MISSING_CODE_FRAGMENT", "CODE_FRAGMENT", "FRAGMENT"):
-        frag_num = 1
+        # Default to whichever fragment the team is actually missing, rather
+        # than always fragment 1.
+        #
+        # Section 6.2 prices this item "400 each", so a team missing both is
+        # meant to buy both. Hardcoding 1 meant the second purchase was refused
+        # with "Fragment 1 is already owned", the team stayed one fragment
+        # short, and the Round 4 gate never opened - so the documented recovery
+        # route could not actually recover anyone who had found nothing.
+        #
+        # Found by scripts/rehearsal.py: buy twice, gate stays False -> False.
+        # An explicit fragment_number in details still wins, for an organiser
+        # who needs to name one.
+        frag_num = None
         if details:
-            frag_num = int(details.get("fragment_number") or details.get("fragmentNumber") or 1)
+            raw = details.get("fragment_number") or details.get("fragmentNumber")
+            frag_num = int(raw) if raw else None
+
+        if frag_num is None:
+            record = code_hunt_service.get_or_create_final_code_record(db, team_id)
+            owned = (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+            if record.fragment_1_status not in owned:
+                frag_num = 1
+            elif record.fragment_2_status not in owned:
+                frag_num = 2
+            else:
+                raise MissingFragmentPurchaseError(
+                    f"Team '{team_id}' already holds both code fragments."
+                )
 
         # Recover fragment (handles wallet debit internally)
         code_hunt_service.recover_missing_fragment(
