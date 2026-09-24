@@ -43,7 +43,7 @@ export interface TeamRound1Record {
 }
 
 export interface Round1Config {
-  penaltyPerHintSeconds: number; // Demo default: 120s (2 min). Unconfirmed rule—pending official organizer confirmation.
+  penaltyPerHintSeconds: number; // 300s (+5 min), Event Documentation Section 4.3 rule 5. Confirmed, not pending.
   checkpointNames: string[]; // Configurable station placeholders (e.g. 'Checkpoint 1 [Location TBD]') until confirmed by organizers.
   isFinalized: boolean;
   finalizedAt?: string | null;

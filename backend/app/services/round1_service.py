@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
+from app.core.constants import DEFAULT_R1_HINT_PENALTY_SECONDS
 from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
 from app.models.core import Team
 from app.models.progression import TieReview
@@ -16,7 +17,10 @@ def get_or_create_round1_config(db: Session) -> Round1ConfigModel:
     if not cfg:
         cfg = Round1ConfigModel(
             id=1,
-            penalty_per_hint_seconds=120,
+            # Section 4.3, rule 5: "+5 minutes". This seeded 120 directly
+            # rather than reading the constant, so the row created on first run
+            # carried two minutes no matter what constants.py said.
+            penalty_per_hint_seconds=DEFAULT_R1_HINT_PENALTY_SECONDS,
             checkpoint_names=["Checkpoint Alpha", "Checkpoint Bravo", "Checkpoint Charlie"],
             is_finalized=False
         )

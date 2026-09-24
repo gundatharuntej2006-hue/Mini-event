@@ -21,7 +21,11 @@ export const PODIUM_SIZE = 3;          // Champion, 1st Runner Up, 2nd Runner Up
 // ==============================================================================
 // 2. ROUND 1 — THE GREAT EXPEDITION
 // ==============================================================================
-export const DEFAULT_R1_HINT_PENALTY_SECONDS = 120; // 2 minutes penalty per hint (configurable)
+// Section 4.3, rule 5: a hint "adds a fixed time penalty (e.g. +5 minutes)".
+// Five minutes, in seconds. This was 120 (two minutes) here and in the backend,
+// which under-penalised every team that took a hint by three minutes - and
+// Round 1 is ranked on adjusted total time, so it changed who reached Round 2.
+export const DEFAULT_R1_HINT_PENALTY_SECONDS = 300;
 export const DEFAULT_R1_CHECKPOINTS = [
   'Checkpoint Alpha',
   'Checkpoint Bravo',

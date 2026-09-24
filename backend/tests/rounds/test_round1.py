@@ -131,8 +131,12 @@ def test_round1_api_endpoints(client, marshal_headers, organizer_headers):
     assert t_res.status_code == 200
     t_data = t_res.json()["data"]
     assert t_data["duration_seconds"] == 720
-    assert t_data["hint_penalty_seconds"] == 120
-    assert t_data["adjusted_seconds"] == 840
+    # Section 4.3, rule 5: one hint costs +5 minutes, so 300 seconds, not 120.
+    # This asserts what the API actually applies from the seeded Round1Config,
+    # unlike the compute_mini_round calls above, which pass a penalty in
+    # explicitly and are testing the arithmetic rather than the rule.
+    assert t_data["hint_penalty_seconds"] == 300
+    assert t_data["adjusted_seconds"] == 1020
 
     # Test Finalize fails when incomplete
     fin_res = client.post("/api/rounds/1/finalize", headers=organizer_headers)

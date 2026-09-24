@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { DEFAULT_R1_HINT_PENALTY_SECONDS } from '../constants/tournamentConstants';
 import {
   Compass,
   CheckCircle2,
@@ -818,9 +819,9 @@ export function Round1ExpeditionPage() {
                           {rec.totalPenaltySeconds > 0 ? (
                             <span
                               className="font-mono text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 cursor-help"
-                              title={`Calculated with demo default of ${Math.round((data?.config?.penaltyPerHintSeconds || 120) / 60)}m per hint (rule unconfirmed by organizers)`}
+                              title={`${Math.round((data?.config?.penaltyPerHintSeconds || DEFAULT_R1_HINT_PENALTY_SECONDS) / 60)}m per hint (Event Documentation, Section 4.3)`}
                             >
-                              +{Math.round(rec.totalPenaltySeconds / 60)}m ({Math.round(rec.totalPenaltySeconds / (data?.config?.penaltyPerHintSeconds || 120))} hints)
+                              +{Math.round(rec.totalPenaltySeconds / 60)}m ({Math.round(rec.totalPenaltySeconds / (data?.config?.penaltyPerHintSeconds || DEFAULT_R1_HINT_PENALTY_SECONDS))} hints)
                             </span>
                           ) : (
                             <span

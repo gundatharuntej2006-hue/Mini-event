@@ -1,11 +1,13 @@
 import { Team } from '../types/team';
 import { TeamRound1Record, Round1Config, MiniRoundTiming, CheckpointRecord } from '../types/round1';
 import { computeTeamTotals } from '../utils/round1Scoring';
+import { DEFAULT_R1_HINT_PENALTY_SECONDS } from '../constants/tournamentConstants';
 
 export const DEFAULT_ROUND1_CONFIG: Round1Config = {
-  // DEMO DEFAULT: 120 seconds (2 mins) per hint.
-  // NOTE: Official penalty duration is not confirmed by organizers and is subject to change.
-  penaltyPerHintSeconds: 120,
+  // Section 4.3, rule 5: a hint "adds a fixed time penalty (e.g. +5 minutes)".
+  // This is confirmed by the Event Documentation, not pending - the note that
+  // used to sit here said the duration was unconfirmed and left it at 120s.
+  penaltyPerHintSeconds: DEFAULT_R1_HINT_PENALTY_SECONDS,
   checkpointNames: [
     'Checkpoint 1 [Location TBD]',
     'Checkpoint 2 [Location TBD]',
@@ -27,7 +29,7 @@ function createMiniRound(
   startMinute: number,
   durationMinutes: number,
   hints: number,
-  penaltyPerHintSeconds: number = 120
+  penaltyPerHintSeconds: number = DEFAULT_R1_HINT_PENALTY_SECONDS
 ): MiniRoundTiming {
   const today = new Date();
   const baseDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
