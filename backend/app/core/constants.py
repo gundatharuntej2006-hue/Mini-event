@@ -32,8 +32,11 @@ PODIUM_SIZE: Final[int] = 3          # Champion, 1st Runner Up, 2nd Runner Up
 # ==============================================================================
 # 2. ROUND 1 — THE GREAT EXPEDITION
 # ==============================================================================
-# Default hint penalty is 120 seconds (2 minutes). Configurable per round config.
-DEFAULT_R1_HINT_PENALTY_SECONDS: Final[int] = 120
+# Section 4.3, rule 5: a hint "adds a fixed time penalty (e.g. +5 minutes)".
+# Five minutes, in seconds. This was 120 (two minutes), which under-penalised
+# every team that took a hint by three minutes - and Round 1 is ranked on
+# adjusted total time, so it changed who reached Round 2.
+DEFAULT_R1_HINT_PENALTY_SECONDS: Final[int] = 300
 DEFAULT_R1_CHECKPOINTS: Final[List[str]] = [
     "Checkpoint Alpha",
     "Checkpoint Bravo",

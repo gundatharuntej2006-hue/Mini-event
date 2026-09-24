@@ -22,7 +22,12 @@ from app.schemas.rounds.round4 import (
     UpdatePairCaseInput, SubmitJudgeScoreInput, SubmitAgentGuessInput,
     ResourcePersonQuestionInput
 )
-from app.core.constants import R4_FINALISTS, R4_ADVANCING_COUNT
+from app.core.constants import (
+    R4_FINALISTS,
+    R4_ADVANCING_COUNT,
+    AGENT_CORRECT_GUESS,
+    AGENT_WRONG_GUESS,
+)
 
 STAGE_IDS = ["prep_1", "hearing_1", "file_exchange", "prep_2", "hearing_2"]
 
@@ -533,7 +538,16 @@ def submit_agent_guess(
 
     pts = input_data.points_awarded
     if pts is None:
-        pts = 10.0 if input_data.outcome == "correct" else 0.0
+        # Section 8.2 values, even though this record is not what decides the
+        # championship - the Finale does that, and finale_service already uses
+        # these constants. A stored 10.0 here contradicted the published rules
+        # and would have been read as authoritative by whoever came next.
+        if input_data.outcome == "correct":
+            pts = AGENT_CORRECT_GUESS
+        elif input_data.outcome == "incorrect":
+            pts = AGENT_WRONG_GUESS
+        else:
+            pts = 0.0
 
     ag = db.query(Round4AgentGuessModel).filter(Round4AgentGuessModel.team_id == team_id).first()
     now = datetime.now(timezone.utc)

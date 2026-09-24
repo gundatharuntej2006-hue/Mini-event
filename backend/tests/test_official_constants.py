@@ -69,8 +69,17 @@ class TestTournamentStructureConstants:
 
 class TestRound1ExpeditionConstants:
     def test_default_hint_penalty(self):
-        """Default hint penalty is 120 seconds (2 minutes)."""
-        assert DEFAULT_R1_HINT_PENALTY_SECONDS == 120
+        """
+        Section 4.3, rule 5: a hint "adds a fixed time penalty (e.g. +5
+        minutes)". Five minutes, so 300 seconds.
+
+        This asserted 120 and its docstring called that correct, so the suite
+        certified the bug instead of catching it. Round 1 is ranked on adjusted
+        total time, so a three-minute shortfall per hint changed which teams
+        reached Round 2.
+        """
+        assert DEFAULT_R1_HINT_PENALTY_SECONDS == 300
+        assert DEFAULT_R1_HINT_PENALTY_SECONDS == 5 * 60
 
     def test_checkpoints_list(self):
         """Default checkpoint configuration has exact 3 mystery stations."""

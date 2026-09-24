@@ -1,4 +1,4 @@
-import random
+﻿import random
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from fastapi import HTTPException, status
 
+from app.core import constants as C
 from app.db.base import utc_now
 from app.models.round_models import (
     RoundState,
@@ -55,7 +56,20 @@ from app.schemas.rounds import (
     FinaleTeamSummary,
 )
 
-# Default Round metadata definitions
+# Default Round metadata definitions.
+#
+# These values are read from app.core.constants, NOT written as literals.
+#
+# This module and the newer app/services/round{1..4}_service.py are BOTH live -
+# api/router.py mounts the r1..r4 routers and this legacy rounds.router, and
+# the dashboard still calls /rounds/1/records here. Until one of the two layers
+# is retired, they must agree, or the same tournament is scored differently
+# depending on which endpoint the frontend happened to call.
+#
+# They did not agree. Every value below was the pre-documentation default:
+# a 120s hint penalty, a 100-point starting balance, 4 code fragments, +10/-5
+# agent guessing, a 0.0 carryover weight and a twelve-tier Cabo ladder - none
+# of which appear in the Event Documentation.
 DEFAULT_ROUNDS = [
     {
         "id": 1,
@@ -67,7 +81,7 @@ DEFAULT_ROUNDS = [
         "status": "In Progress",
         "location": "Campus Grounds & Quadrangles",
         "config_json": {
-            "hintPenaltySeconds": 120,
+            "hintPenaltySeconds": C.DEFAULT_R1_HINT_PENALTY_SECONDS,
             "miniRoundsCount": 3,
             "tieBreakerRule": "fastest_mini_round"
         }
@@ -84,10 +98,10 @@ DEFAULT_ROUNDS = [
         "config_json": {
             "totalGames": 3,
             "scoringDirection": "high_is_better",
-            "placementPoints": {
-                "1": 100, "2": 80, "3": 65, "4": 55, "5": 45, "6": 35,
-                "7": 25, "8": 20, "9": 15, "10": 10, "11": 5, "12": 0
-            }
+            # Section 5.3: a Cabo table seats five, scoring 5/3/2/1/0. The
+            # twelve-tier 100/80/65/... ladder that was here appears nowhere in
+            # the documentation and made Round 2 outweigh every other source.
+            "placementPoints": {"1": 5, "2": 3, "3": 2, "4": 1, "5": 0}
         }
     },
     {
@@ -100,8 +114,8 @@ DEFAULT_ROUNDS = [
         "status": "Scheduled",
         "location": "Commerce Wing Hub",
         "config_json": {
-            "startingBalance": 100.0,
-            "codeFragmentsCount": 4,
+            "startingBalance": C.STARTING_WALLET_BALANCE,
+            "codeFragmentsCount": C.CODE_FRAGMENT_COUNT,
             "allowNegativeBalance": False
         }
     },
@@ -109,31 +123,39 @@ DEFAULT_ROUNDS = [
         "id": 4,
         "name": "The Legal Battle",
         "codename": "ROUND_4_LEGAL_BATTLE",
-        "description": "8 squads in 4 courtroom pairings argue fictional cases before faculty judges. Top 3 qualify.",
-        "initial_teams_count": 8,
-        "qualifying_teams_count": 3,
+        # Sections 7 and 9.1: all 8 finalists argue and all 8 are ranked.
+        # There is no cut to three before the finale - the podium is what the
+        # final ranking produces. A 3-team finale also contradicts Section 8.1,
+        # where every team guesses "the other 7 finalist teams".
+        "description": "8 squads in 4 courtroom pairings argue fictional cases before faculty judges.",
+        "initial_teams_count": C.R4_FINALISTS,
+        "qualifying_teams_count": C.R4_ADVANCING_COUNT,
         "status": "Scheduled",
         "location": "Moot Court Hall",
         "config_json": {
-            "totalPairs": 4,
-            "agentGuessBonus": 10.0,
-            "maxJuryScore": 100.0
+            "totalPairs": C.R4_PAIRS,
+            "agentGuessBonus": C.AGENT_CORRECT_GUESS,
+            "maxJuryScore": C.R4_RUBRIC_TOTAL_MAX
         }
     },
     {
         "id": 5,
         "name": "Grand Finale",
         "codename": "GRAND_FINALE",
-        "description": "The final 3 teams face the Grand Jury and unmask secret agents for the championship.",
-        "initial_teams_count": 3,
+        "description": "The 8 finalists unmask secret agents; the final ranking decides the championship.",
+        "initial_teams_count": C.R4_FINALISTS,
         "qualifying_teams_count": 1,
         "status": "Scheduled",
         "location": "Main Auditorium Stage",
         "config_json": {
-            "carryoverWeight": 0.0,
+            # Section 9.1: "Final Score = Legal Battle panel score + Agent
+            # guessing points + 10% of remaining Black Market points." A weight
+            # of 0.0 dropped the economy out of the championship entirely and
+            # made Round 3 spending consequence-free.
+            "carryoverWeight": C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
             "juryWeight": 1.0,
-            "agentBonusPoints": 10.0,
-            "agentPenaltyPoints": -5.0
+            "agentBonusPoints": C.AGENT_CORRECT_GUESS,
+            "agentPenaltyPoints": C.AGENT_WRONG_GUESS
         }
     }
 ]
@@ -256,7 +278,7 @@ def initialize_round1_records(db: Session):
     db.commit()
 
 
-def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 120.0):
+def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = C.DEFAULT_R1_HINT_PENALTY_SECONDS):
     """Calculate raw total, penalties, adjusted total, and fastest mini-round."""
     mini_rounds = rec.mini_rounds_json or []
     raw_seconds = 0.0
@@ -298,7 +320,7 @@ def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 
 def get_round1_records(db: Session) -> List[Round1Record]:
     initialize_round1_records(db)
     round_state = get_round_by_number(db, 1)
-    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", 120.0))
+    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
     
     records = db.execute(select(Round1Record)).scalars().all()
     for rec in records:
@@ -354,7 +376,7 @@ def update_round1_record(db: Session, team_id: str, data: Round1RecordUpdateRequ
     rec.last_edited_by = user.name
     
     round_state = get_round_by_number(db, 1)
-    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", 120.0))
+    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
     calculate_round1_record_scores(rec, penalty_per_hint)
     
     db.commit()
@@ -401,7 +423,12 @@ def record_round2_placement(db: Session, data: Round2PlacementCreate, user: User
     pts_table = round_state.config_json.get("placementPoints", {})
     calculated_pts = data.points
     if calculated_pts is None:
-        calculated_pts = float(pts_table.get(str(data.placement), max(0, 100 - (data.placement - 1) * 10)))
+        # Fall back to the documented Section 5.3 table rather than an invented
+        # formula. The old fallback, `100 - (placement - 1) * 10`, produced
+        # points that appear nowhere in the Event Documentation.
+        calculated_pts = float(
+            pts_table.get(str(data.placement), C.CABO_PLACEMENT_POINTS.get(data.placement, 0))
+        )
     
     existing = db.execute(
         select(Round2Placement).where(
@@ -683,7 +710,7 @@ def update_round3_code_fragment(db: Session, data: Round3CodeFragmentUpdate, use
 
 def get_round3_standings(db: Session) -> List[Round3TeamSummary]:
     round_state = get_round_by_number(db, 3)
-    starting_balance = float(round_state.config_json.get("startingBalance", 100.0))
+    starting_balance = float(round_state.config_json.get("startingBalance", C.STARTING_WALLET_BALANCE))
     qualifying_count = round_state.qualifying_teams_count
     
     teams = db.execute(select(Team).where(Team.status != TeamStatus.DISQUALIFIED)).scalars().all()
@@ -719,7 +746,7 @@ def get_round3_standings(db: Session) -> List[Round3TeamSummary]:
             net_adjustments=adjustments,
             current_balance=current_bal,
             fragments_discovered=discovered,
-            total_fragments=4,
+            total_fragments=C.CODE_FRAGMENT_COUNT,
             is_code_complete=is_complete,
             qualification_status="Pending"
         ))
@@ -885,7 +912,7 @@ def submit_round4_agent_guess(db: Session, data: Round4AgentGuessSubmit, user: U
     _check_round_not_finalized(db, 4)
     _validate_team_exists(db, data.team_id)
     round_state = get_round_by_number(db, 4)
-    bonus = float(round_state.config_json.get("agentGuessBonus", 10.0))
+    bonus = float(round_state.config_json.get("agentGuessBonus", C.AGENT_CORRECT_GUESS))
     
     pts = data.points_awarded
     if pts is None:
@@ -1037,8 +1064,8 @@ def submit_finale_agent_verdict(db: Session, data: FinaleAgentVerdictSubmit, use
     _check_round_not_finalized(db, 5)
     _validate_team_exists(db, data.team_id)
     round_state = get_round_by_number(db, 5)
-    default_bonus = float(round_state.config_json.get("agentBonusPoints", 10.0))
-    default_penalty = float(round_state.config_json.get("agentPenaltyPoints", -5.0))
+    default_bonus = float(round_state.config_json.get("agentBonusPoints", C.AGENT_CORRECT_GUESS))
+    default_penalty = float(round_state.config_json.get("agentPenaltyPoints", C.AGENT_WRONG_GUESS))
     
     bonus = data.bonus_points if data.bonus_points is not None else (default_bonus if data.is_correct else 0.0)
     penalty = data.penalty_points if data.penalty_points is not None else (default_penalty if data.is_correct is False else 0.0)
@@ -1078,7 +1105,7 @@ def submit_finale_agent_verdict(db: Session, data: FinaleAgentVerdictSubmit, use
 
 def get_finale_standings(db: Session) -> List[FinaleTeamSummary]:
     round_state = get_round_by_number(db, 5)
-    carryover_weight = float(round_state.config_json.get("carryoverWeight", 0.0))
+    carryover_weight = float(round_state.config_json.get("carryoverWeight", C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED))
     
     teams = db.execute(select(Team).where(Team.status != TeamStatus.DISQUALIFIED)).scalars().all()
     scorecards = db.execute(select(FinaleScorecard)).scalars().all()

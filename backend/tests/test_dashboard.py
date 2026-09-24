@@ -1,4 +1,4 @@
-def test_dashboard_overview_metrics(client, marshal_headers):
+﻿def test_dashboard_overview_metrics(client, marshal_headers):
     # Setup 1 full team of 5 checked-in participants and 1 partial team
     t1 = client.post("/api/v1/teams", headers=marshal_headers, json={"name": "Alpha Full"}).json()["data"]["id"]
     for i in range(1, 6):
@@ -59,7 +59,7 @@ def test_dashboard_overview_metrics(client, marshal_headers):
 
     r5 = progression[4]
     assert r5["roundNumber"] == 5
-    assert r5["totalPool"] == 3
+    assert r5["totalPool"] == 8  # Section 9.1 ranks all 8 finalists
     assert r5["qualifyingCount"] == 1
 
     # Verify recentActivities contract
