@@ -36,6 +36,7 @@ from app.models.round3 import BlackMarketConfigModel, default_hidden_code_config
 from app.models.round_models import RoundState
 from app.models.progression import RoundQualification, TieReview
 from app.core.constants import (
+    STARTING_WALLET_BALANCE,
     BLACK_MARKET_SUGGESTED_PRICES,
     BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED,
     BLACK_MARKET_PREP_PRICE_SUGGESTED,
@@ -151,7 +152,12 @@ def get_or_create_r3_config(db: Session) -> BlackMarketConfigModel:
     if not cfg:
         cfg = BlackMarketConfigModel(
             id=1,
-            starting_balance=100.0,
+            # Section 3.3: every team starts on 1,000. This seeded the
+            # deprecated 100, and compute_team_ledger builds the Round 3 and
+            # Round 4 balances from it - so the 10% carryover in Round 4's own
+            # final-score breakdown ran off a different number from the wallet
+            # the championship service uses.
+            starting_balance=STARTING_WALLET_BALANCE,
             allow_negative_balance=False,
             ranking_metric="current_balance",
             scoring_direction="higher_is_better",

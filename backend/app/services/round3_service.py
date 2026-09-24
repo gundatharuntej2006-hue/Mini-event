@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
@@ -8,6 +8,7 @@ from app.models.round3 import (
     BlackMarketCodeFragmentModel, TeamCodeVerificationModel,
     default_hidden_code_config
 )
+from app.core.constants import STARTING_WALLET_BALANCE
 from app.models.core import Team
 from app.models.progression import TieReview
 from app.scoring.round3_scoring import (
@@ -22,7 +23,12 @@ def get_or_create_black_market_config(db: Session) -> BlackMarketConfigModel:
     if not cfg:
         cfg = BlackMarketConfigModel(
             id=1,
-            starting_balance=100.0,
+            # Section 3.3: every team starts on 1,000. This seeded the
+            # deprecated 100, and compute_team_ledger builds the Round 3 and
+            # Round 4 balances from it - so the 10% carryover in Round 4's own
+            # final-score breakdown ran off a different number from the wallet
+            # the championship service uses.
+            starting_balance=STARTING_WALLET_BALANCE,
             allow_negative_balance=False,
             ranking_metric="current_balance",
             scoring_direction="higher_is_better",

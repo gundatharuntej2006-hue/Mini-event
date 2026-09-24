@@ -1,10 +1,10 @@
-import uuid
+﻿import uuid
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, ForeignKey
 from datetime import datetime, timezone
 from app.core.database import Base
 from app.core.constants import (
     STARTING_WALLET_BALANCE,
-    DEPRECATED_R3_STARTING_BALANCE,
+    STARTING_WALLET_BALANCE,
     CODE_FRAGMENT_COUNT,
     FINAL_CODE_REQUIRED_FOR_R4,
 )
@@ -28,7 +28,7 @@ class BlackMarketConfigModel(Base):
     id = Column(Integer, primary_key=True, default=1)
     # Note: Authoritative tournament wallet starting balance is STARTING_WALLET_BALANCE (1000.0).
     # Default is set to DEPRECATED_R3_STARTING_BALANCE (100.0) for backward compatibility with legacy tests.
-    starting_balance = Column(Float, default=DEPRECATED_R3_STARTING_BALANCE, nullable=False)
+    starting_balance = Column(Float, default=STARTING_WALLET_BALANCE, nullable=False)
     allow_negative_balance = Column(Boolean, default=False, nullable=False)
     ranking_metric = Column(String(50), default="current_balance", nullable=False)
     scoring_direction = Column(String(50), default="higher_is_better", nullable=False)

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+﻿from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class CreateTransactionInput(BaseModel):
@@ -18,7 +18,7 @@ class VerifyCodeInput(BaseModel):
     is_complete: bool = True
 
 class BlackMarketConfigSchema(BaseModel):
-    starting_balance: float = 100.0
+    starting_balance: float = 1000.0  # Section 3.3
     allow_negative_balance: bool = False
     ranking_metric: str = "current_balance"
     scoring_direction: str = "higher_is_better"
