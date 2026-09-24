@@ -9,6 +9,9 @@ from fastapi import HTTPException, status
 
 from app.core import constants as C
 from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
+from app.models.wallet import TransactionType as WalletTransactionType
+from app.services import wallet as wallet_service
+from app.services import code_hunt_service
 from app.db.base import utc_now
 from app.models.round_models import (
     RoundState,
@@ -277,6 +280,131 @@ def initialize_round1_records(db: Session):
             )
             db.add(rec)
     db.commit()
+
+
+def mirror_round3_transaction_to_wallet(
+    db: Session, tx: Round3Transaction, user: User
+) -> None:
+    """
+    Copy a legacy Round 3 transaction into the team's wallet.
+
+    Round 3 is split the same way Round 1 was, and worse - across money as well
+    as data. api/router.py mounts the new r3_router before the legacy
+    rounds.router, so paths defined by both go to the new layer, while paths
+    only the legacy one defines still go to the legacy one. The dashboard calls
+    a mix:
+
+        /rounds/3/transactions   legacy only  -> round3_transactions
+        /rounds/3/transfer       legacy only  -> round3_transactions
+        /rounds/3/purchase       new          -> team_wallets
+        /teams/{id}/wallet       new          -> team_wallets
+
+    So a marshal awarding points through the dashboard wrote them to
+    round3_transactions, while purchases and the Round 3 standings that decide
+    Round 4 entry read team_wallets. The points existed and could not be spent.
+
+    Proven by test_round3_store_split.py before this existed: award 500, wallet
+    still reads 1000.
+
+    BRIDGE, NOT DESIGN - same caveat as the Round 1 mirror. The legacy
+    transaction is the source; the wallet entry is derived from it. Reversals go
+    through the new router already, so they are not mirrored here.
+    """
+    reference_id = tx.id
+    description = tx.reason or "Round 3 adjustment"
+
+    if tx.type == "earn":
+        wallet_service.credit(
+            db,
+            team_id=tx.team_id,
+            amount=float(tx.amount),
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            description=description,
+            reference_type="round3_transaction",
+            reference_id=reference_id,
+            created_by=user.name,
+        )
+    elif tx.type == "spend":
+        wallet_service.debit(
+            db,
+            team_id=tx.team_id,
+            amount=float(tx.amount),
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            description=description,
+            reference_type="round3_transaction",
+            reference_id=reference_id,
+            created_by=user.name,
+            allow_negative_balance=True,  # the legacy layer already checked
+        )
+    elif tx.type == "adjustment":
+        # A legacy adjustment can be either sign; the wallet splits them.
+        if float(tx.amount) >= 0:
+            wallet_service.credit(
+                db, team_id=tx.team_id, amount=float(tx.amount),
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                description=description, reference_type="round3_transaction",
+                reference_id=reference_id, created_by=user.name,
+            )
+        else:
+            wallet_service.debit(
+                db, team_id=tx.team_id, amount=abs(float(tx.amount)),
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                description=description, reference_type="round3_transaction",
+                reference_id=reference_id, created_by=user.name,
+                allow_negative_balance=True,
+            )
+
+
+def mirror_round3_code_to_code_hunt(db: Session, rec: Round3CodeRecord, user: User) -> None:
+    """
+    Copy legacy code-fragment state into the code-hunt store.
+
+    The dashboard logs fragments through /rounds/3/codes/fragment, which only
+    the legacy router defines, so they land in round3_code_records. The Round 4
+    gate reads FinalCodeRecord in the code-hunt store, which is a different
+    table - so a team could hold both fragments and still be told it has no
+    Final Code.
+
+    Proven before this existed: log both fragments, then
+    /code-hunt/eligibility/r4/{team} answers "Team has NOT verified their Final
+    Code and cannot enter Round 4."
+
+    Fragment 1 belongs to Round 1 and fragment 2 to Round 2 (Section 3.1), which
+    is how the code-hunt store models them, so indices 0 and 1 map onto those.
+    """
+    fragments = rec.fragments_json or []
+
+    def value_at(index: int) -> Optional[str]:
+        for f in fragments:
+            if f.get("index") == index and f.get("isDiscovered"):
+                return f.get("code") or f"FRAGMENT-{index + 1}"
+        return None
+
+    first, second = value_at(0), value_at(1)
+
+    if first:
+        code_hunt_service.record_fragment_1(
+            db, team_id=rec.team_id, fragment_value=first,
+            actor=user.name, overwrite=True,
+        )
+    if second:
+        code_hunt_service.record_fragment_2(
+            db, team_id=rec.team_id, fragment_value=second,
+            actor=user.name, overwrite=True,
+        )
+
+    # The gate checks a VERIFIED code, not merely two stored fragments. The
+    # legacy flow has no separate verification step - logging both fragments is
+    # the verification, done by the code verifier at the desk - so completing
+    # the pair here is what must satisfy it.
+    if first and second:
+        assembled = code_hunt_service.assemble_final_code(db, rec.team_id)
+        if assembled:
+            code_hunt_service.verify_final_code(
+                db, team_id=rec.team_id, supplied_code=assembled,
+                actor=user.name,
+                notes="Verified via the Round 3 code desk (/rounds/3/codes/fragment)",
+            )
 
 
 def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_hint: float) -> None:
@@ -670,6 +798,9 @@ def create_round3_transaction(db: Session, data: Round3TransactionCreate, user: 
         notes=data.notes
     )
     db.add(tx)
+    db.flush()
+    # Feed the wallet, which is what purchases and Round 3 standings spend.
+    mirror_round3_transaction_to_wallet(db, tx, user)
     db.commit()
     db.refresh(tx)
     return tx
@@ -751,6 +882,11 @@ def transfer_round3_funds(db: Session, data: Round3TransferRequest, user: User) 
     
     db.add(sender_tx)
     db.add(receiver_tx)
+    db.flush()
+    # Both sides have to move in the wallet, or a transfer would take points
+    # from a team that could still spend them.
+    mirror_round3_transaction_to_wallet(db, sender_tx, user)
+    mirror_round3_transaction_to_wallet(db, receiver_tx, user)
     db.commit()
     db.refresh(sender_tx)
     db.refresh(receiver_tx)
@@ -796,7 +932,10 @@ def update_round3_code_fragment(db: Session, data: Round3CodeFragmentUpdate, use
     if rec.is_complete and not rec.verified_at:
         rec.verified_at = utc_now()
         rec.verified_by = user.name
-        
+
+    db.flush()
+    # Feed the code-hunt store, which is what the Round 4 gate reads.
+    mirror_round3_code_to_code_hunt(db, rec, user)
     db.commit()
     db.refresh(rec)
     return rec
