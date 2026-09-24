@@ -1,6 +1,6 @@
 ﻿import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import Session
@@ -8,6 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from fastapi import HTTPException, status
 
 from app.core import constants as C
+from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
 from app.db.base import utc_now
 from app.models.round_models import (
     RoundState,
@@ -278,6 +279,96 @@ def initialize_round1_records(db: Session):
     db.commit()
 
 
+def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_hint: float) -> None:
+    """
+    Copy a legacy Round1Record into the round1_timings store.
+
+    WHY THIS EXISTS - read before changing anything here.
+
+    Round 1 has two stores that were never connected:
+
+        the dashboard writes to  /rounds/1/records  ->  round1_records
+        qualification reads      MiniRoundTimingModel -> round1_timings
+
+    The frontend never calls the endpoint that writes round1_timings. So every
+    checkpoint time a marshal entered on the day would land in round1_records,
+    and process_round1_standings would then compute Round 1 qualification from
+    an empty table. Nobody would qualify, on the first round of the event.
+
+    Round 2 does not have this problem - the dashboard uses /rounds/2/cabo/*,
+    which is the same layer its scoring reads. This is Round 1 only.
+
+    THIS IS A BRIDGE, NOT THE DESIGN. The right fix is to retire one of the two
+    layers and point the dashboard at the survivor, which needs the frontend
+    changed and so needs Tharun. Until then this keeps the authoritative store
+    fed, with the legacy record as the single source and round1_timings derived
+    from it one-directionally.
+
+    Consequence to know: anything written directly through the new Round 1 API
+    for a team will be overwritten the next time that team's legacy record is
+    saved. Nothing calls that API today, but do not start without removing this.
+    """
+    mini_rounds = rec.mini_rounds_json or []
+
+    # Keep the new layer's config in step, since standings read the penalty
+    # from it rather than from the legacy round state.
+    cfg = db.query(Round1ConfigModel).filter(Round1ConfigModel.id == 1).first()
+    if cfg is None:
+        cfg = Round1ConfigModel(
+            id=1,
+            penalty_per_hint_seconds=int(penalty_per_hint),
+            checkpoint_names=list(C.DEFAULT_R1_CHECKPOINTS),
+            is_finalized=False,
+        )
+        db.add(cfg)
+    elif cfg.penalty_per_hint_seconds != int(penalty_per_hint):
+        cfg.penalty_per_hint_seconds = int(penalty_per_hint)
+
+    for mr in mini_rounds:
+        number = mr.get("roundNumber")
+        if number is None:
+            continue
+
+        timing_id = f"r1-{rec.team_id}-{number}"
+        timing = db.query(MiniRoundTimingModel).filter(
+            MiniRoundTimingModel.id == timing_id
+        ).first()
+        if timing is None:
+            timing = MiniRoundTimingModel(
+                id=timing_id, team_id=rec.team_id, mini_round_number=number
+            )
+            db.add(timing)
+
+        duration = mr.get("durationSeconds")
+        hints = int(mr.get("hintsUsed") or 0)
+        completed = bool(mr.get("isCompleted"))
+
+        timing.hints_used = hints
+        timing.hint_penalty_seconds = int(hints * penalty_per_hint)
+
+        # compute_mini_round RECOMPUTES the duration from start_time and
+        # completion_time and ignores duration_seconds entirely - a mini round
+        # with no timestamps is treated as "Not Started" and scores nothing. The
+        # legacy record only carries a duration, so synthesise a matching pair.
+        # Only the interval matters; the absolute clock time is never read.
+        if completed and duration is not None:
+            anchor = rec.updated_at or utc_now()
+            timing.start_time = anchor
+            timing.completion_time = anchor + timedelta(seconds=int(duration))
+            timing.status = "Completed"
+            timing.duration_seconds = int(duration)
+            timing.adjusted_seconds = int(duration + hints * penalty_per_hint)
+        else:
+            timing.start_time = None
+            timing.completion_time = None
+            timing.status = "Not Started"
+            timing.duration_seconds = None
+            timing.adjusted_seconds = None
+
+        if timing.checkpoints is None:
+            timing.checkpoints = []
+
+
 def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = C.DEFAULT_R1_HINT_PENALTY_SECONDS):
     """Calculate raw total, penalties, adjusted total, and fastest mini-round."""
     mini_rounds = rec.mini_rounds_json or []
@@ -378,7 +469,10 @@ def update_round1_record(db: Session, team_id: str, data: Round1RecordUpdateRequ
     round_state = get_round_by_number(db, 1)
     penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
     calculate_round1_record_scores(rec, penalty_per_hint)
-    
+    # Feed the store that Round 1 qualification actually reads. Without this,
+    # everything entered through the dashboard is invisible to standings.
+    mirror_round1_record_to_timings(db, rec, penalty_per_hint)
+
     db.commit()
     db.refresh(rec)
     return rec
