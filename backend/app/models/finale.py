@@ -22,7 +22,6 @@ def default_finale_criteria():
 
 class FinaleConfigModel(Base):
     __tablename__ = "finale_config"
-    __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, default=1)
     is_scoring_rules_confirmed = Column(Boolean, default=False, nullable=False)
@@ -56,32 +55,46 @@ class FinaleConfigModel(Base):
     agents_revealed_at = Column(DateTime, nullable=True)
     agents_revealed_by = Column(String(100), nullable=True)
 
-class FinaleScorecardModel(Base):
+class FinaleScorecard(Base):
     __tablename__ = "finale_scorecards"
-    __table_args__ = {"extend_existing": True}
 
-    team_id = Column(String(50), ForeignKey("teams.id"), primary_key=True)
-    judge_name = Column(String(100), nullable=False)
-    scores = Column(JSON, default=dict, nullable=False)
+    id = Column(String(100), primary_key=True, default=lambda: f"finsc-{uuid.uuid4().hex[:8]}")
+    team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    judge_name = Column(String(255), default="Grand Jury Panel", nullable=False)
+    scores_json = Column(JSON, default=dict, nullable=False)
     total_score = Column(Float, nullable=True)
     is_complete = Column(Boolean, default=False, nullable=False)
-    submitted_at = Column(DateTime, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
     comments = Column(Text, nullable=True)
+    last_edited_by = Column(String(255), nullable=True)
+    last_edited_at = Column(DateTime(timezone=True), nullable=True)
 
-class FinaleAgentVerdictModel(Base):
+    team = relationship("Team")
+
+    @property
+    def scores(self):
+        return self.scores_json
+
+    @scores.setter
+    def scores(self, value):
+        self.scores_json = value
+
+class FinaleAgentVerdict(Base):
     __tablename__ = "finale_agent_verdicts"
-    __table_args__ = {"extend_existing": True}
 
-    team_id = Column(String(50), ForeignKey("teams.id"), primary_key=True)
-    suspected_agent = Column(String(100), nullable=True)
-    actual_agent = Column(String(100), nullable=True)
+    id = Column(String(100), primary_key=True, default=lambda: f"finav-{uuid.uuid4().hex[:8]}")
+    team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    suspected_agent = Column(String(255), nullable=True)
+    actual_agent = Column(String(255), nullable=True)
     is_correct = Column(Boolean, nullable=True)
     bonus_points = Column(Float, nullable=True)
     penalty_points = Column(Float, nullable=True)
     is_verified = Column(Boolean, default=False, nullable=False)
-    verified_by = Column(String(100), nullable=True)
-    verified_at = Column(DateTime, nullable=True)
+    verified_by = Column(String(255), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+
+    team = relationship("Team")
 
 
 class FinaleTeamGuessSubmissionModel(Base):
@@ -89,7 +102,6 @@ class FinaleTeamGuessSubmissionModel(Base):
     Submission header containing all secret agent guesses for a finalist squad (1-5 guesses).
     """
     __tablename__ = "finale_team_guess_submissions"
-    __table_args__ = {"extend_existing": True}
 
     id = Column(String(100), primary_key=True)  # fg-sub-{team_id}
     guessing_team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
@@ -110,7 +122,6 @@ class FinaleAgentGuessModel(Base):
     Scores +30.0 for correct identification, -20.0 for wrong accusation.
     """
     __tablename__ = "finale_agent_guesses"
-    __table_args__ = {"extend_existing": True}
 
     id = Column(String(100), primary_key=True, default=lambda: f"fag-{uuid.uuid4().hex[:8]}")
     submission_id = Column(String(100), ForeignKey("finale_team_guess_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -136,7 +147,6 @@ class FinaleChampionshipStandingModel(Base):
     - 10% Black Market wallet balance carryover
     """
     __tablename__ = "finale_championship_standings"
-    __table_args__ = {"extend_existing": True}
 
     id = Column(String(100), primary_key=True)  # fcs-{team_id}
     team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
@@ -160,7 +170,9 @@ class FinaleChampionshipStandingModel(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
-# Class aliases for easy imports
+# Class aliases for easy imports and backward compatibility
+FinaleScorecardModel = FinaleScorecard
+FinaleAgentVerdictModel = FinaleAgentVerdict
 FinaleTeamGuessSubmission = FinaleTeamGuessSubmissionModel
 FinaleAgentGuess = FinaleAgentGuessModel
 FinaleChampionshipStanding = FinaleChampionshipStandingModel

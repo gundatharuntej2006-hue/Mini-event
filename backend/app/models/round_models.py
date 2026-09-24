@@ -162,74 +162,8 @@ class Round4Pair(Base):
     team_a = relationship("Team", foreign_keys=[team_a_id])
     team_b = relationship("Team", foreign_keys=[team_b_id])
 
-
-class Round4JudgeScore(Base):
-    __tablename__ = "round4_judge_scores"
-    __table_args__ = (
-        UniqueConstraint("judge_id", "team_id", name="uq_round4_judge_team"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f"r4js-{uuid.uuid4().hex[:8]}")
-    judge_id: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
-    judge_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), index=True, nullable=False)
-    scores_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False) # categoryId -> mark
-    total_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
-    comments: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
-    is_submitted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    team = relationship("Team")
-
-
-class Round4AgentGuess(Base):
-    __tablename__ = "round4_agent_guesses"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f"r4ag-{uuid.uuid4().hex[:8]}")
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
-    outcome: Mapped[str] = mapped_column(String(50), default="none", nullable=False) # correct, incorrect, pending, none
-    points_awarded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    verified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    team = relationship("Team")
-
-
 # =========================================================================
-# GRAND FINALE (Round 5)
+# ROUND 4 & GRAND FINALE CANONICAL MODEL RE-EXPORTS
 # =========================================================================
-class FinaleScorecard(Base):
-    __tablename__ = "finale_scorecards"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f"finsc-{uuid.uuid4().hex[:8]}")
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
-    judge_name: Mapped[str] = mapped_column(String(255), default="Grand Jury Panel", nullable=False)
-    scores_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False) # criterionId -> score
-    total_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    is_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    submitted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    comments: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    last_edited_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    last_edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    team = relationship("Team")
-
-
-class FinaleAgentVerdict(Base):
-    __tablename__ = "finale_agent_verdicts"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: f"finav-{uuid.uuid4().hex[:8]}")
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
-    suspected_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    actual_agent: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    is_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    bonus_points: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    penalty_points: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    verified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    team = relationship("Team")
+from app.models.round4 import Round4JudgeScore, Round4AgentGuess
+from app.models.finale import FinaleScorecard, FinaleAgentVerdict

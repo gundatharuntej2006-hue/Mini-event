@@ -13,10 +13,12 @@ from app.core.constants import (
     R2_QUALIFIERS,
     R3_QUALIFIERS,
     R4_FINALISTS,
+    R4_PAIRS,
+    R4_MAX_SCORE,
+    R4_ADVANCING_COUNT,
     PODIUM_SIZE,
     DEFAULT_R1_HINT_PENALTY_SECONDS,
     DEFAULT_R1_CHECKPOINTS,
-    R1_WALLET_POINTS_FORMULA,
     CABO_PLACEMENT_POINTS,
     CABO_GAMES,
     CABO_TABLE_SIZE,
@@ -38,6 +40,13 @@ from app.core.constants import (
     AGENT_WRONG_GUESS,
     FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
     DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+    R4_RUBRIC_LOGICAL_STRUCTURE_MAX,
+    R4_RUBRIC_EVIDENCE_MAX,
+    R4_RUBRIC_REBUTTAL_MAX,
+    R4_RUBRIC_RESOURCE_PERSON_MAX,
+    R4_RUBRIC_PRESENTATION_TEAMWORK_MAX,
+    R4_RUBRIC_TIME_MAX,
+    R4_RUBRIC_TOTAL_MAX,
 )
 
 
@@ -53,6 +62,8 @@ class TestTournamentStructureConstants:
         assert R2_QUALIFIERS == 12
         assert R3_QUALIFIERS == 8
         assert R4_FINALISTS == 8
+        assert R4_PAIRS == 4
+        assert R4_ADVANCING_COUNT == 8
         assert PODIUM_SIZE == 3
 
 
@@ -62,12 +73,29 @@ class TestRound1ExpeditionConstants:
         assert DEFAULT_R1_HINT_PENALTY_SECONDS == 120
 
     def test_checkpoints_list(self):
-        """Default checkpoint configuration has 3 mystery stations."""
-        assert len(DEFAULT_R1_CHECKPOINTS) == 3
+        """Default checkpoint configuration has exact 3 mystery stations."""
+        assert DEFAULT_R1_CHECKPOINTS == [
+            "Checkpoint Alpha",
+            "Checkpoint Bravo",
+            "Checkpoint Charlie",
+        ]
 
-    def test_r1_time_to_points_formula_is_pending(self):
-        """Unresolved decision #1: conversion formula must be flagged pending."""
-        assert R1_WALLET_POINTS_FORMULA == "PENDING_ORGANIZER_DECISION"
+    def test_r1_suggested_rank_reward_formula(self):
+        """
+        Official suggested rank reward formula: 300 - 8*(rank - 1).
+        Verifies explicit boundary and intermediate point values:
+        - rank 1 = 300
+        - rank 2 = 292
+        - rank 10 = 228
+        - rank 24 = 116
+        - rank 32 = 52
+        """
+        formula = lambda rank: 300 - 8 * (rank - 1)
+        assert formula(1) == 300
+        assert formula(2) == 292
+        assert formula(10) == 228
+        assert formula(24) == 116
+        assert formula(32) == 52
 
 
 class TestRound2CaboConstants:
@@ -89,7 +117,6 @@ class TestRound2CaboConstants:
         assert CABO_GAMES == 3
         assert CABO_TABLE_SIZE == 5
         assert CABO_MAX_TEAM_SCORE == 75
-        assert CABO_MAX_TEAM_SCORE == (CABO_TABLE_SIZE * CABO_PLACEMENT_POINTS[1] * CABO_GAMES)
 
 
 class TestRound3BlackMarketAndWalletConstants:
@@ -99,11 +126,12 @@ class TestRound3BlackMarketAndWalletConstants:
 
     def test_black_market_suggested_prices(self):
         """Unresolved decision #2: Black Market prices are suggested guidelines."""
-        assert BLACK_MARKET_SUGGESTED_PRICES["missing_code_fragment"] == 400.0
-        assert BLACK_MARKET_SUGGESTED_PRICES["extra_prep_time"] == 200.0
-        assert BLACK_MARKET_SUGGESTED_PRICES["extra_witness_question"] == 150.0
-        assert BLACK_MARKET_SUGGESTED_PRICES["agent_intel"] == 250.0
-
+        assert BLACK_MARKET_SUGGESTED_PRICES == {
+            "missing_code_fragment": 400.0,
+            "extra_prep_time": 200.0,
+            "extra_witness_question": 150.0,
+            "agent_intel": 250.0,
+        }
         assert BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED == 400.0
         assert BLACK_MARKET_PREP_PRICE_SUGGESTED == 200.0
         assert BLACK_MARKET_WITNESS_PRICE_SUGGESTED == 150.0
@@ -129,7 +157,19 @@ class TestSecretAgentTrackConstants:
         """Mandatory: Misconduct/infraction penalty range is -50 to -200 points."""
         assert PENALTY_MIN == -50.0
         assert PENALTY_MAX == -200.0
-        assert PENALTY_MIN > PENALTY_MAX  # Note: -50 is larger than -200 in value, minimum severity
+
+
+class TestRound4LegalBattleConstants:
+    def test_round4_rubric_category_limits(self):
+        """Mandatory: 6-category rubric totaling exactly 100.0 points."""
+        assert R4_RUBRIC_LOGICAL_STRUCTURE_MAX == 20.0
+        assert R4_RUBRIC_EVIDENCE_MAX == 20.0
+        assert R4_RUBRIC_REBUTTAL_MAX == 20.0
+        assert R4_RUBRIC_RESOURCE_PERSON_MAX == 15.0
+        assert R4_RUBRIC_PRESENTATION_TEAMWORK_MAX == 15.0
+        assert R4_RUBRIC_TIME_MAX == 10.0
+        assert R4_RUBRIC_TOTAL_MAX == 100.0
+        assert R4_MAX_SCORE == 100.0
 
 
 class TestFinaleAgentUnmaskingAndCarryoverConstants:

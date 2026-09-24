@@ -1,5 +1,6 @@
 import uuid
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.core.database import Base
 from app.core.constants import (
@@ -59,10 +60,6 @@ class Round4ConfigModel(Base):
     finalized_by = Column(String(100), nullable=True)
 
 
-from app.models.round_models import Round4Pair
-Round4PairModel = Round4Pair
-
-
 class Round4StageTimingModel(Base):
     __tablename__ = "round4_stages"
 
@@ -76,38 +73,51 @@ class Round4StageTimingModel(Base):
     notes = Column(Text, nullable=True)
 
 
-class Round4JudgeScoreModel(Base):
+class Round4JudgeScore(Base):
     __tablename__ = "round4_judge_scores"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        UniqueConstraint("judge_id", "team_id", name="uq_round4_judge_team"),
+    )
 
-    id = Column(String(100), primary_key=True, default=lambda: f"r4js-{uuid.uuid4().hex[:8]}")  # js-{judge_id}-{team_id}
-    judge_id = Column(String(50), nullable=False)
-    judge_name = Column(String(100), nullable=False)
-    team_id = Column(String(50), ForeignKey("teams.id"), nullable=False)
-    scores = Column("scores_json", JSON, default=dict, nullable=False)
-    total_score = Column(Float, nullable=False)
+    id = Column(String(100), primary_key=True, default=lambda: f"r4js-{uuid.uuid4().hex[:8]}")
+    judge_id = Column(String(100), nullable=False, index=True)
+    judge_name = Column(String(255), nullable=False)
+    team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    scores_json = Column(JSON, default=dict, nullable=False)
+    total_score = Column(Float, default=0.0, nullable=False)
     is_submitted = Column(Boolean, default=True, nullable=False)
-    submitted_at = Column(DateTime, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     comments = Column(Text, nullable=True)
 
+    team = relationship("Team")
+
     @property
-    def scores_json(self):
-        return self.scores
+    def scores(self):
+        return self.scores_json
 
-    @scores_json.setter
-    def scores_json(self, value):
-        self.scores = value
+    @scores.setter
+    def scores(self, value):
+        self.scores_json = value
 
 
-class Round4AgentGuessModel(Base):
+class Round4AgentGuess(Base):
     __tablename__ = "round4_agent_guesses"
-    __table_args__ = {"extend_existing": True}
 
     id = Column(String(100), primary_key=True, default=lambda: f"r4ag-{uuid.uuid4().hex[:8]}")
-    team_id = Column(String(50), ForeignKey("teams.id"), primary_key=True)
+    team_id = Column(String(50), ForeignKey("teams.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     outcome = Column(String(50), default="none", nullable=False)
     points_awarded = Column(Float, nullable=True)
     is_verified = Column(Boolean, default=False, nullable=False)
-    verified_by = Column(String(100), nullable=True)
-    verified_at = Column(DateTime, nullable=True)
+    verified_by = Column(String(255), nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+
+    team = relationship("Team")
+
+
+# Backward-compatible aliases
+Round4JudgeScoreModel = Round4JudgeScore
+Round4AgentGuessModel = Round4AgentGuess
+
+from app.models.round_models import Round4Pair
+Round4PairModel = Round4Pair
