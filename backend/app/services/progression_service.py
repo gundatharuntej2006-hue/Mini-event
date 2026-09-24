@@ -55,6 +55,8 @@ def get_eligible_team_ids(db: Session, target_round: int) -> List[str]:
     )
     return [q.team_id for q in advancing]
 
+
+
 def record_round_finalization(
     db: Session,
     round_number: int,

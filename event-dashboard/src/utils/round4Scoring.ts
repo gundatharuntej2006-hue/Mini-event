@@ -13,6 +13,25 @@ import {
   TeamFinalScoreBreakdown,
   Round4ChecklistItem,
 } from '../types/round4';
+import {
+  R4_FINALISTS,
+  PODIUM_SIZE,
+  DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+  AGENT_CORRECT_GUESS,
+  AGENT_WRONG_GUESS,
+  AGENT_GUESS_MIN,
+  AGENT_GUESS_MAX,
+} from '../constants/tournamentConstants';
+
+export {
+  R4_FINALISTS,
+  PODIUM_SIZE,
+  DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+  AGENT_CORRECT_GUESS,
+  AGENT_WRONG_GUESS,
+  AGENT_GUESS_MIN,
+  AGENT_GUESS_MAX,
+};
 
 export const DEFAULT_RUBRIC_CATEGORIES: RubricCategoryConfig[] = [
   {
@@ -129,7 +148,7 @@ export const DEFAULT_FINAL_SCORE_FORMULA: FinalScoreFormulaConfig = {
   // Organizers may adjust weighting. Labeled "Suggested — pending organizer confirmation".
   panelScoreWeight: 1.0,
   agentGuessingWeight: 1.0,
-  blackMarketWeightPercent: 10, // 10%
+  blackMarketWeightPercent: DEFAULT_CARRYOVER_WEIGHT_PERCENT, // 10% (suggested, configurable)
   isFormulaConfirmed: false,
   confirmedAt: null,
   confirmedBy: null,

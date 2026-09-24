@@ -8,19 +8,35 @@ import {
   Round3EngineResult,
   BlackMarketRankingMetric,
 } from '../types/round3';
+import {
+  STARTING_WALLET_BALANCE,
+  DEPRECATED_R3_STARTING_BALANCE,
+  CODE_FRAGMENT_COUNT,
+  FINAL_CODE_REQUIRED_FOR_R4,
+  BLACK_MARKET_SUGGESTED_PRICES,
+} from '../constants/tournamentConstants';
+
+export {
+  STARTING_WALLET_BALANCE,
+  DEPRECATED_R3_STARTING_BALANCE,
+  CODE_FRAGMENT_COUNT,
+  FINAL_CODE_REQUIRED_FOR_R4,
+  BLACK_MARKET_SUGGESTED_PRICES,
+};
 
 export const DEFAULT_ROUND3_CONFIG: BlackMarketConfig = {
-  // DEMO DEFAULTS: Unconfirmed rules pending official organizer confirmation
-  startingBalance: 100, // Demo Default · Unconfirmed Rule
+  // Authoritative starting wallet balance is STARTING_WALLET_BALANCE (1000).
+  // Retained at DEPRECATED_R3_STARTING_BALANCE (100) for backward compatibility with legacy demo tests.
+  startingBalance: DEPRECATED_R3_STARTING_BALANCE,
   allowNegativeBalance: false,
   rankingMetric: 'current_balance', // Demo Default · Unconfirmed Rule
   scoringDirection: 'higher_is_better', // Demo Default · Unconfirmed Rule
   isScoringConfigured: false, // Must be explicitly confirmed by organizers before official finalization
   hiddenCodeConfig: {
-    isRequiredForQualification: false,
-    requiredFragmentCount: null, // "Requirements not configured"
+    isRequiredForQualification: FINAL_CODE_REQUIRED_FOR_R4,
+    requiredFragmentCount: CODE_FRAGMENT_COUNT,
     isConfigured: false,
-    instructionsNote: 'Official fragment requirements pending organizer confirmation.',
+    instructionsNote: 'Official fragment requirements: 2 fragments required for Round 4 gate.',
   },
   isFinalized: false,
   finalizedAt: null,

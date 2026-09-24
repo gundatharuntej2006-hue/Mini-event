@@ -9,6 +9,21 @@ import {
   FinaleChecklistItem,
   FinaleSummaryStats,
 } from '../types/finale';
+import {
+  PODIUM_SIZE,
+  AGENT_CORRECT_GUESS,
+  AGENT_WRONG_GUESS,
+  AGENT_GUESS_MIN,
+  AGENT_GUESS_MAX,
+} from '../constants/tournamentConstants';
+
+export {
+  PODIUM_SIZE,
+  AGENT_CORRECT_GUESS,
+  AGENT_WRONG_GUESS,
+  AGENT_GUESS_MIN,
+  AGENT_GUESS_MAX,
+};
 
 export const DEFAULT_FINALE_CRITERIA: FinaleScoringCriterion[] = [
   {
@@ -354,5 +369,47 @@ export function computeFinaleSummaryStats(
     championTeamName: champion?.teamName || null,
     runnerUp1TeamName: r1?.teamName || null,
     runnerUp2TeamName: r2?.teamName || null,
+  };
+}
+
+/**
+ * Pure calculation of a squad's composite final championship score (Step 15).
+ * Formula: Final Score = Legal Battle Panel Score + Agent Guessing Points + (Remaining Black Market Points * carryoverWeight)
+ */
+export function calculateFinalChampionshipScore(
+  legalBattleScore: number | null,
+  agentGuessingPoints: number,
+  remainingBlackMarketPoints: number,
+  carryoverWeight: number = 0.10
+): {
+  legalBattleScore: number | null;
+  agentGuessingPoints: number;
+  remainingBlackMarketPoints: number;
+  carryoverWeight: number;
+  legalBattleComponent: number | null;
+  agentGuessingComponent: number;
+  blackMarketComponent: number;
+  finalScore: number | null;
+} {
+  const lbComp = legalBattleScore !== null ? Number(legalBattleScore) : null;
+  const agComp = Number(agentGuessingPoints);
+  const bmBalance = Number(remainingBlackMarketPoints);
+  const weight = Number(carryoverWeight);
+  const bmComp = Number((bmBalance * weight).toFixed(2));
+
+  let finalScore: number | null = null;
+  if (lbComp !== null) {
+    finalScore = Number((lbComp + agComp + bmComp).toFixed(2));
+  }
+
+  return {
+    legalBattleScore: lbComp,
+    agentGuessingPoints: agComp,
+    remainingBlackMarketPoints: bmBalance,
+    carryoverWeight: weight,
+    legalBattleComponent: lbComp,
+    agentGuessingComponent: agComp,
+    blackMarketComponent: bmComp,
+    finalScore,
   };
 }

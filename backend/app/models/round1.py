@@ -1,13 +1,14 @@
-﻿from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, JSON, ForeignKey
 from datetime import datetime, timezone
 from app.core.database import Base
+from app.core.constants import DEFAULT_R1_HINT_PENALTY_SECONDS, DEFAULT_R1_CHECKPOINTS
 
 class Round1ConfigModel(Base):
     __tablename__ = "round1_config"
 
     id = Column(Integer, primary_key=True, default=1)
-    penalty_per_hint_seconds = Column(Integer, default=120, nullable=False)
-    checkpoint_names = Column(JSON, default=lambda: ["Checkpoint Alpha", "Checkpoint Bravo", "Checkpoint Charlie"])
+    penalty_per_hint_seconds = Column(Integer, default=DEFAULT_R1_HINT_PENALTY_SECONDS, nullable=False)
+    checkpoint_names = Column(JSON, default=lambda: list(DEFAULT_R1_CHECKPOINTS))
     is_finalized = Column(Boolean, default=False, nullable=False)
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(String(100), nullable=True)

@@ -5,17 +5,29 @@ import {
   Round2SummaryStats,
   Round2EngineResult,
 } from '../types/round2';
+import {
+  CABO_PLACEMENT_POINTS,
+  CABO_GAMES,
+  CABO_TABLE_SIZE,
+  CABO_MAX_TEAM_SCORE,
+  DEPRECATED_CABO_24_POINT_SCALE,
+} from '../constants/tournamentConstants';
+
+export {
+  CABO_PLACEMENT_POINTS,
+  CABO_GAMES,
+  CABO_TABLE_SIZE,
+  CABO_MAX_TEAM_SCORE,
+};
 
 /**
- * Creates the demo default placement-point table (1st: 24 pts, ..., 24th: 1 pt).
- * Clearly marked as an unconfirmed demo default.
+ * DEPRECATED: Creates the legacy 24-point placement table (1st: 24 pts, ..., 24th: 1 pt).
+ * Official tournament rule specifies table scoring (1st=5, 2nd=3, 3rd=2, 4th=1, 5th=0)
+ * with 5 players per table, 3 games, max team score 75.
+ * Retained for backward compatibility with existing tests and mock data.
  */
 export function createDefaultPointTable(): Record<number, number> {
-  const table: Record<number, number> = {};
-  for (let i = 1; i <= 24; i++) {
-    table[i] = 25 - i; // 1st -> 24 pts, 24th -> 1 pt
-  }
-  return table;
+  return { ...DEPRECATED_CABO_24_POINT_SCALE };
 }
 
 export const DEFAULT_CABO_CONFIG: CaboConfig = {

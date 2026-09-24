@@ -3,8 +3,22 @@ from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, 
 from datetime import datetime, timezone
 from app.core.database import Base
 
+from app.core.constants import (
+    CABO_PLACEMENT_POINTS,
+    CABO_GAMES,
+    CABO_TABLE_SIZE,
+    CABO_MAX_TEAM_SCORE,
+    DEPRECATED_CABO_24_POINT_SCALE,
+)
+
 def default_cabo_point_table():
-    return {str(i): 25 - i for i in range(1, 25)}
+    """
+    DEPRECATED: Legacy 24-point scale (24..1) used by initial round 2 prototype.
+    Official tournament rule specifies table scoring (1st=5, 2nd=3, 3rd=2, 4th=1, 5th=0)
+    across 5-player tables, max team score 75.
+    Retained for backward-compatibility with existing unit tests.
+    """
+    return dict(DEPRECATED_CABO_24_POINT_SCALE)
 
 class CaboConfigModel(Base):
     __tablename__ = "round2_config"

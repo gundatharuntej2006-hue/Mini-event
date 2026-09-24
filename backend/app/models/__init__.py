@@ -34,10 +34,36 @@ from app.models.finale import (
     FinaleConfigModel,
     FinaleScorecardModel,
     FinaleAgentVerdictModel,
+    FinaleTeamGuessSubmissionModel,
+    FinaleAgentGuessModel,
+    FinaleTeamGuessSubmission,
+    FinaleAgentGuess,
+    FinaleChampionshipStandingModel,
+    FinaleChampionshipStanding,
     default_finale_criteria,
 )
 from app.models.progression import RoundQualification, TieReview, AuditLog
 from app.models.core import seed_default_teams
+
+# Official Tournament Models (Step 8)
+from app.models.wallet import TeamWallet, WalletTransaction, TransactionType
+from app.models.cabo import CaboTableAssignment, CaboPlayerScorecard
+from app.models.agent import (
+    SecretAgentDossier,
+    SecretAgentTask,
+    AgentDossierStatus,
+    AgentTaskStatus,
+)
+from app.models.code_hunt import FinalCodeRecord, FragmentStatus
+from app.models.black_market import (
+    BlackMarketPurchase,
+    BlackMarketAssetType,
+    PurchaseStatus,
+    BlackMarketAuction,
+    BlackMarketBid,
+    AuctionStatus,
+    BidStatus,
+)
 
 __all__ = [
     # Core Tharun models
@@ -79,9 +105,34 @@ __all__ = [
     "FinaleConfigModel",
     "FinaleScorecardModel",
     "FinaleAgentVerdictModel",
+    "FinaleTeamGuessSubmissionModel",
+    "FinaleAgentGuessModel",
+    "FinaleTeamGuessSubmission",
+    "FinaleAgentGuess",
+    "FinaleChampionshipStandingModel",
+    "FinaleChampionshipStanding",
     "default_finale_criteria",
     "RoundQualification",
     "TieReview",
     "AuditLog",
     "seed_default_teams",
+    # Official Tournament Models (Step 8)
+    "TeamWallet",
+    "WalletTransaction",
+    "TransactionType",
+    "CaboTableAssignment",
+    "CaboPlayerScorecard",
+    "SecretAgentDossier",
+    "SecretAgentTask",
+    "AgentDossierStatus",
+    "AgentTaskStatus",
+    "FinalCodeRecord",
+    "FragmentStatus",
+    "BlackMarketPurchase",
+    "BlackMarketAssetType",
+    "PurchaseStatus",
+    "BlackMarketAuction",
+    "BlackMarketBid",
+    "AuctionStatus",
+    "BidStatus",
 ]

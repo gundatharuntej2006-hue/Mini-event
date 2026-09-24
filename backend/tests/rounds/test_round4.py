@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from app.scoring.round4_scoring import calculate_panel_score, calculate_final_score_breakdown, process_round4_standings
 
 def test_panel_score_empty_and_average():
@@ -16,7 +16,7 @@ def test_panel_score_empty_and_average():
     assert avg["panel_score"] == 85.0
     assert avg["is_complete"] is True
 
-def test_final_score_withheld_if_formula_unconfirmed():
+def test_final_score_strictly_pure_rubric_panel_score():
     breakdown = calculate_final_score_breakdown(
         team_id="team-1",
         panel_score=85.0,
@@ -25,23 +25,24 @@ def test_final_score_withheld_if_formula_unconfirmed():
         formula={"isFormulaConfirmed": False, "panelScoreWeight": 1.0, "blackMarketWeightPercent": 10},
         is_guessing_configured=False
     )
-    assert breakdown["final_score"] is None
-    assert breakdown["is_complete"] is False
-    assert "Final score formula unconfirmed by organizers" in breakdown["missing_components"]
+    assert breakdown["final_score"] == 85.0
+    assert breakdown["is_complete"] is True
+    assert breakdown["agent_guessing_points"] is None
+    assert breakdown["black_market_contribution"] == 0.0
 
 def test_round4_cutoff_tie_blocks_finalization():
     records = []
     for i in range(8):
-        # Tie at 3rd cutoff (ranks 3 and 4 share 90.0 final score)
-        fs = 90.0 if (i == 2 or i == 3) else float(100 - i * 5)
+        # Tie at 3rd cutoff (ranks 3 and 4 share 90.0 panel score)
+        ps = 90.0 if (i == 2 or i == 3) else float(100 - i * 5)
         records.append({
             "team_id": f"team-{i + 1}",
             "team_number": i + 1,
             "team_name": f"Team {i + 1}",
-            "panel_score": 80.0,
+            "panel_score": ps,
             "is_judge_panel_complete": True,
             "final_score_breakdown": {
-                "final_score": fs,
+                "final_score": ps,
                 "is_complete": True
             }
         })
@@ -68,7 +69,7 @@ def test_round4_cutoff_tie_blocks_finalization():
     standings = process_round4_standings(
         records=records,
         pairs=pairs,
-        config={"final_score_formula": {"isFormulaConfirmed": True}, "advancing_teams_count": 3, "is_finalized": False},
+        config={"advancing_teams_count": 3, "is_finalized": False},
         round3_finalized=True
     )
     assert standings["can_finalize"] is False

@@ -43,7 +43,13 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const url = `${API_CONFIG.baseUrl}${API_CONFIG.apiPrefix}${endpoint}`;
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    let url: string;
+    if (cleanEndpoint.startsWith(API_CONFIG.apiPrefix) || cleanEndpoint.startsWith('/api/')) {
+      url = `${API_CONFIG.baseUrl}${cleanEndpoint}`;
+    } else {
+      url = `${API_CONFIG.baseUrl}${API_CONFIG.apiPrefix}${cleanEndpoint}`;
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -71,10 +77,20 @@ class ApiClient {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        let message = response.statusText;
+        if (typeof errorData.detail === 'string') {
+          message = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          message = errorData.detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ');
+        } else if (errorData.message) {
+          message = errorData.message;
+        }
+
         const apiError: ApiError = {
           status: response.status,
-          message: errorData.detail || errorData.message || response.statusText,
+          message,
         };
+
         if (response.status === 401 && token) {
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('auth_session_expired', { detail: apiError }));

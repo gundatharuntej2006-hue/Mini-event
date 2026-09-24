@@ -263,11 +263,10 @@ def test_round4_courtroom_pairings_and_scoring(client: TestClient, organizer_hea
     )
     assert guess_resp.status_code == 200
 
-    # Check Standings: total = 93.0 + 10.0 = 103.0
+    # Check Standings: total = 93.0 (pure Legal Battle rubric score, max 100)
     st4 = {s["teamId"]: s for s in client.get("/api/v1/rounds/4/standings").json()["data"]}
     assert st4[t_a]["juryScore"] == 93.0
-    assert st4[t_a]["agentGuessPoints"] == 10.0
-    assert st4[t_a]["totalScore"] == 103.0
+    assert st4[t_a]["totalScore"] == 93.0
 
 
 def test_grand_finale_and_podium(client: TestClient, organizer_headers: dict, marshal_headers: dict):

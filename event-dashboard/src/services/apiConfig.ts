@@ -32,7 +32,7 @@ function getInitialAppMode(): 'live' | 'demo' {
 }
 
 export const API_CONFIG = {
-  baseUrl: env.VITE_API_BASE_URL || 'http://127.0.0.1:8001',
+  baseUrl: env.VITE_API_BASE_URL || 'http://127.0.0.1:8000',
   apiPrefix: '/api/v1',
   eventName: env.VITE_EVENT_NAME || 'EVENT HQ · BMSIT 2026',
   get isMockEnabled(): boolean {

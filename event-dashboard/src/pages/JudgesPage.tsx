@@ -39,16 +39,16 @@ export function JudgesPage() {
 
         <SummaryMetric
           label="Evaluation Rubric"
-          value="4 Criteria"
-          subtext="Legal foundation, rebuttal, evidence, and timing (100 pts)"
+          value="6 Criteria"
+          subtext="Structure, Evidence, Rebuttal, Resource Person, Presentation, Time (100 pts)"
           icon={FileText}
           variant="purple"
         />
 
         <SummaryMetric
-          label="Finale Cutoff"
-          value="Top 3 Teams"
-          subtext="Top 3 advancing squads qualify for the Grand Finale podium"
+          label="Finale Advancement"
+          value="8 Finalist Squads"
+          subtext="All 8 squads advance to Grand Finale Secret Agent unmasking & championship"
           icon={Trophy}
           variant="amber"
         />

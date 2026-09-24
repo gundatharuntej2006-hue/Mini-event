@@ -2,20 +2,33 @@ import uuid
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, ForeignKey
 from datetime import datetime, timezone
 from app.core.database import Base
+from app.core.constants import (
+    STARTING_WALLET_BALANCE,
+    DEPRECATED_R3_STARTING_BALANCE,
+    CODE_FRAGMENT_COUNT,
+    FINAL_CODE_REQUIRED_FOR_R4,
+)
 
 def default_hidden_code_config():
+    """
+    Initial configuration state for Round 3 hidden code gate.
+    Under official rules (FINAL_CODE_REQUIRED_FOR_R4), exactly 2 fragments (CODE_FRAGMENT_COUNT)
+    are mandatory for Round 4 gate. Set to False initially until confirmed by organizers.
+    """
     return {
         "isRequiredForQualification": False,
-        "requiredFragmentCount": None,
+        "requiredFragmentCount": CODE_FRAGMENT_COUNT,
         "isConfigured": False,
-        "instructionsNote": "Official fragment requirements pending organizer confirmation."
+        "instructionsNote": "Official fragment requirements: 2 fragments required for Round 4 gate."
     }
 
 class BlackMarketConfigModel(Base):
     __tablename__ = "round3_config"
 
     id = Column(Integer, primary_key=True, default=1)
-    starting_balance = Column(Float, default=100.0, nullable=False)
+    # Note: Authoritative tournament wallet starting balance is STARTING_WALLET_BALANCE (1000.0).
+    # Default is set to DEPRECATED_R3_STARTING_BALANCE (100.0) for backward compatibility with legacy tests.
+    starting_balance = Column(Float, default=DEPRECATED_R3_STARTING_BALANCE, nullable=False)
     allow_negative_balance = Column(Boolean, default=False, nullable=False)
     ranking_metric = Column(String(50), default="current_balance", nullable=False)
     scoring_direction = Column(String(50), default="higher_is_better", nullable=False)

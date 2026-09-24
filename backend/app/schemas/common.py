@@ -49,6 +49,8 @@ class FinalizationResponse(BaseModel):
     finalized: bool = False
     advancing_team_ids: List[str] = Field(default_factory=list)
     champion_team_id: Optional[str] = None
+    runner_up1_team_id: Optional[str] = None
+    runner_up2_team_id: Optional[str] = None
     message: Optional[str] = None
 
     # Compatibility fields for legacy FinalizeRoundResponse

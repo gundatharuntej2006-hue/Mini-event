@@ -2,26 +2,44 @@ import uuid
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, JSON, Text, ForeignKey
 from datetime import datetime, timezone
 from app.core.database import Base
+from app.core.constants import (
+    R4_FINALISTS,
+    R4_ADVANCING_COUNT,
+    R4_MAX_SCORE,
+    R4_RUBRIC_LOGICAL_STRUCTURE_MAX,
+    R4_RUBRIC_EVIDENCE_MAX,
+    R4_RUBRIC_REBUTTAL_MAX,
+    R4_RUBRIC_RESOURCE_PERSON_MAX,
+    R4_RUBRIC_PRESENTATION_TEAMWORK_MAX,
+    R4_RUBRIC_TIME_MAX,
+    R4_RUBRIC_TOTAL_MAX,
+    DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+    AGENT_CORRECT_GUESS,
+    AGENT_WRONG_GUESS,
+)
+
 
 def default_round4_rubric():
     return [
-        {"id": "logical_structure", "name": "Logical structure", "maxMarks": 20, "isConfirmed": False},
-        {"id": "evidence_use", "name": "Use of evidence", "maxMarks": 20, "isConfirmed": False},
-        {"id": "rebuttal", "name": "Rebuttal", "maxMarks": 20, "isConfirmed": False},
-        {"id": "resource_questioning", "name": "Questioning the resource person", "maxMarks": 15, "isConfirmed": False},
-        {"id": "presentation_teamwork", "name": "Presentation and teamwork", "maxMarks": 15, "isConfirmed": False},
-        {"id": "time_management", "name": "Time management", "maxMarks": 10, "isConfirmed": False}
+        {"id": "logical_structure", "name": "Logical Structure", "maxMarks": int(R4_RUBRIC_LOGICAL_STRUCTURE_MAX), "isConfirmed": False},
+        {"id": "evidence", "name": "Use of Evidence", "maxMarks": int(R4_RUBRIC_EVIDENCE_MAX), "isConfirmed": False},
+        {"id": "rebuttal", "name": "Rebuttal", "maxMarks": int(R4_RUBRIC_REBUTTAL_MAX), "isConfirmed": False},
+        {"id": "resource_person_questioning", "name": "Questioning the Resource Person", "maxMarks": int(R4_RUBRIC_RESOURCE_PERSON_MAX), "isConfirmed": False},
+        {"id": "presentation_teamwork", "name": "Presentation and Teamwork", "maxMarks": int(R4_RUBRIC_PRESENTATION_TEAMWORK_MAX), "isConfirmed": False},
+        {"id": "time", "name": "Time Management", "maxMarks": int(R4_RUBRIC_TIME_MAX), "isConfirmed": False},
     ]
+
 
 def default_final_score_formula():
     return {
         "panelScoreWeight": 1.0,
         "agentGuessingWeight": 1.0,
-        "blackMarketWeightPercent": 10,
+        "blackMarketWeightPercent": DEFAULT_CARRYOVER_WEIGHT_PERCENT,
         "isFormulaConfirmed": False,
         "confirmedAt": None,
-        "confirmedBy": None
+        "confirmedBy": None,
     }
+
 
 class Round4ConfigModel(Base):
     __tablename__ = "round4_config"
@@ -35,13 +53,15 @@ class Round4ConfigModel(Base):
     guessing_points_for_correct = Column(Float, nullable=True)
     guessing_points_for_incorrect = Column(Float, nullable=True)
     final_score_formula = Column(JSON, default=default_final_score_formula, nullable=False)
-    advancing_teams_count = Column(Integer, default=3, nullable=True)
+    advancing_teams_count = Column(Integer, default=R4_ADVANCING_COUNT, nullable=True)
     is_finalized = Column(Boolean, default=False, nullable=False)
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(String(100), nullable=True)
 
+
 from app.models.round_models import Round4Pair
 Round4PairModel = Round4Pair
+
 
 class Round4StageTimingModel(Base):
     __tablename__ = "round4_stages"
@@ -55,6 +75,7 @@ class Round4StageTimingModel(Base):
     actual_duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
 
+
 class Round4JudgeScoreModel(Base):
     __tablename__ = "round4_judge_scores"
     __table_args__ = {"extend_existing": True}
@@ -63,16 +84,26 @@ class Round4JudgeScoreModel(Base):
     judge_id = Column(String(50), nullable=False)
     judge_name = Column(String(100), nullable=False)
     team_id = Column(String(50), ForeignKey("teams.id"), nullable=False)
-    scores = Column(JSON, default=dict, nullable=False)
+    scores = Column("scores_json", JSON, default=dict, nullable=False)
     total_score = Column(Float, nullable=False)
-    is_submitted = Column(Boolean, default=False, nullable=False)
+    is_submitted = Column(Boolean, default=True, nullable=False)
     submitted_at = Column(DateTime, nullable=True)
     comments = Column(Text, nullable=True)
+
+    @property
+    def scores_json(self):
+        return self.scores
+
+    @scores_json.setter
+    def scores_json(self, value):
+        self.scores = value
+
 
 class Round4AgentGuessModel(Base):
     __tablename__ = "round4_agent_guesses"
     __table_args__ = {"extend_existing": True}
 
+    id = Column(String(100), primary_key=True, default=lambda: f"r4ag-{uuid.uuid4().hex[:8]}")
     team_id = Column(String(50), ForeignKey("teams.id"), primary_key=True)
     outcome = Column(String(50), default="none", nullable=False)
     points_awarded = Column(Float, nullable=True)
