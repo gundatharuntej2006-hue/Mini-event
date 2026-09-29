@@ -1,4 +1,4 @@
-﻿import random
+import random
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
@@ -380,24 +380,25 @@ def mirror_round3_code_to_code_hunt(db: Session, rec: Round3CodeRecord, user: Us
                 return f.get("code") or f"FRAGMENT-{index + 1}"
         return None
 
-    first, second = value_at(0), value_at(1)
+    # The legacy record indexes fragments from 0; the code-hunt store numbers
+    # them from 1. Mirror EVERY fragment the Final Code has - four under
+    # ODDyssey. This handled only the first two, so a team that logged all four
+    # at the desk still read as holding half a code.
+    recorded = 0
+    for index in range(C.CODE_FRAGMENT_COUNT):
+        value = value_at(index)
+        if value:
+            code_hunt_service.record_fragment(
+                db, team_id=rec.team_id, fragment_number=index + 1,
+                fragment_value=value, actor=user.name, overwrite=True,
+            )
+            recorded += 1
 
-    if first:
-        code_hunt_service.record_fragment_1(
-            db, team_id=rec.team_id, fragment_value=first,
-            actor=user.name, overwrite=True,
-        )
-    if second:
-        code_hunt_service.record_fragment_2(
-            db, team_id=rec.team_id, fragment_value=second,
-            actor=user.name, overwrite=True,
-        )
-
-    # The gate checks a VERIFIED code, not merely two stored fragments. The
-    # legacy flow has no separate verification step - logging both fragments is
-    # the verification, done by the code verifier at the desk - so completing
-    # the pair here is what must satisfy it.
-    if first and second:
+    # The gate checks a VERIFIED code, not merely stored fragments. The legacy
+    # flow has no separate verification step - the code verifier logging every
+    # fragment at the desk IS the verification - so completing the set here is
+    # what must satisfy it.
+    if recorded == C.CODE_FRAGMENT_COUNT:
         assembled = code_hunt_service.assemble_final_code(db, rec.team_id)
         if assembled:
             code_hunt_service.verify_final_code(
@@ -474,6 +475,13 @@ def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_
         timing.hints_used = hints
         timing.hint_penalty_seconds = int(hints * penalty_per_hint)
 
+        # ODDyssey Section 4 rule penalties live only on the timing row - the
+        # legacy record has nowhere to carry them. Recomputing the adjusted
+        # time from hints alone would refund a phone-use or separation penalty
+        # every time anyone re-saved the legacy timings, which the Round 1 data
+        # entry screen does on every edit.
+        rule_penalty = int(timing.rule_penalty_seconds or 0)
+
         # compute_mini_round RECOMPUTES the duration from start_time and
         # completion_time and ignores duration_seconds entirely - a mini round
         # with no timestamps is treated as "Not Started" and scores nothing. The
@@ -485,7 +493,7 @@ def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_
             timing.completion_time = anchor + timedelta(seconds=int(duration))
             timing.status = "Completed"
             timing.duration_seconds = int(duration)
-            timing.adjusted_seconds = int(duration + hints * penalty_per_hint)
+            timing.adjusted_seconds = int(duration + hints * penalty_per_hint + rule_penalty)
         else:
             timing.start_time = None
             timing.completion_time = None
@@ -497,7 +505,26 @@ def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_
             timing.checkpoints = []
 
 
-def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = C.DEFAULT_R1_HINT_PENALTY_SECONDS):
+def get_team_rule_penalty_seconds(db: Session, team_id: str) -> int:
+    """
+    ODDyssey Section 4 rule penalties for one squad, summed across its gates.
+
+    These live on the timing rows, not on the legacy Round 1 record, which has
+    no column for them. The legacy leaderboard is what the dashboard shows and
+    what get_round1_standings ranks, so it has to fetch them rather than
+    recompute the adjusted time from hints alone.
+    """
+    rows = db.query(MiniRoundTimingModel).filter(
+        MiniRoundTimingModel.team_id == team_id
+    ).all()
+    return sum(int(r.rule_penalty_seconds or 0) for r in rows)
+
+
+def calculate_round1_record_scores(
+    rec: Round1Record,
+    penalty_per_hint: float = C.DEFAULT_R1_HINT_PENALTY_SECONDS,
+    rule_penalty_seconds: float = 0.0,
+):
     """Calculate raw total, penalties, adjusted total, and fastest mini-round."""
     mini_rounds = rec.mini_rounds_json or []
     raw_seconds = 0.0
@@ -529,6 +556,11 @@ def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 
         if not mr.get("isCompleted", False):
             all_completed = False
 
+    # "Total time = time spent at gates + hint penalties + rule penalties."
+    # Only the hint half was summed here, so a squad penalised for phone use
+    # or for splitting up still showed - and ranked on - its unpenalised time.
+    total_penalty += float(rule_penalty_seconds or 0)
+
     rec.raw_total_seconds = raw_seconds if all_completed else None
     rec.total_penalty_seconds = total_penalty
     rec.adjusted_total_seconds = (raw_seconds + total_penalty) if all_completed else None
@@ -543,7 +575,9 @@ def get_round1_records(db: Session) -> List[Round1Record]:
     
     records = db.execute(select(Round1Record)).scalars().all()
     for rec in records:
-        calculate_round1_record_scores(rec, penalty_per_hint)
+        calculate_round1_record_scores(
+            rec, penalty_per_hint, get_team_rule_penalty_seconds(db, rec.team_id)
+        )
     
     # Sort and rank records
     # Completed records sorted ascending by adjusted_total_seconds, then fastest_mini_round_seconds
@@ -596,10 +630,13 @@ def update_round1_record(db: Session, team_id: str, data: Round1RecordUpdateRequ
     
     round_state = get_round_by_number(db, 1)
     penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
-    calculate_round1_record_scores(rec, penalty_per_hint)
-    # Feed the store that Round 1 qualification actually reads. Without this,
-    # everything entered through the dashboard is invisible to standings.
+    # Mirror FIRST: the mirror writes the timing rows, and the rule penalties
+    # this record's totals need are read back off them.
     mirror_round1_record_to_timings(db, rec, penalty_per_hint)
+    db.flush()
+    calculate_round1_record_scores(
+        rec, penalty_per_hint, get_team_rule_penalty_seconds(db, rec.team_id)
+    )
 
     db.commit()
     db.refresh(rec)
@@ -839,7 +876,30 @@ def reverse_round3_transaction(db: Session, transaction_id: str, user: User) -> 
 
 
 def transfer_round3_funds(db: Session, data: Round3TransferRequest, user: User) -> Tuple[Round3Transaction, Round3Transaction]:
-    """Transfer funds between two teams using deterministic row-locking order."""
+    """
+    Transfer funds between two teams using deterministic row-locking order.
+
+    DISABLED BY DEFAULT. The ODDyssey plan, Section 5 (Black Market Rules),
+    states plainly: "Points cannot be transferred." Teams arriving at the
+    market with different balances is the whole point of the economy - Round 1
+    rank points, Cabo score and agent tasks are meant to be the difference
+    between them. Transfers let a team that is already eliminated hand its
+    balance to an ally, which turns the market into a pooled fund.
+
+    The machinery is kept rather than deleted, because an organiser may need to
+    correct a mis-entered award on the day. Flip ALLOW_POINT_TRANSFERS to
+    re-enable it, and expect to justify that to the committee.
+    """
+    if not C.ALLOW_POINT_TRANSFERS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Points cannot be transferred between teams (ODDyssey plan, "
+                "Section 5, Black Market Rules). To correct a mistake, reverse "
+                "the original transaction instead."
+            ),
+        )
+
     _check_round_not_finalized(db, 3)
     _validate_team_exists(db, data.from_team_id)
     _validate_team_exists(db, data.to_team_id)

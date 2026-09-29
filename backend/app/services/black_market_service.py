@@ -1,5 +1,5 @@
-﻿"""
-Round 3 â€” The Black Market & Qualification Engine Service for EVENT HQ.
+"""
+Round 3 — The Black Market & Qualification Engine Service for EVENT HQ.
 Source of Truth: Authoritative Event Documentation (Reconciled in Step 6B & Step 7).
 
 Manages:
@@ -42,6 +42,8 @@ from app.core.constants import (
     BLACK_MARKET_PREP_PRICE_SUGGESTED,
     BLACK_MARKET_WITNESS_PRICE_SUGGESTED,
     BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED,
+    BLACK_MARKET_CASE_HINT_PRICE_SUGGESTED,
+    BLACK_MARKET_STOCK,
     R3_QUALIFIERS,
     R2_QUALIFIERS,
 )
@@ -100,6 +102,20 @@ class RoundFinalizationError(BlackMarketError):
     pass
 
 
+class OutOfStockError(BlackMarketError):
+    """
+    Raised when a purchase would exceed a catalogue item's stock.
+
+    ODDyssey Section 5 gives every catalogue item a Quantity: 4 extra prep
+    times, 8 extra witness questions, 5 agent clue cards, 4 case-theme hints,
+    and code fragments "as required". The market is deliberately scarce - that
+    scarcity is what makes the sealed auction and the spend-versus-save
+    decision mean anything. Stock was published in the catalogue response but
+    never checked at the till, so any number of units could be sold.
+    """
+    pass
+
+
 # ==============================================================================
 # CATALOG & CONFIGURATION
 # ==============================================================================
@@ -107,10 +123,14 @@ DEFAULT_CATALOG = [
     {
         "asset_type": "MISSING_CODE_FRAGMENT",
         "name": "Missing Code Fragment Recovery",
-        "description": "Recovers 1 missing physical QR code fragment (Fragment 1 or Fragment 2) required for the Final Code gate.",
+        "description": (
+            "Recovers one missing fragment of the Final Code "
+            "(ODD, 42, ECHO or PRIME) required for the Round 4 gate."
+        ),
         "suggested_price": BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED,
         "category": "GATE_REQUIREMENT",
         "requires_details": True,
+        "stock": BLACK_MARKET_STOCK["MISSING_CODE_FRAGMENT"],   # "As required"
     },
     {
         "asset_type": "EXTRA_PREP_TIME",
@@ -119,6 +139,7 @@ DEFAULT_CATALOG = [
         "suggested_price": BLACK_MARKET_PREP_PRICE_SUGGESTED,
         "category": "TACTICAL_ADVANTAGE",
         "requires_details": False,
+        "stock": BLACK_MARKET_STOCK["EXTRA_PREP_TIME"],
     },
     {
         "asset_type": "EXTRA_WITNESS_QUESTION",
@@ -127,23 +148,94 @@ DEFAULT_CATALOG = [
         "suggested_price": BLACK_MARKET_WITNESS_PRICE_SUGGESTED,
         "category": "TACTICAL_ADVANTAGE",
         "requires_details": False,
+        "stock": BLACK_MARKET_STOCK["EXTRA_WITNESS_QUESTION"],
     },
     {
         "asset_type": "AGENT_INTEL",
         "name": "Classified Agent Intelligence Dossier",
-        "description": "Confidential tactical intelligence regarding agent activity and opponent patterns.",
+        "description": "Provides a verified clue about one finalist agent.",
         "suggested_price": BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED,
         "category": "TACTICAL_ADVANTAGE",
         "requires_details": False,
+        "stock": BLACK_MARKET_STOCK["AGENT_INTEL"],
+    },
+    {
+        # ODDyssey Section 5 lists a sixth item the catalogue was missing.
+        "asset_type": "CASE_THEME_HINT",
+        "name": "Case-Theme Hint",
+        "description": "Reveals one important issue in the legal case.",
+        "suggested_price": BLACK_MARKET_CASE_HINT_PRICE_SUGGESTED,
+        "category": "TACTICAL_ADVANTAGE",
+        "requires_details": False,
+        "stock": BLACK_MARKET_STOCK["CASE_THEME_HINT"],
     },
 ]
 
 
+def get_units_sold(db: Session, asset_type: str) -> int:
+    """
+    Total units of one catalogue item already sold across the whole tournament.
+
+    ODDyssey Section 5's Quantity column is a market-wide figure ("4 available"),
+    not a per-team allowance, so this counts every squad's completed purchases.
+    Refunded or cancelled rows do not consume stock.
+    """
+    clean = asset_type.upper().strip()
+    try:
+        mapped = BlackMarketAssetType[clean]
+    except KeyError:
+        return 0
+
+    rows = (
+        db.query(BlackMarketPurchase)
+        .filter(
+            BlackMarketPurchase.asset_type == mapped,
+            BlackMarketPurchase.status == PurchaseStatus.COMPLETED,
+        )
+        .all()
+    )
+    return sum(int(r.quantity or 0) for r in rows)
+
+
+def get_remaining_stock(db: Session, asset_type: str) -> Optional[int]:
+    """
+    Units of one item still on the shelf, or None when supply is unlimited
+    ("As required", which is how the plan stocks the missing code fragment).
+    """
+    clean = asset_type.upper().strip()
+    limit = BLACK_MARKET_STOCK.get(clean)
+    if limit is None:
+        return None
+    return max(0, int(limit) - get_units_sold(db, clean))
+
+
+def assert_in_stock(db: Session, asset_type: str, quantity: int) -> None:
+    """Refuses a purchase that would oversell an item. No-op for unlimited stock."""
+    remaining = get_remaining_stock(db, asset_type)
+    if remaining is None:
+        return
+    if quantity > remaining:
+        clean = asset_type.upper().strip()
+        raise OutOfStockError(
+            f"'{clean}' is out of stock: {remaining} unit(s) remaining, "
+            f"{quantity} requested."
+        )
+
+
 def get_market_catalog(db: Session) -> List[Dict[str, Any]]:
     """
-    Returns the complete list of available Black Market items with suggested default prices.
+    Returns the complete list of available Black Market items with suggested
+    default prices and the stock still on the shelf, so the market screen can
+    grey out an item before a squad tries to buy it.
     """
-    return [dict(item) for item in DEFAULT_CATALOG]
+    catalog = []
+    for item in DEFAULT_CATALOG:
+        row = dict(item)
+        row["units_sold"] = get_units_sold(db, row["asset_type"])
+        row["remaining_stock"] = get_remaining_stock(db, row["asset_type"])
+        row["is_sold_out"] = row["remaining_stock"] == 0
+        catalog.append(row)
+    return catalog
 
 
 def get_or_create_r3_config(db: Session) -> BlackMarketConfigModel:
@@ -194,6 +286,7 @@ def purchase_market_asset(
     price: Optional[float] = None,
     details: Optional[Dict[str, Any]] = None,
     actor: Optional[str] = None,
+    countersigned_by: Optional[str] = None,
 ) -> BlackMarketPurchase:
     """
     Safely executes a Black Market asset purchase for a qualified squad.
@@ -240,14 +333,14 @@ def purchase_market_asset(
 
         if frag_num is None:
             record = code_hunt_service.get_or_create_final_code_record(db, team_id)
-            owned = (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
-            if record.fragment_1_status not in owned:
-                frag_num = 1
-            elif record.fragment_2_status not in owned:
-                frag_num = 2
+            still_missing = code_hunt_service.missing_fragments(record)
+            if still_missing:
+                # Sell the lowest-numbered fragment the team is short of, so
+                # repeated purchases walk through everything it is missing.
+                frag_num = still_missing[0]
             else:
                 raise MissingFragmentPurchaseError(
-                    f"Team '{team_id}' already holds both code fragments."
+                    f"Team '{team_id}' already holds the complete Final Code."
                 )
 
         # Recover fragment (handles wallet debit internally)
@@ -257,7 +350,8 @@ def purchase_market_asset(
             fragment_number=frag_num,
             price=price,
             actor=actor,
-            recovered_value=details.get("recovered_value") if details else None
+            recovered_value=details.get("recovered_value") if details else None,
+            countersigned_by=countersigned_by,
         )
 
         # Retrieve the created purchase record
@@ -277,6 +371,10 @@ def purchase_market_asset(
         mapped_asset_type = BlackMarketAssetType[clean_asset]
     except KeyError:
         mapped_asset_type = BlackMarketAssetType.CUSTOM
+
+    # ODDyssey Section 5: the catalogue is stocked, not infinite. Checked
+    # before the wallet is touched so a refused purchase costs nothing.
+    assert_in_stock(db, clean_asset, quantity)
 
     # Determine unit price
     if price is not None:
@@ -309,7 +407,11 @@ def purchase_market_asset(
         transaction_id=tx.id,
         status=PurchaseStatus.COMPLETED,
         details=details or {},
-        purchased_by=actor
+        purchased_by=actor,
+        # ODDyssey Section 5: "Every transaction requires two organiser
+        # signatures." The second one is recorded on the purchase itself so
+        # the ledger shows both, not just whoever happened to be at the till.
+        countersigned_by=countersigned_by,
     )
     db.add(bmp)
 
@@ -321,7 +423,14 @@ def purchase_market_asset(
         actor_id=actor or "system",
         actor_role="ORGANIZER",
         round_number=3,
-        details={"team_id": team_id, "asset_type": clean_asset, "total_price": total_price, "quantity": quantity}
+        details={
+            "team_id": team_id,
+            "asset_type": clean_asset,
+            "total_price": total_price,
+            "quantity": quantity,
+            # ODDyssey Section 5: two organiser signatures per transaction.
+            "countersigned_by": countersigned_by,
+        }
     )
 
     db.commit()
@@ -683,8 +792,21 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
         code_rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team.id).first()
 
         is_verified = bool(code_rec and code_rec.final_code_verified)
-        frag1_status = code_rec.fragment_1_status.value if code_rec else FragmentStatus.PENDING.value
-        frag2_status = code_rec.fragment_2_status.value if code_rec else FragmentStatus.PENDING.value
+        # Four fragments under ODDyssey, not two. Reporting only the first two
+        # would leave an organiser unable to see why a team failed the gate.
+        frag_statuses = {
+            n: (
+                code_hunt_service.frag_status(code_rec, n).value
+                if code_rec else FragmentStatus.PENDING.value
+            )
+            for n in code_hunt_service.FRAGMENT_NUMBERS
+        }
+        frag1_status = frag_statuses.get(1, FragmentStatus.PENDING.value)
+        frag2_status = frag_statuses.get(2, FragmentStatus.PENDING.value)
+        fragments_held = sum(
+            1 for n in code_hunt_service.FRAGMENT_NUMBERS
+            if code_rec and code_hunt_service.owns_fragment(code_rec, n)
+        )
 
         squad_data.append({
             "team": team,
@@ -693,6 +815,8 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
             "is_code_verified": is_verified,
             "frag1_status": frag1_status,
             "frag2_status": frag2_status,
+            "frag_statuses": frag_statuses,
+            "fragments_held": fragments_held,
             "current_balance": float(wallet.current_balance),
             "total_spent": float(wallet.total_spent),
             "total_earned": float(wallet.total_earned),
@@ -764,6 +888,9 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
             "final_code_verified": True,
             "fragment_1_status": s["frag1_status"],
             "fragment_2_status": s["frag2_status"],
+            "fragment_3_status": s["frag_statuses"].get(3, "PENDING"),
+            "fragment_4_status": s["frag_statuses"].get(4, "PENDING"),
+            "fragments_held": s["fragments_held"],
             "rank": rank,
             "is_advancing": is_adv,
             "elimination_reason": None if is_adv else ("Cutoff by wallet points balance" if rank > R3_QUALIFIERS else None),
@@ -782,6 +909,9 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
             "final_code_verified": False,
             "fragment_1_status": s["frag1_status"],
             "fragment_2_status": s["frag2_status"],
+            "fragment_3_status": s["frag_statuses"].get(3, "PENDING"),
+            "fragment_4_status": s["frag_statuses"].get(4, "PENDING"),
+            "fragments_held": s["fragments_held"],
             "rank": current_rank,
             "is_advancing": False,
             "elimination_reason": "Final Code not verified (mandatory gate)",

@@ -70,6 +70,38 @@ class FinalCodeRecord(Base):
         DateTime(timezone=True),
         nullable=True
     )
+    # ODDyssey Section 2: the code is ODD - 42 - ECHO - PRIME, four fragments,
+    # two hidden in each of the first two rounds. This record held only two.
+    #   fragment 1 = ODD    (R1, The Signal Scramble)
+    #   fragment 2 = 42     (R1, The Route Riddle)
+    #   fragment 3 = ECHO   (R2, marked Cabo cards)
+    #   fragment 4 = PRIME  (R2, Prime Number Challenge)
+    fragment_3_status: Mapped[FragmentStatus] = mapped_column(
+        Enum(FragmentStatus, name="fragment_status_enum", create_constraint=False),
+        default=FragmentStatus.PENDING,
+        nullable=False
+    )
+    fragment_3_value: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    fragment_3_discovered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    fragment_4_status: Mapped[FragmentStatus] = mapped_column(
+        Enum(FragmentStatus, name="fragment_status_enum", create_constraint=False),
+        default=FragmentStatus.PENDING,
+        nullable=False
+    )
+    fragment_4_value: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    fragment_4_discovered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
     final_code_assembled: Mapped[Optional[str]] = mapped_column(
         String(255),
         nullable=True

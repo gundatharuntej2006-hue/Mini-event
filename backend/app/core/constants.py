@@ -1,18 +1,22 @@
 """
 EVENT HQ — Authoritative Tournament Constants & Rules Specification
-Source of Truth: Authoritative Event Documentation (Reconciled in Step 6B)
+Source of Truth: the ODDyssey Final Event Plan and the ODDyssey Rulebook.
 
 This module defines the single canonical source of truth for tournament rules,
 advancement cutoffs, scoring points, wallet economy, and agent parameters.
 
-Three specific organizer decisions remain unconfirmed in the authoritative event
-documentation and are explicitly marked as configurable or pending:
-1. R1 time-to-wallet-points conversion formula (R1_WALLET_POINTS_FORMULA = "PENDING_ORGANIZER_DECISION")
-2. Black Market item prices (BLACK_MARKET_SUGGESTED_PRICES: suggested defaults, configurable)
-3. Black Market carryover weight into Finale (FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED = 0.10, configurable)
+The three organizer decisions the older Event Documentation left open are all
+resolved by the ODDyssey Final Event Plan and Rulebook:
+1. R1 time-to-wallet-points conversion - Section 3 gives rank points, 1st = 24
+   down to 24th = 1, so 25 - rank (R1_WALLET_POINTS_FORMULA).
+2. Black Market item prices - Section 5's Market Catalogue prices every item
+   (BLACK_MARKET_SUGGESTED_PRICES); organisers may still adjust them live.
+3. Black Market carryover into the Finale - Section 1 and Rulebook Section 8
+   carry the remaining balance in FULL, not at the previously suggested 10%
+   (FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED = 1.0, still configurable).
 """
 
-from typing import Dict, Final, List
+from typing import Dict, Final, List, Optional
 
 # ==============================================================================
 # 1. TOURNAMENT STRUCTURE & ADVANCEMENT
@@ -43,9 +47,38 @@ DEFAULT_R1_CHECKPOINTS: Final[List[str]] = [
     "Checkpoint Charlie",
 ]
 
-# ORGANIZER DECISION #1: R1 Expedition Time-to-Wallet-Points conversion formula
-# Unresolved in official documentation. Explicitly marked as pending organizer decision.
-R1_WALLET_POINTS_FORMULA: Final[str] = "PENDING_ORGANIZER_DECISION"
+# ODDyssey Section 4, Round 1 Scoring:
+#   "Total time = time spent at gates + hint penalties + rule penalties"
+# Only the hint penalty existed. The other three violations had nowhere to be
+# recorded, so a squad that used a phone or split up finished on its raw time
+# and could out-rank a squad that played by the rules.
+R1_PENALTY_HINT_SECONDS: Final[int] = 300              # Using a hint, +5 minutes
+R1_PENALTY_PHONE_USE_SECONDS: Final[int] = 600         # Unauthorised phone use, +10 minutes
+R1_PENALTY_TEAM_SEPARATION_SECONDS: Final[int] = 300   # Separating from the team, +5 minutes
+
+# "Moving or damaging a clue: -20 points or disqualification." This one is
+# scored in points, not seconds, and the marshal may escalate to a DQ instead.
+R1_CLUE_DAMAGE_POINT_PENALTY: Final[float] = -20.0
+
+# Time-valued rule violations, keyed by the code stored on the timing row.
+R1_RULE_PENALTY_SECONDS: Final[Dict[str, int]] = {
+    "UNAUTHORISED_PHONE_USE": R1_PENALTY_PHONE_USE_SECONDS,
+    "TEAM_SEPARATION": R1_PENALTY_TEAM_SEPARATION_SECONDS,
+}
+
+# Every violation the plan names, including the two that are not time-valued.
+R1_RULE_VIOLATIONS: Final[List[str]] = [
+    "UNAUTHORISED_PHONE_USE",
+    "TEAM_SEPARATION",
+    "CLUE_DAMAGE",
+]
+
+# ODDyssey Section 3 resolves what the older documentation left pending:
+# "For Black Market points, qualifying teams receive rank points: 1st = 24,
+# 2nd = 23, continue decreasing, 24th = 1." Implemented in
+# wallet.calculate_r1_reward as 25 - rank, zero outside the qualifying 24.
+R1_WALLET_POINTS_FORMULA: Final[str] = "RANK_POINTS_25_MINUS_RANK"
+DEPRECATED_R1_WALLET_POINTS_FORMULA: Final[str] = "PENDING_ORGANIZER_DECISION"
 
 # ==============================================================================
 # 3. ROUND 2 — CABO TOURNAMENT
@@ -82,34 +115,80 @@ STARTING_WALLET_BALANCE: Final[float] = 1000.0
 # Deprecated demo starting balance
 DEPRECATED_R3_STARTING_BALANCE: Final[float] = 100.0
 
-# ORGANIZER DECISION #2: Black Market suggested item prices
-# These prices are documented as suggested guidelines; organizers may adjust live.
+# ODDyssey Section 5, Market Catalogue. Six items, not four - the case-theme
+# hint was missing entirely, and the fragment was priced at 400 rather than 350.
 BLACK_MARKET_SUGGESTED_PRICES: Final[Dict[str, float]] = {
-    "missing_code_fragment": 400.0,
+    "missing_code_fragment": 350.0,
     "extra_prep_time": 200.0,
     "extra_witness_question": 150.0,
     "agent_intel": 250.0,
+    "case_theme_hint": 200.0,
 }
 
-BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED: Final[float] = 400.0
+# ODDyssey Section 2: "Each missing fragment costs 350 points in the Black
+# Market" and "Teams may purchase more than one missing fragment."
+BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED: Final[float] = 350.0
 BLACK_MARKET_PREP_PRICE_SUGGESTED: Final[float] = 200.0
 BLACK_MARKET_WITNESS_PRICE_SUGGESTED: Final[float] = 150.0
 BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED: Final[float] = 250.0
+# ODDyssey Section 5 adds a sixth item: "Case-theme hint, 200 points,
+# 4 available, Reveals one important issue in the legal case."
+BLACK_MARKET_CASE_HINT_PRICE_SUGGESTED: Final[float] = 200.0
+
+# ODDyssey Section 5 limits stock. The market catalogue is not unlimited, so a
+# rich team cannot simply buy every advantage on the board.
+BLACK_MARKET_STOCK: Final[Dict[str, Optional[int]]] = {
+    "MISSING_CODE_FRAGMENT": None,   # "As required"
+    "EXTRA_PREP_TIME": 4,
+    "EXTRA_WITNESS_QUESTION": 8,
+    "AGENT_INTEL": 5,
+    "CASE_THEME_HINT": 4,
+}
+
+# "Points cannot be transferred." (ODDyssey Section 5, Black Market Rules)
+# Also: purchases cannot be cancelled, advantages cannot be exchanged, and
+# teams cannot buy more points.
+ALLOW_POINT_TRANSFERS: Final[bool] = False
+
+# "Every transaction requires two organiser signatures." (Section 5, Black
+# Market Rules; Rulebook Section 5: "Every purchase needs two organisers to
+# sign off on it.") Only the acting organiser was recorded, so a single person
+# could move a squad's points with nothing in the ledger showing who else
+# authorised it. Enforced at the API, where a real organiser acts; internal
+# service calls and seeding are unaffected.
+REQUIRE_BLACK_MARKET_DUAL_SIGNATURE: Final[bool] = True
 
 # ==============================================================================
 # 5. PASSIVE TRACK: CODE FRAGMENTS & FINAL CODE GATE
 # ==============================================================================
-# Exactly 2 physical/QR code fragments across the tournament:
-#   Fragment #1 recovered in Round 1 (Expedition)
-#   Fragment #2 recovered in Round 2 (Cabo)
-CODE_FRAGMENT_COUNT: Final[int] = 2
+# ODDyssey Section 2: the complete secret code is ODD - 42 - ECHO - PRIME, so
+# FOUR fragments, two from each of the first two rounds:
+#
+#   ODD    Round 1, The Signal Scramble  (odd-seat message)
+#   42     Round 1, The Route Riddle     (coordinate (7,4), map point 42)
+#   ECHO   Round 2, marked Cabo cards    (E, C, HO across the three games)
+#   PRIME  Round 2, Prime Number Challenge
+#
+# NOTE FOR ANYONE READING THE HISTORY: this was 4, was changed to 2 against an
+# earlier event document, and is 4 again under the ODDyssey plan. The ODDyssey
+# plan is the current specification.
+CODE_FRAGMENT_COUNT: Final[int] = 4
 
-# Both fragments are strictly required to assemble the Final Code to enter Round 4.
-# If a team is missing a fragment, they must purchase it at the Black Market.
+CODE_FRAGMENTS: Final[Dict[str, str]] = {
+    "ODD": "Round 1, The Signal Scramble",
+    "42": "Round 1, The Route Riddle",
+    "ECHO": "Round 2, marked Cabo cards",
+    "PRIME": "Round 2, Prime Number Challenge",
+}
+COMPLETE_SECRET_CODE: Final[str] = "ODD-42-ECHO-PRIME"
+
+# "A team must hold all four fragments after the Black Market to qualify for
+# Round 4" and "A team without the complete code after the market is
+# eliminated."
 FINAL_CODE_REQUIRED_FOR_R4: Final[bool] = True
 
-# Deprecated legacy 4-fragment hunt
-DEPRECATED_R3_FRAGMENT_COUNT: Final[int] = 4
+# Superseded two-fragment scheme, kept only as a marker of the old value.
+DEPRECATED_R3_FRAGMENT_COUNT: Final[int] = 2
 
 # ==============================================================================
 # 6. PASSIVE TRACK: UNDERCOVER SECRET AGENTS
@@ -150,8 +229,19 @@ AGENT_WRONG_GUESS: Final[float] = -20.0  # -20 pts penalty per false agent accus
 DEPRECATED_AGENT_CORRECT_BONUS: Final[float] = 10.0
 DEPRECATED_AGENT_WRONG_PENALTY: Final[float] = -5.0
 
-# ORGANIZER DECISION #3: Black Market Carryover Weight into Finale
-# Documented as suggested 10%; organizers may adjust.
-FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED: Final[float] = 0.10
-DEFAULT_CARRYOVER_WEIGHT_PERCENT: Final[float] = 10.0
-DEPRECATED_CARRYOVER_WEIGHT: Final[float] = 0.0
+# ODDyssey Final Event Plan, Section 1, and Rulebook Section 8:
+#   "Final Score = Legal Battle score + Agent-guessing score
+#    + Points remaining after the Black Market"
+#
+# The remaining balance carries in FULL. The 10% weight came from the older
+# Event Documentation, where it was explicitly an unresolved organiser
+# decision; neither ODDyssey document mentions a percentage. At 10% a squad
+# finishing on 900 points contributed 90, so the entire Black Market economy -
+# every earn, every purchase, every sealed bid - was worth less than one
+# Legal Battle rubric category.
+FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED: Final[float] = 1.0
+DEFAULT_CARRYOVER_WEIGHT_PERCENT: Final[float] = 100.0
+
+# Superseded weights, kept only as markers of the old values.
+DEPRECATED_CARRYOVER_WEIGHT: Final[float] = 0.10
+DEPRECATED_ZERO_CARRYOVER_WEIGHT: Final[float] = 0.0

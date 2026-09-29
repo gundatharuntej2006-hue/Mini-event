@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
 
@@ -187,20 +187,21 @@ def test_round3_black_market_economy_and_transfers(client: TestClient, organizer
         json={"fromTeamId": t1, "toTeamId": t2, "amount": 30.0, "reason": "Secret Document Purchase"},
         headers=marshal_headers
     )
-    assert transfer_resp.status_code == 200
+    # ODDyssey Section 5: "Points cannot be transferred."
+    assert transfer_resp.status_code == 403
 
-    # Check standings: T1 should have 100 + 50 - 30 = 120; T2 should have 100 + 30 = 130
+    # No transfer happened, so T1 keeps its 1000 + 50 and T2 its 1000.
     st = {s["teamId"]: s for s in client.get("/api/v1/rounds/3/standings").json()["data"]}
-    assert st[t1]["currentBalance"] == 1020.0  # Section 3.3: start on 1,000
-    assert st[t2]["currentBalance"] == 1030.0
+    assert st[t1]["currentBalance"] == 1050.0  # Section 3.3: start on 1,000
+    assert st[t2]["currentBalance"] == 1000.0
 
     # Reversal of earn transaction
     rev_resp = client.post(f"/api/v1/rounds/3/transactions/{tx_id}/reverse", headers=organizer_headers)
     assert rev_resp.status_code == 200
 
-    # Check updated balance: T1 has 1020 - 50 = 970.0 (Section 3.3: start on 1,000)
+    # Check updated balance: T1 has 1050 - 50 = 1000.0 (Section 3.3: start on 1,000)
     st_after = {s["teamId"]: s for s in client.get("/api/v1/rounds/3/standings").json()["data"]}
-    assert st_after[t1]["currentBalance"] == 970.0
+    assert st_after[t1]["currentBalance"] == 1000.0
 
     # Update code fragment discovery
     frag_resp = client.put(

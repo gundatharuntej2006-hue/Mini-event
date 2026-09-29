@@ -1,6 +1,32 @@
 ﻿from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+from app.core.constants import (
+    R1_PENALTY_PHONE_USE_SECONDS,
+    R1_PENALTY_TEAM_SEPARATION_SECONDS,
+)
+
+
+def compute_rule_penalty_seconds(mini_round: Dict[str, Any]) -> int:
+    """
+    Time added by ODDyssey's non-hint Round 1 rule violations.
+
+    Section 4, Round 1 Scoring:
+        Unauthorised phone use      +10 minutes
+        Team members separating     +5 minutes
+        Moving or damaging a clue   -20 points or disqualification
+
+    Clue damage is scored in points, not seconds, so it adds no time here;
+    round1_service applies its wallet penalty separately.
+    """
+    phone = max(0, int(mini_round.get("phone_use_count", 0) or 0))
+    separation = max(0, int(mini_round.get("separation_count", 0) or 0))
+    return (
+        phone * R1_PENALTY_PHONE_USE_SECONDS
+        + separation * R1_PENALTY_TEAM_SEPARATION_SECONDS
+    )
+
+
 def compute_mini_round(
     mini_round: Dict[str, Any],
     penalty_per_hint_seconds: int
@@ -10,6 +36,16 @@ def compute_mini_round(
     mr["hints_used"] = hints
     hint_penalty = hints * penalty_per_hint_seconds
     mr["hint_penalty_seconds"] = hint_penalty
+
+    # "Total time = time spent at gates + hint penalties + rule penalties."
+    # The rule half of that sum had no implementation, so a squad that used a
+    # phone or split up was ranked on its raw time like everyone else.
+    mr["phone_use_count"] = max(0, int(mr.get("phone_use_count", 0) or 0))
+    mr["separation_count"] = max(0, int(mr.get("separation_count", 0) or 0))
+    mr["clue_damage_count"] = max(0, int(mr.get("clue_damage_count", 0) or 0))
+    rule_penalty = compute_rule_penalty_seconds(mr)
+    mr["rule_penalty_seconds"] = rule_penalty
+    total_penalty = hint_penalty + rule_penalty
 
     start_str = mr.get("start_time")
     end_str = mr.get("completion_time")
@@ -22,7 +58,7 @@ def compute_mini_round(
             if end_dt >= start_dt:
                 duration = round((end_dt - start_dt).total_seconds())
                 mr["duration_seconds"] = duration
-                mr["adjusted_seconds"] = duration + hint_penalty
+                mr["adjusted_seconds"] = duration + total_penalty
                 mr["status"] = "Completed"
             else:
                 mr["duration_seconds"] = None
@@ -62,7 +98,12 @@ def compute_team_totals(
         )
     )
 
-    total_penalty_seconds = sum(mr.get("hint_penalty_seconds", 0) or 0 for mr in updated_mini_rounds)
+    # Both halves of the plan's formula. Summing only the hint penalty here is
+    # what let rule violations disappear from the adjusted total even once the
+    # mini-round itself had them.
+    total_hint_penalty_seconds = sum(mr.get("hint_penalty_seconds", 0) or 0 for mr in updated_mini_rounds)
+    total_rule_penalty_seconds = sum(mr.get("rule_penalty_seconds", 0) or 0 for mr in updated_mini_rounds)
+    total_penalty_seconds = total_hint_penalty_seconds + total_rule_penalty_seconds
     raw_total_seconds = None
     adjusted_total_seconds = None
     fastest_mini_round_seconds = None
@@ -76,6 +117,9 @@ def compute_team_totals(
     res["mini_rounds"] = updated_mini_rounds
     res["raw_total_seconds"] = raw_total_seconds
     res["total_penalty_seconds"] = total_penalty_seconds
+    res["total_hint_penalty_seconds"] = total_hint_penalty_seconds
+    res["total_rule_penalty_seconds"] = total_rule_penalty_seconds
+    res["clue_damage_count"] = sum(mr.get("clue_damage_count", 0) or 0 for mr in updated_mini_rounds)
     res["adjusted_total_seconds"] = adjusted_total_seconds
     res["fastest_mini_round_seconds"] = fastest_mini_round_seconds
     res["is_complete"] = all_three_completed

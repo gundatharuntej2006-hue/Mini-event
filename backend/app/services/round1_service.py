@@ -2,11 +2,20 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
-from app.core.constants import DEFAULT_R1_HINT_PENALTY_SECONDS
+from app.core.constants import (
+    DEFAULT_R1_HINT_PENALTY_SECONDS,
+    R1_CLUE_DAMAGE_POINT_PENALTY,
+    R1_RULE_VIOLATIONS,
+)
 from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
 from app.models.core import Team
+from app.models.team import TeamStatus
 from app.models.progression import TieReview
-from app.scoring.round1_scoring import process_round1_standings, compute_mini_round
+from app.scoring.round1_scoring import (
+    process_round1_standings,
+    compute_mini_round,
+    compute_rule_penalty_seconds,
+)
 from app.services.audit_service import log_audit_event
 from app.services.progression_service import record_round_finalization, get_eligible_team_ids, is_round_finalized
 from app.services.tie_review_service import get_or_create_tie_review
@@ -81,7 +90,13 @@ def record_mini_round_timing(db: Session, team_id: str, input_data: MiniRoundTim
         "start_time": input_data.start_time,
         "completion_time": input_data.completion_time,
         "hints_used": input_data.hints_used,
-        "checkpoints": [c.model_dump() for c in (input_data.checkpoints or [])]
+        "checkpoints": [c.model_dump() for c in (input_data.checkpoints or [])],
+        # Rule violations already logged for this gate must survive a re-entry
+        # of the timings, or re-typing a corrected finish time would quietly
+        # refund the penalty.
+        "phone_use_count": timing.phone_use_count or 0,
+        "separation_count": timing.separation_count or 0,
+        "clue_damage_count": timing.clue_damage_count or 0,
     }
     processed = compute_mini_round(mr_dict, cfg.penalty_per_hint_seconds)
 
@@ -92,6 +107,7 @@ def record_mini_round_timing(db: Session, team_id: str, input_data: MiniRoundTim
     timing.completion_time = comp_dt
     timing.hints_used = processed["hints_used"]
     timing.hint_penalty_seconds = processed["hint_penalty_seconds"]
+    timing.rule_penalty_seconds = processed["rule_penalty_seconds"]
     timing.duration_seconds = processed["duration_seconds"]
     timing.adjusted_seconds = processed["adjusted_seconds"]
     timing.status = processed["status"]
@@ -124,8 +140,13 @@ def update_hints(db: Session, team_id: str, mini_round_number: int, hints_used: 
 
     timing.hints_used = max(0, hints_used)
     timing.hint_penalty_seconds = timing.hints_used * cfg.penalty_per_hint_seconds
+    timing.rule_penalty_seconds = _rule_penalty_for(timing)
     if timing.duration_seconds is not None:
-        timing.adjusted_seconds = timing.duration_seconds + timing.hint_penalty_seconds
+        timing.adjusted_seconds = (
+            timing.duration_seconds
+            + timing.hint_penalty_seconds
+            + timing.rule_penalty_seconds
+        )
 
     log_audit_event(
         db=db,
@@ -140,6 +161,165 @@ def update_hints(db: Session, team_id: str, mini_round_number: int, hints_used: 
     db.commit()
     db.refresh(timing)
     return timing
+
+def _rule_penalty_for(timing: MiniRoundTimingModel) -> int:
+    """Seconds this gate's logged rule violations add, per ODDyssey Section 4."""
+    return compute_rule_penalty_seconds({
+        "phone_use_count": timing.phone_use_count or 0,
+        "separation_count": timing.separation_count or 0,
+        "clue_damage_count": timing.clue_damage_count or 0,
+    })
+
+
+def record_rule_violation(
+    db: Session,
+    team_id: str,
+    mini_round_number: int,
+    violation: str,
+    count: int,
+    actor,
+    disqualify: bool = False,
+) -> MiniRoundTimingModel:
+    """
+    Logs an ODDyssey Section 4 rule violation against one Round 1 gate.
+
+        Unauthorised phone use      +10 minutes
+        Team members separating     +5 minutes
+        Moving or damaging a clue   -20 points, or disqualification
+
+    The plan scores Round 1 as "time spent at gates + hint penalties + rule
+    penalties", but only the hint half existed anywhere in the platform. A
+    marshal who caught a squad on its phone had nowhere to record it, so the
+    squad kept its raw time and could out-rank a squad that played clean - and
+    Round 1 decides who reaches Round 2.
+
+    The first two violations add time. Clue damage is scored in points instead,
+    and a marshal may escalate it to a disqualification.
+
+    `count` is the new total for this gate, not an increment, so a mis-entry is
+    corrected by writing the right number rather than by logging a negative.
+    """
+    cfg = get_or_create_round1_config(db)
+    if cfg.is_finalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Round 1 is finalized. No penalty edits permitted.",
+        )
+
+    clean = (violation or "").upper().strip()
+    if clean not in R1_RULE_VIOLATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown Round 1 rule violation '{violation}'. "
+                f"Expected one of: {', '.join(R1_RULE_VIOLATIONS)}."
+            ),
+        )
+    if mini_round_number not in (1, 2, 3):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="mini_round_number must be 1, 2 or 3.",
+        )
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Team '{team_id}' not found.",
+        )
+
+    timing_id = f"r1-{team_id}-{mini_round_number}"
+    timing = db.query(MiniRoundTimingModel).filter(
+        MiniRoundTimingModel.id == timing_id
+    ).first()
+    if not timing:
+        timing = MiniRoundTimingModel(
+            id=timing_id,
+            team_id=team_id,
+            mini_round_number=mini_round_number,
+            phone_use_count=0,
+            separation_count=0,
+            clue_damage_count=0,
+            rule_penalty_seconds=0,
+        )
+        db.add(timing)
+        db.flush()
+
+    count = max(0, int(count))
+    previous = {
+        "UNAUTHORISED_PHONE_USE": timing.phone_use_count or 0,
+        "TEAM_SEPARATION": timing.separation_count or 0,
+        "CLUE_DAMAGE": timing.clue_damage_count or 0,
+    }[clean]
+
+    if clean == "UNAUTHORISED_PHONE_USE":
+        timing.phone_use_count = count
+    elif clean == "TEAM_SEPARATION":
+        timing.separation_count = count
+    else:
+        timing.clue_damage_count = count
+
+    timing.rule_penalty_seconds = _rule_penalty_for(timing)
+    if timing.duration_seconds is not None:
+        timing.adjusted_seconds = (
+            timing.duration_seconds
+            + (timing.hint_penalty_seconds or 0)
+            + timing.rule_penalty_seconds
+        )
+
+    # "Moving or damaging a clue: -20 points or disqualification." The points
+    # come off the tournament wallet. Only newly logged incidents are charged,
+    # so re-saving the same number does not bill the squad twice.
+    #
+    # This does NOT go through wallet.apply_penalty: that enforces the
+    # misconduct band of -50 to -200 and would reject -20 outright.
+    newly_charged = count - previous
+    if clean == "CLUE_DAMAGE" and newly_charged > 0:
+        from app.services import wallet as wallet_service
+        from app.models.wallet import TransactionType
+
+        magnitude = abs(R1_CLUE_DAMAGE_POINT_PENALTY) * newly_charged
+        actor_id = getattr(actor, "id", None) or "system"
+        wallet_service.debit(
+            db=db,
+            team_id=team_id,
+            amount=magnitude,
+            transaction_type=TransactionType.PENALTY,
+            description=(
+                f"Round 1 rule violation (-{magnitude:.1f} pts): moving or "
+                f"damaging a clue (x{newly_charged}, gate {mini_round_number})"
+            ),
+            reference_type="R1_CLUE_DAMAGE",
+            reference_id=f"{timing_id}-{count}",
+            notes=f"Logged by {actor_id}.",
+            created_by=actor_id,
+            # A penalty must always be recordable. Refusing it because the
+            # wallet is short would let the offence go unlogged.
+            allow_negative_balance=True,
+        )
+
+    if disqualify:
+        team.status = TeamStatus.DISQUALIFIED
+
+    log_audit_event(
+        db=db,
+        action="R1_RULE_VIOLATION_RECORDED",
+        entity_type="MiniRoundTiming",
+        entity_id=timing_id,
+        actor_id=getattr(actor, "id", None) or "system",
+        actor_role=getattr(actor, "role", None),
+        round_number=1,
+        details={
+            "violation": clean,
+            "count": count,
+            "rule_penalty_seconds": timing.rule_penalty_seconds,
+            "disqualified": bool(disqualify),
+        },
+    )
+    db.commit()
+    db.refresh(timing)
+    return timing
+
 
 def get_round1_overview(db: Session) -> Dict[str, Any]:
     cfg = get_or_create_round1_config(db)
@@ -164,6 +344,12 @@ def get_round1_overview(db: Session) -> Dict[str, Any]:
                     "completion_time": t.completion_time.isoformat() if t.completion_time else None,
                     "hints_used": t.hints_used,
                     "hint_penalty_seconds": t.hint_penalty_seconds,
+                    # ODDyssey Section 4: rule penalties count toward the
+                    # total time, so they have to travel with the timing row.
+                    "phone_use_count": t.phone_use_count or 0,
+                    "separation_count": t.separation_count or 0,
+                    "clue_damage_count": t.clue_damage_count or 0,
+                    "rule_penalty_seconds": t.rule_penalty_seconds or 0,
                     "duration_seconds": t.duration_seconds,
                     "adjusted_seconds": t.adjusted_seconds,
                     "checkpoints": t.checkpoints or []
@@ -176,6 +362,10 @@ def get_round1_overview(db: Session) -> Dict[str, Any]:
                     "completion_time": None,
                     "hints_used": 0,
                     "hint_penalty_seconds": 0,
+                    "phone_use_count": 0,
+                    "separation_count": 0,
+                    "clue_damage_count": 0,
+                    "rule_penalty_seconds": 0,
                     "duration_seconds": None,
                     "adjusted_seconds": None,
                     "checkpoints": []

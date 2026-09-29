@@ -15,6 +15,7 @@ import {
   AGENT_WRONG_GUESS,
   AGENT_GUESS_MIN,
   AGENT_GUESS_MAX,
+  FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
 } from '../constants/tournamentConstants';
 
 export {
@@ -375,12 +376,18 @@ export function computeFinaleSummaryStats(
 /**
  * Pure calculation of a squad's composite final championship score (Step 15).
  * Formula: Final Score = Legal Battle Panel Score + Agent Guessing Points + (Remaining Black Market Points * carryoverWeight)
+ *
+ * ODDyssey (Final Event Plan section 1, Rulebook section 8) gives the final
+ * score as "Legal Battle score + Agent-guessing score + Points remaining
+ * after the Black Market" - the balance carries in FULL, so the weight is
+ * 1.0. It defaulted to 0.10, which came from the older Event Documentation
+ * where the weight was an unresolved organiser decision.
  */
 export function calculateFinalChampionshipScore(
   legalBattleScore: number | null,
   agentGuessingPoints: number,
   remainingBlackMarketPoints: number,
-  carryoverWeight: number = 0.10
+  carryoverWeight: number = FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED
 ): {
   legalBattleScore: number | null;
   agentGuessingPoints: number;

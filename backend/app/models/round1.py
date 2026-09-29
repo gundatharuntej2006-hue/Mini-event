@@ -26,5 +26,12 @@ class MiniRoundTimingModel(Base):
     checkpoints = Column(JSON, default=list)
     duration_seconds = Column(Integer, nullable=True)
     hint_penalty_seconds = Column(Integer, default=0, nullable=False)
+    # ODDyssey Section 4: total time = gate time + hint penalties + RULE
+    # penalties. These counters hold the rule violations a gate marshal logs;
+    # rule_penalty_seconds is the time they add to the squad's total.
+    phone_use_count = Column(Integer, default=0, nullable=False)
+    separation_count = Column(Integer, default=0, nullable=False)
+    clue_damage_count = Column(Integer, default=0, nullable=False)
+    rule_penalty_seconds = Column(Integer, default=0, nullable=False)
     adjusted_seconds = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

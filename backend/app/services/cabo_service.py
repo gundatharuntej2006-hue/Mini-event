@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple, Any, Set
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.models.cabo import CaboTableAssignment, CaboPlayerScorecard
+from app.models.cabo import CaboTableAssignment, CaboPlayerScorecard, CaboTieBreakResolution
 from app.models.team import Team
 from app.models.participant import Participant
 from app.models.round_models import RoundState
@@ -414,12 +414,18 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
     Aggregation:
     - 5 players * 3 games = 15 player-games per squad
     - Team score: sum of placement points (0.0 to 75.0)
-    Official Tie-Break Order:
-    1. Primary: Higher team Cabo score (descending)
-    2. Tie-break 1: Lower combined final-card total across 15 games (ascending)
-    3. Tie-break 2: More first-place finishes across 15 games (descending)
-    4. Unresolved tie: Flags is_tied_unresolved for organizer review
-    Returns top 12 squads qualified for Round 3.
+    Official Tie-Break Order (ODDyssey Section 4, all five steps):
+    1. Higher team Cabo score (descending)
+    2. Lower combined final-card total across 15 games (ascending)
+    3. More first-place finishes across 15 games (descending)
+    4. One sudden-death Cabo game, one representative per tied team
+    5. Organiser draw if still tied
+
+    Steps 4 and 5 are organiser-entered: an unresolved tie is flagged, the
+    organiser records the sudden-death result or the draw through
+    record_cabo_tie_break, and that ordering is applied here. Only a tie with
+    no recorded resolution is still reported as unresolved. Returns the top 12
+    squads qualified for Round 3.
     """
     # Fetch all assignments and scorecards
     teams = db.query(Team).all()
@@ -437,6 +443,11 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
     for sc in all_scorecards:
         team_scorecard_map[sc.team_id].append(sc)
 
+    # ODDyssey tie-breakers 4 and 5, as recorded by an organiser.
+    resolutions = db.query(CaboTieBreakResolution).all()
+    tie_break_ranks = {r.team_id: int(r.resolution_rank) for r in resolutions}
+    tie_break_methods = {r.team_id: r.method for r in resolutions}
+
     team_metrics = []
     for team in cabo_teams:
         scs = team_scorecard_map.get(team.id, [])
@@ -449,6 +460,12 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
             "cabo_score": float(cabo_score),
             "combined_card_total": int(combined_card_total),
             "first_place_count": int(first_place_count),
+            # Tie-breakers 4 and 5. None means the organiser has recorded
+            # nothing, so a squad with a resolution always sorts ahead of one
+            # without - inside a tied group, that is exactly the sudden-death
+            # or draw ordering.
+            "tie_break_rank": tie_break_ranks.get(team.id),
+            "tie_break_method": tie_break_methods.get(team.id),
         })
 
     # Sort by:
@@ -460,6 +477,11 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
             -item["cabo_score"],
             item["combined_card_total"],
             -item["first_place_count"],
+            # Tie-breakers 4 and 5. Unresolved squads sort last within their
+            # group rather than at random, and team_number is a stable final
+            # key so the listing never reshuffles between reads.
+            item["tie_break_rank"] if item["tie_break_rank"] is not None else 10**6,
+            item["team"].team_number or 0,
         )
 
     team_metrics.sort(key=sort_key)
@@ -470,28 +492,42 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
         rank = idx + 1
         is_qualified = rank <= R2_QUALIFIERS
 
-        # Check for unresolved ties with adjacent squads
+        # A tie on all three scored metrics. Whether it is still UNRESOLVED
+        # depends on tie-breakers 4 and 5: a squad with a recorded sudden-death
+        # or draw result has been separated, and saying otherwise would keep
+        # blocking finalisation after the organiser had already settled it.
+        def _level_with(other):
+            return (
+                other["cabo_score"] == item["cabo_score"]
+                and other["combined_card_total"] == item["combined_card_total"]
+                and other["first_place_count"] == item["first_place_count"]
+            )
+
+        def _separated_from(other):
+            mine, theirs = item["tie_break_rank"], other["tie_break_rank"]
+            return mine is not None and theirs is not None and mine != theirs
+
         is_tied = False
         tie_reason = None
+        neighbours = []
         if idx > 0:
-            prev = team_metrics[idx - 1]
-            if (
-                prev["cabo_score"] == item["cabo_score"]
-                and prev["combined_card_total"] == item["combined_card_total"]
-                and prev["first_place_count"] == item["first_place_count"]
-            ):
-                is_tied = True
-                tie_reason = f"Unresolved tie with {prev['team'].name} (all metrics identical)"
-
+            neighbours.append(team_metrics[idx - 1])
         if idx < len(team_metrics) - 1:
-            nxt = team_metrics[idx + 1]
-            if (
-                nxt["cabo_score"] == item["cabo_score"]
-                and nxt["combined_card_total"] == item["combined_card_total"]
-                and nxt["first_place_count"] == item["first_place_count"]
-            ):
-                is_tied = True
-                tie_reason = f"Unresolved tie with {nxt['team'].name} (all metrics identical)"
+            neighbours.append(team_metrics[idx + 1])
+
+        for other in neighbours:
+            if not _level_with(other):
+                continue
+            if _separated_from(other):
+                method = (item["tie_break_method"] or "").replace("_", " ").lower()
+                tie_reason = (
+                    f"Tied with {other['team'].name} on all scored metrics; "
+                    f"separated by {method} (position {item['tie_break_rank']})"
+                )
+                continue
+            is_tied = True
+            tie_reason = f"Unresolved tie with {other['team'].name} (all metrics identical)"
+            break
 
         standings.append(
             CaboTeamStandingResponse(
@@ -505,10 +541,109 @@ def calculate_round2_standings(db: Session) -> List[CaboTeamStandingResponse]:
                 is_qualified=is_qualified,
                 is_tied_unresolved=is_tied,
                 tie_reason=tie_reason,
+                tie_break_method=item["tie_break_method"],
+                tie_break_rank=item["tie_break_rank"],
             )
         )
 
     return standings
+
+
+CABO_TIE_BREAK_METHODS = ("SUDDEN_DEATH", "ORGANISER_DRAW")
+
+
+class CaboTieBreakError(Exception):
+    """Raised when an invalid Cabo tie-break resolution is submitted."""
+    pass
+
+
+def record_cabo_tie_break(
+    db: Session,
+    team_id: str,
+    method: str,
+    resolution_rank: int,
+    actor: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> CaboTieBreakResolution:
+    """
+    Records ODDyssey tie-breaker 4 or 5 for one squad.
+
+        4. One sudden-death Cabo game with one representative per tied team
+        5. Organiser draw if still tied
+
+    The platform stopped after tie-breaker 3 and flagged anything still level
+    as unresolved, with no route to resolve it. Round 2 cuts 24 squads to 12,
+    and an unresolved tie blocks finalisation, so a genuine three-way-level tie
+    across that boundary could stall the round indefinitely.
+
+    `resolution_rank` is the squad's finishing position within its tied group,
+    1 being first. Re-recording for the same squad overwrites the earlier
+    entry, so a mis-keyed result is corrected rather than duplicated. Nothing
+    here is automatic: the organiser states which method was used and what it
+    produced, and the platform never breaks a tie at random.
+    """
+    clean_method = (method or "").upper().strip()
+    if clean_method not in CABO_TIE_BREAK_METHODS:
+        raise CaboTieBreakError(
+            f"Unknown tie-break method '{method}'. "
+            f"Expected one of: {', '.join(CABO_TIE_BREAK_METHODS)}."
+        )
+
+    rank = int(resolution_rank)
+    if rank < 1:
+        raise CaboTieBreakError("resolution_rank must be 1 or greater.")
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise CaboTieBreakError(f"Team '{team_id}' not found.")
+
+    cfg = db.query(CaboConfigModel).filter(CaboConfigModel.id == 1).first()
+    if cfg and cfg.is_finalized:
+        raise CaboTieBreakError(
+            "Round 2 is finalized. Tie-break results can no longer be recorded."
+        )
+
+    row = (
+        db.query(CaboTieBreakResolution)
+        .filter(CaboTieBreakResolution.team_id == team_id)
+        .first()
+    )
+    if row is None:
+        row = CaboTieBreakResolution(team_id=team_id)
+        db.add(row)
+
+    row.method = clean_method
+    row.resolution_rank = rank
+    row.notes = notes
+    row.resolved_by = actor
+    row.resolved_at = utc_now()
+
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_cabo_tie_breaks(db: Session) -> List[CaboTieBreakResolution]:
+    """Every recorded sudden-death or organiser-draw result, newest first."""
+    return (
+        db.query(CaboTieBreakResolution)
+        .order_by(CaboTieBreakResolution.resolved_at.desc())
+        .all()
+    )
+
+
+def clear_cabo_tie_break(db: Session, team_id: str) -> bool:
+    """Removes a squad's tie-break result. Returns False when there was none."""
+    row = (
+        db.query(CaboTieBreakResolution)
+        .filter(CaboTieBreakResolution.team_id == team_id)
+        .first()
+    )
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
 
 
 # ==============================================================================

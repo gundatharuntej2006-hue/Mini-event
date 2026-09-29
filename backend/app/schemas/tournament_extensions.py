@@ -156,6 +156,10 @@ class CaboTeamStandingResponse(BaseModel):
     is_qualified: bool = Field(..., serialization_alias="isQualified")
     is_tied_unresolved: bool = Field(default=False, serialization_alias="isTiedUnresolved")
     tie_reason: Optional[str] = Field(default=None, serialization_alias="tieReason")
+    # ODDyssey tie-breakers 4 and 5: SUDDEN_DEATH or ORGANISER_DRAW, and the
+    # squad's finishing position within its tied group.
+    tie_break_method: Optional[str] = Field(default=None, serialization_alias="tieBreakMethod")
+    tie_break_rank: Optional[int] = Field(default=None, serialization_alias="tieBreakRank")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -220,6 +224,11 @@ class FinalCodeRecordResponse(BaseModel):
     fragment_1_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment1DiscoveredAt")
     fragment_2_status: FragmentStatus = Field(..., serialization_alias="fragment2Status")
     fragment_2_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment2DiscoveredAt")
+    # ODDyssey Section 2: the code is ODD - 42 - ECHO - PRIME, so four fragments.
+    fragment_3_status: FragmentStatus = Field(FragmentStatus.PENDING, serialization_alias="fragment3Status")
+    fragment_3_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment3DiscoveredAt")
+    fragment_4_status: FragmentStatus = Field(FragmentStatus.PENDING, serialization_alias="fragment4Status")
+    fragment_4_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment4DiscoveredAt")
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     verified_at: Optional[datetime] = Field(default=None, serialization_alias="verifiedAt")
     verified_by: Optional[str] = Field(default=None, serialization_alias="verifiedBy")
@@ -239,6 +248,12 @@ class BlackMarketCatalogItem(BaseModel):
     suggested_price: float = Field(..., serialization_alias="suggestedPrice", alias="suggestedPrice")
     category: str = "TACTICAL_ADVANTAGE"
     requires_details: bool = Field(default=False, serialization_alias="requiresDetails", alias="requiresDetails")
+    # ODDyssey Section 5 stocks the catalogue ("4 available", "8 available",
+    # and "as required" for code fragments). None means unlimited supply.
+    stock: Optional[int] = None
+    units_sold: int = Field(default=0, serialization_alias="unitsSold", alias="unitsSold")
+    remaining_stock: Optional[int] = Field(default=None, serialization_alias="remainingStock", alias="remainingStock")
+    is_sold_out: bool = Field(default=False, serialization_alias="isSoldOut", alias="isSoldOut")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -246,7 +261,7 @@ class BlackMarketCatalogItem(BaseModel):
 class BlackMarketCatalogResponse(BaseModel):
     catalog: List[BlackMarketCatalogItem]
     round3_active: bool = Field(default=True, serialization_alias="round3Active")
-    total_items: int = Field(default=4, serialization_alias="totalItems")
+    total_items: int = Field(default=5, serialization_alias="totalItems")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -257,6 +272,12 @@ class BlackMarketAssetPurchaseRequest(BaseModel):
     price: Optional[float] = None
     quantity: int = Field(default=1, ge=1)
     details: Optional[Dict[str, Any]] = None
+    # ODDyssey Section 5, Black Market Rules: "Every transaction requires two
+    # organiser signatures." The acting organiser is taken from the auth token;
+    # this is the second one.
+    countersigned_by: Optional[str] = Field(
+        default=None, serialization_alias="countersignedBy", alias="countersignedBy"
+    )
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -281,6 +302,9 @@ class BlackMarketPurchaseResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
     purchased_at: datetime = Field(..., serialization_alias="purchasedAt")
     purchased_by: Optional[str] = Field(default=None, serialization_alias="purchasedBy")
+    # ODDyssey Section 5: two organiser signatures per transaction. A
+    # countersignature nobody can read back is not much of an audit trail.
+    countersigned_by: Optional[str] = Field(default=None, serialization_alias="countersignedBy")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -347,6 +371,11 @@ class Round3TeamStanding(BaseModel):
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     fragment_1_status: str = Field(..., serialization_alias="fragment1Status")
     fragment_2_status: str = Field(..., serialization_alias="fragment2Status")
+    # ODDyssey Section 2 requires all four fragments to qualify for Round 4, so
+    # a standings row that showed only two could not explain an elimination.
+    fragment_3_status: str = Field(default="PENDING", serialization_alias="fragment3Status")
+    fragment_4_status: str = Field(default="PENDING", serialization_alias="fragment4Status")
+    fragments_held: int = Field(default=0, serialization_alias="fragmentsHeld")
     rank: int
     is_advancing: bool = Field(..., serialization_alias="isAdvancing")
     elimination_reason: Optional[str] = Field(default=None, serialization_alias="eliminationReason")
@@ -418,12 +447,22 @@ class CodeHuntStatusResponse(BaseModel):
     fragment_1_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment1DiscoveredAt")
     fragment_2_status: FragmentStatus = Field(..., serialization_alias="fragment2Status")
     fragment_2_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment2DiscoveredAt")
+    # ODDyssey Section 2: ODD - 42 - ECHO - PRIME.
+    fragment_3_status: FragmentStatus = Field(FragmentStatus.PENDING, serialization_alias="fragment3Status")
+    fragment_3_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment3DiscoveredAt")
+    fragment_4_status: FragmentStatus = Field(FragmentStatus.PENDING, serialization_alias="fragment4Status")
+    fragment_4_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment4DiscoveredAt")
+    fragments_held: int = Field(default=0, serialization_alias="fragmentsHeld")
+    fragments_required: int = Field(default=4, serialization_alias="fragmentsRequired")
+    missing_fragments: list = Field(default_factory=list, serialization_alias="missingFragments")
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     is_complete: bool = Field(..., serialization_alias="isComplete")
     verified_at: Optional[datetime] = Field(default=None, serialization_alias="verifiedAt")
     verified_by: Optional[str] = Field(default=None, serialization_alias="verifiedBy")
     fragment_1_value: Optional[str] = Field(default=None, serialization_alias="fragment1Value")
     fragment_2_value: Optional[str] = Field(default=None, serialization_alias="fragment2Value")
+    fragment_3_value: Optional[str] = Field(default=None, serialization_alias="fragment3Value")
+    fragment_4_value: Optional[str] = Field(default=None, serialization_alias="fragment4Value")
     final_code_assembled: Optional[str] = Field(default=None, serialization_alias="finalCodeAssembled")
 
     model_config = {"populate_by_name": True, "from_attributes": True}

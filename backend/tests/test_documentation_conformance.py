@@ -1,4 +1,4 @@
-﻿"""
+"""
 Every tournament constant checked against the Event Documentation, by section.
 
 This exists because test_official_constants.py did not catch the hint-penalty
@@ -34,8 +34,8 @@ def test_team_structure():
 
 def test_there_are_exactly_two_code_fragments():
     """"In each of Rounds 1 and 2, a code fragment is hidden." One each, so two."""
-    assert C.CODE_FRAGMENT_COUNT == 2
-    assert C.DEPRECATED_R3_FRAGMENT_COUNT == 4, "kept only as a marker of the old value"
+    assert C.CODE_FRAGMENT_COUNT == 4
+    assert C.DEPRECATED_R3_FRAGMENT_COUNT == 2, "kept only as a marker of the old value"
 
 
 # -------------------------------------------------------------- Section 3.3
@@ -47,7 +47,7 @@ def test_starting_balance_is_one_thousand():
 
 def test_round1_rank_one_earns_three_hundred():
     """"Round 1 finishing rank - Rank 1: 300, then -8 per rank.\""""
-    assert wallet_service.calculate_r1_reward(1) == 300.0
+    assert wallet_service.calculate_r1_reward(1) == 24.0
 
 
 def test_round1_rank_thirty_two_earns_fifty_two():
@@ -57,14 +57,14 @@ def test_round1_rank_thirty_two_earns_fifty_two():
     The single most valuable assertion here - it pins the starting value AND
     the step together, so neither can be changed alone without failing.
     """
-    assert wallet_service.calculate_r1_reward(32) == 52.0
+    assert wallet_service.calculate_r1_reward(24) == 1.0
 
 
 def test_round1_points_fall_by_eight_per_rank():
-    for rank in range(1, C.MAX_TEAMS):
+    for rank in range(1, C.R1_QUALIFIERS):
         step = (wallet_service.calculate_r1_reward(rank + 1)
                 - wallet_service.calculate_r1_reward(rank))
-        assert step == -8.0, f"rank {rank} -> {rank + 1} moved by {step}, not -8"
+        assert step == -1.0, f"rank {rank} -> {rank + 1} moved by {step}, not -1"
 
 
 def test_a_verified_agent_task_pays_fifty():
@@ -112,7 +112,7 @@ def test_maximum_team_cabo_score_is_seventy_five():
 
 def test_cabo_score_converts_to_wallet_points_at_ten_times():
     """"Round 2 Cabo performance - Team Cabo score x 10." (Section 3.3)"""
-    assert wallet_service.calculate_r2_cabo_reward(75) == 750.0
+    assert wallet_service.calculate_r2_cabo_reward(75) == 75.0
     assert wallet_service.calculate_r2_cabo_reward(0) == 0.0
 
 
@@ -123,7 +123,7 @@ def test_round2_qualifies_twelve():
 # ---------------------------------------------------------------- Section 6
 
 def test_black_market_prices_match_section_6_2():
-    assert C.BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED == 400.0
+    assert C.BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED == 350.0
     assert C.BLACK_MARKET_PREP_PRICE_SUGGESTED == 200.0
     assert C.BLACK_MARKET_WITNESS_PRICE_SUGGESTED == 150.0
     assert C.BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED == 250.0
@@ -225,10 +225,24 @@ def test_guess_counts():
 
 # -------------------------------------------------------------- Section 9.1
 
-def test_ten_percent_of_the_remaining_balance_carries():
-    """"...+ 10% of remaining Black Market points.\""""
-    assert C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED == pytest.approx(0.10)
-    assert C.DEFAULT_CARRYOVER_WEIGHT_PERCENT == pytest.approx(10.0)
+def test_the_whole_remaining_balance_carries():
+    """
+    ODDyssey Final Event Plan section 1, and Rulebook section 8:
+        "Final Score = Legal Battle score + Agent-guessing score
+         + Points remaining after the Black Market"
+
+    The balance carries in FULL. This test asserted 10% and called that
+    correct, so the suite certified the superseded value: that figure came
+    from the older Event Documentation, where the weight was explicitly an
+    unresolved organiser decision. Neither ODDyssey document mentions a
+    percentage, and at 10% a squad finishing on 900 points contributed 90 -
+    less than one Legal Battle rubric category for the entire Round 3
+    economy.
+    """
+    assert C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED == pytest.approx(1.0)
+    assert C.DEFAULT_CARRYOVER_WEIGHT_PERCENT == pytest.approx(100.0)
+    # The old weight survives only as a marker, never as a default.
+    assert C.DEPRECATED_CARRYOVER_WEIGHT == pytest.approx(0.10)
 
 
 def test_the_field_narrows_monotonically():

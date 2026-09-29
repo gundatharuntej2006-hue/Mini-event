@@ -144,3 +144,50 @@ class CaboPlayerScorecard(Base):
         "CaboTableAssignment",
         back_populates="scorecard"
     )
+
+
+class CaboTieBreakResolution(Base):
+    """
+    Records how an organiser broke a Cabo tie that the metrics could not.
+
+    ODDyssey Section 4 lists five tie-breakers, in order:
+
+        1. Higher team placement score
+        2. Lower combined final card total
+        3. More first-place finishes
+        4. One sudden-death Cabo game with one representative per tied team
+        5. Organiser draw if still tied
+
+    The platform implemented the first three and then stopped, flagging
+    anything still level as "unresolved" with no way to resolve it. Since
+    Round 2 cuts 24 squads to 12, a tie across that boundary left the round
+    un-finalisable: the tie blocks finalisation, and nothing could clear the
+    tie. One row here is one squad's finishing position within its tied group.
+    """
+
+    __tablename__ = "cabo_tie_break_resolutions"
+    __table_args__ = (
+        UniqueConstraint("team_id", name="uq_cabo_tie_break_team"),
+        CheckConstraint(
+            "method IN ('SUDDEN_DEATH', 'ORGANISER_DRAW')",
+            name="ck_cabo_tie_break_method",
+        ),
+        CheckConstraint("resolution_rank >= 1", name="ck_cabo_tie_break_rank"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: f"cabotb-{uuid.uuid4().hex[:8]}"
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("teams.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    # Tie-breaker 4 or 5. The organiser states which was used; the platform
+    # never picks one on its own, and never breaks a tie at random.
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 1 = finished first within the tied group.
+    resolution_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )

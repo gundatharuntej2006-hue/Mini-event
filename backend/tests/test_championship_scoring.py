@@ -171,7 +171,11 @@ def test_08_missing_legal_battle_score_keeps_final_score_none():
     )
     assert res["legal_battle_component"] is None
     assert res["final_score"] is None
-    assert res["black_market_component"] == 100.0
+    # ODDyssey carries the remaining balance in FULL (Final Event Plan
+    # section 1, Rulebook section 8), so 1000 points contribute 1000.
+    # This asserted 100 - the old 10% weight from the superseded Event
+    # Documentation, where the weight was an unresolved organiser decision.
+    assert res["black_market_component"] == 1000.0
 
 
 def test_09_configurable_carryover_weight():

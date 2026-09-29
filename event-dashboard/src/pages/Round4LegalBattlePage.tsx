@@ -708,7 +708,7 @@ export const Round4LegalBattlePage: React.FC = () => {
                 Scoring Formula: Suggested — Pending Organizer Confirmation
               </p>
               <p className="text-xs text-blue-700">
-                Formula components: 100% Panel Score + 100% Secret Agent Guessing + 10% Black Market Remaining Points. Review and confirm in Rules & Rubric.
+                Formula components: 100% Panel Score + 100% Secret Agent Guessing + 100% Black Market Remaining Points (ODDyssey Rulebook, section 8). Review and confirm in Rules & Rubric.
               </p>
             </div>
           </div>
@@ -938,7 +938,7 @@ export const Round4LegalBattlePage: React.FC = () => {
                     <th className="py-3 px-4 text-center">Stages (5)</th>
                     <th className="py-3 px-4 text-right">Faculty Panel</th>
                     <th className="py-3 px-4 text-right">Agent Guess</th>
-                    <th className="py-3 px-4 text-right">BM (10%)</th>
+                    <th className="py-3 px-4 text-right">BM Remaining</th>
                     <th className="py-3 px-4 text-right font-bold">Final Score</th>
                     <th className="py-3 px-4 text-center">Review Status</th>
                   </tr>
@@ -1744,7 +1744,7 @@ export const Round4LegalBattlePage: React.FC = () => {
                     onChange={(e) => setFormBmWeightPercent(parseInt(e.target.value) || 0)}
                     className="w-full px-2 py-1 bg-neutral-800 border border-neutral-700 rounded text-sm text-white font-mono"
                   />
-                  <span className="text-[10px] text-neutral-500 block">Percentage (10 = 10%)</span>
+                  <span className="text-[10px] text-neutral-500 block">Percentage (100 = the full remaining balance)</span>
                 </div>
               </div>
             </div>

@@ -144,11 +144,12 @@ export function createInitialPairStages(): Record<Round4StageId, StageTimingReco
 }
 
 export const DEFAULT_FINAL_SCORE_FORMULA: FinalScoreFormulaConfig = {
-  // Suggested formula: Final Score = Legal Battle panel score + Agent guessing points + 10% of remaining Black Market points
+  // ODDyssey: Final Score = Legal Battle panel score + Agent-guessing points
+  // + the FULL remaining Black Market balance.
   // Organizers may adjust weighting. Labeled "Suggested — pending organizer confirmation".
   panelScoreWeight: 1.0,
   agentGuessingWeight: 1.0,
-  blackMarketWeightPercent: DEFAULT_CARRYOVER_WEIGHT_PERCENT, // 10% (suggested, configurable)
+  blackMarketWeightPercent: DEFAULT_CARRYOVER_WEIGHT_PERCENT, // 100% per ODDyssey; still configurable
   isFormulaConfirmed: false,
   confirmedAt: null,
   confirmedBy: null,

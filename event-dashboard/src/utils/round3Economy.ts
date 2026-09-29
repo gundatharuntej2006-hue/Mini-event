@@ -14,6 +14,7 @@ import {
   CODE_FRAGMENT_COUNT,
   FINAL_CODE_REQUIRED_FOR_R4,
   BLACK_MARKET_SUGGESTED_PRICES,
+  COMPLETE_SECRET_CODE,
 } from '../constants/tournamentConstants';
 
 export {
@@ -22,12 +23,15 @@ export {
   CODE_FRAGMENT_COUNT,
   FINAL_CODE_REQUIRED_FOR_R4,
   BLACK_MARKET_SUGGESTED_PRICES,
+  COMPLETE_SECRET_CODE,
 };
 
 export const DEFAULT_ROUND3_CONFIG: BlackMarketConfig = {
-  // Authoritative starting wallet balance is STARTING_WALLET_BALANCE (1000).
-  // Retained at DEPRECATED_R3_STARTING_BALANCE (100) for backward compatibility with legacy demo tests.
-  startingBalance: DEPRECATED_R3_STARTING_BALANCE,
+  // The tournament wallet starts at 1000 points. This seeded the deprecated
+  // demo value of 100, so a freshly seeded dashboard showed every squad on a
+  // tenth of its real balance while the backend wallet said 1000 - and the
+  // Black Market prices (350 for a fragment) are set against the real figure.
+  startingBalance: STARTING_WALLET_BALANCE,
   allowNegativeBalance: false,
   rankingMetric: 'current_balance', // Demo Default · Unconfirmed Rule
   scoringDirection: 'higher_is_better', // Demo Default · Unconfirmed Rule
@@ -36,7 +40,7 @@ export const DEFAULT_ROUND3_CONFIG: BlackMarketConfig = {
     isRequiredForQualification: FINAL_CODE_REQUIRED_FOR_R4,
     requiredFragmentCount: CODE_FRAGMENT_COUNT,
     isConfigured: false,
-    instructionsNote: 'Official fragment requirements: 2 fragments required for Round 4 gate.',
+    instructionsNote: `Official fragment requirements: ${CODE_FRAGMENT_COUNT} fragments (${COMPLETE_SECRET_CODE}) required for the Round 4 gate.`,
   },
   isFinalized: false,
   finalizedAt: null,

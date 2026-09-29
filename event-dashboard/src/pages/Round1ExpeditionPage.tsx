@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { DEFAULT_R1_HINT_PENALTY_SECONDS } from '../constants/tournamentConstants';
+import {
+  DEFAULT_R1_HINT_PENALTY_SECONDS,
+  R1_PENALTY_PHONE_USE_SECONDS,
+  R1_PENALTY_TEAM_SEPARATION_SECONDS,
+  R1_CLUE_DAMAGE_POINT_PENALTY,
+} from '../constants/tournamentConstants';
+import { backendApiService } from '../services/backendApiService';
 import {
   Compass,
   CheckCircle2,
@@ -73,8 +79,22 @@ export function Round1ExpeditionPage() {
   const [timingCheckpoints, setTimingCheckpoints] = useState<string[]>([]);
   const [timingError, setTimingError] = useState<string | null>(null);
 
-  // Config modal form states (120s / 2m is a demo default pending official organizer confirmation)
-  const [configPenaltyMinutes, setConfigPenaltyMinutes] = useState(2);
+  // ODDyssey Section 4 rule violations, logged per gate. These are submitted
+  // as their own action rather than folded into the timing save: the count is
+  // the gate's NEW TOTAL, so a stale zero riding along with an unrelated
+  // timing edit would silently refund a penalty already logged.
+  const [violationType, setViolationType] = useState('UNAUTHORISED_PHONE_USE');
+  const [violationCount, setViolationCount] = useState(1);
+  const [violationDisqualify, setViolationDisqualify] = useState(false);
+  const [violationBusy, setViolationBusy] = useState(false);
+  const [violationResult, setViolationResult] = useState<string | null>(null);
+
+  // ODDyssey Section 4 sets the hint penalty at +5 minutes. This seeded 2,
+  // the old bug value, so the first render showed the wrong figure before the
+  // config loaded.
+  const [configPenaltyMinutes, setConfigPenaltyMinutes] = useState(
+    Math.round(DEFAULT_R1_HINT_PENALTY_SECONDS / 60)
+  );
   const [configCheckpointNames, setConfigCheckpointNames] = useState<string[]>([
     'Checkpoint 1 [Location TBD]',
     'Checkpoint 2 [Location TBD]',
@@ -281,6 +301,33 @@ export function Round1ExpeditionPage() {
       setTimingError((err as Error).message || 'Failed to update timing.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // ODDyssey Section 4: log a rule violation against one gate.
+  const handleLogViolation = async () => {
+    if (!selectedRecord) return;
+    setViolationBusy(true);
+    setViolationResult(null);
+    setTimingError(null);
+    try {
+      const res = await backendApiService.recordRound1RuleViolation(selectedRecord.teamId, {
+        mini_round_number: activeMiniRoundTab,
+        violation: violationType,
+        count: violationCount,
+        disqualify: violationType === 'CLUE_DAMAGE' ? violationDisqualify : false,
+      });
+      const added = res?.data?.rule_penalty_seconds ?? 0;
+      setViolationResult(
+        `Recorded. Gate ${activeMiniRoundTab} rule penalty is now +${Math.round(added / 60)} minutes.`
+      );
+      const updatedR1 = await eventService.getRound1Data();
+      const rec = updatedR1.records.find((r) => r.teamId === selectedRecord.teamId);
+      if (rec) setSelectedRecord(rec);
+    } catch (err: unknown) {
+      setTimingError((err as Error).message || 'Failed to record rule violation.');
+    } finally {
+      setViolationBusy(false);
     }
   };
 
@@ -664,7 +711,7 @@ export function Round1ExpeditionPage() {
                   <th className="py-3.5 px-3">
                     <div>
                       <div className="flex items-center gap-1">
-                        <span>Hint Penalties</span>
+                        <span>Penalties</span>
                         <span
                           className="text-[9px] font-mono font-bold text-amber-300 bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/30 uppercase"
                           title="Rule unconfirmed: demo default of 120s (2 min) per hint"
@@ -814,19 +861,19 @@ export function Round1ExpeditionPage() {
                           {formatDuration(rec.rawTotalSeconds)}
                         </td>
 
-                        {/* Hint Penalties */}
+                        {/* Hint + rule penalties (ODDyssey Section 4) */}
                         <td className="py-3 px-3">
                           {rec.totalPenaltySeconds > 0 ? (
                             <span
                               className="font-mono text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 cursor-help"
-                              title={`${Math.round((data?.config?.penaltyPerHintSeconds || DEFAULT_R1_HINT_PENALTY_SECONDS) / 60)}m per hint (Event Documentation, Section 4.3)`}
+                              title={`Hint penalties (${Math.round((data?.config?.penaltyPerHintSeconds || DEFAULT_R1_HINT_PENALTY_SECONDS) / 60)}m each) plus rule penalties: phone use +10m, separation +5m (ODDyssey Section 4)`}
                             >
-                              +{Math.round(rec.totalPenaltySeconds / 60)}m ({Math.round(rec.totalPenaltySeconds / (data?.config?.penaltyPerHintSeconds || DEFAULT_R1_HINT_PENALTY_SECONDS))} hints)
+                              +{Math.round(rec.totalPenaltySeconds / 60)}m
                             </span>
                           ) : (
                             <span
                               className="text-slate-400 font-mono cursor-help"
-                              title="No hints requested"
+                              title="No hint or rule penalties"
                             >
                               0m
                             </span>
@@ -1061,7 +1108,7 @@ export function Round1ExpeditionPage() {
                     </span>
                   </div>
                   <span className="text-[10px] text-amber-700 block mt-1">
-                    * Using demo default ({configPenaltyMinutes}m / hint) — unconfirmed rule
+                    ODDyssey Section 4: +5 minutes per hint (configured: {configPenaltyMinutes}m)
                   </span>
                 </div>
 
@@ -1071,9 +1118,83 @@ export function Round1ExpeditionPage() {
                     Adjusted time = Duration + ({timingHints} &times; {configPenaltyMinutes}m)
                   </div>
                   <div className="text-[10px] text-amber-600 mt-1 font-medium">
-                    Note: Official penalty duration not yet confirmed by organizers.
+                    ODDyssey Section 4: +5 minutes per hint.
                   </div>
                 </div>
+              </div>
+
+              {/* ODDyssey Section 4 rule penalties */}
+              <div className="p-3 rounded-lg bg-rose-50/70 border border-rose-200 space-y-2">
+                <div className="font-semibold text-rose-900 text-xs">
+                  Rule Violations &mdash; Gate {activeMiniRoundTab}
+                </div>
+                <p className="text-[11px] text-rose-800/90 leading-relaxed">
+                  Round 1 ranks on gate time + hint penalties + rule penalties. The count you
+                  enter is this gate&rsquo;s <strong>new total</strong> for the chosen violation,
+                  so correcting a mis-entry means typing the right number.
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-rose-900 mb-1">
+                      Violation
+                    </label>
+                    <select
+                      value={violationType}
+                      onChange={(e) => setViolationType(e.target.value)}
+                      disabled={data?.config.isFinalized || violationBusy}
+                      className="px-2 py-1.5 bg-white border border-rose-200 rounded-lg text-[11px] font-mono focus:outline-none focus:ring-2 focus:ring-rose-500/20"
+                    >
+                      <option value="UNAUTHORISED_PHONE_USE">
+                        Unauthorised phone use (+{Math.round(R1_PENALTY_PHONE_USE_SECONDS / 60)}m)
+                      </option>
+                      <option value="TEAM_SEPARATION">
+                        Team members separating (+
+                        {Math.round(R1_PENALTY_TEAM_SEPARATION_SECONDS / 60)}m)
+                      </option>
+                      <option value="CLUE_DAMAGE">
+                        Moving or damaging a clue ({R1_CLUE_DAMAGE_POINT_PENALTY} pts)
+                      </option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-rose-900 mb-1">
+                      Count
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="10"
+                      value={violationCount}
+                      onChange={(e) =>
+                        setViolationCount(Math.max(0, parseInt(e.target.value, 10) || 0))
+                      }
+                      disabled={data?.config.isFinalized || violationBusy}
+                      className="w-20 px-2 py-1.5 bg-white border border-rose-200 rounded-lg font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-rose-500/20"
+                    />
+                  </div>
+                  {violationType === 'CLUE_DAMAGE' && (
+                    <label className="flex items-center gap-1.5 text-[11px] text-rose-900 pb-1.5">
+                      <input
+                        type="checkbox"
+                        checked={violationDisqualify}
+                        onChange={(e) => setViolationDisqualify(e.target.checked)}
+                        disabled={data?.config.isFinalized || violationBusy}
+                      />
+                      Disqualify instead
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleLogViolation}
+                    disabled={data?.config.isFinalized || violationBusy}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[11px] font-semibold hover:bg-rose-700 disabled:opacity-50"
+                  >
+                    {violationBusy ? 'Recording...' : 'Log Violation'}
+                  </button>
+                </div>
+                {violationResult && (
+                  <div className="text-[11px] font-medium text-emerald-700">{violationResult}</div>
+                )}
               </div>
             </form>
           </div>
@@ -1105,11 +1226,14 @@ export function Round1ExpeditionPage() {
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5">
             <div className="flex items-center gap-1.5 font-bold text-amber-900 text-xs">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Organizer Notice: Unconfirmed Tournament Rules &amp; Placeholders</span>
+              <span>Organizer Notice: Round 1 Penalties &amp; Placeholders</span>
             </div>
             <ul className="text-[11px] text-amber-800 space-y-1 list-disc list-inside leading-relaxed">
               <li>
-                <strong>Hint Penalty</strong>: The penalty of <strong>{configPenaltyMinutes} minutes (120s)</strong> per hint is a <em>demo default only</em>. The official tournament penalty duration is not confirmed by organizers and can be adjusted below.
+                <strong>Hint Penalty</strong>: The ODDyssey plan sets this at <strong>+5 minutes</strong> per hint (Section 4, Round 1 Scoring). Currently configured at <strong>{configPenaltyMinutes} minutes</strong>; organisers may still adjust it below.
+              </li>
+              <li>
+                <strong>Rule Penalties</strong>: Round 1 ranks on gate time <em>plus</em> hint penalties <em>plus</em> rule penalties &mdash; unauthorised phone use <strong>+10 minutes</strong>, team members separating <strong>+5 minutes</strong>, moving or damaging a clue <strong>&minus;20 points or disqualification</strong>. Log these per gate from the timing editor.
               </li>
               <li>
                 <strong>Checkpoint Locations</strong>: Station names are initialized with generic placeholders (<code>Checkpoint 1 [Location TBD]</code>). Replace them below with actual rooms, labs, or buildings once confirmed by the organizing committee.
@@ -1124,7 +1248,7 @@ export function Round1ExpeditionPage() {
                 Penalty Per Hint (Minutes)
               </label>
               <span className="text-[10px] font-semibold text-amber-800 bg-amber-100/80 px-1.5 py-0.2 rounded border border-amber-200">
-                Demo Default &middot; Unconfirmed Rule
+                ODDyssey Section 4 &middot; +5 minutes
               </span>
             </div>
             <div className="flex items-center gap-2">

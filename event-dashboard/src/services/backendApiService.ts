@@ -89,15 +89,47 @@ export interface SecretAgentTaskData {
 
 export interface CodeHuntStatusData {
   team_id: string;
+  // ODDyssey Section 2: the code is ODD - 42 - ECHO - PRIME, so four
+  // fragments. This declared two, so the dashboard could only ever show half
+  // a squad's progress toward the Round 4 gate.
   fragment_1_status: string;
   fragment_2_status: string;
-  fragments_recovered_count: number;
+  fragment_3_status: string;
+  fragment_4_status: string;
+  fragment_1_value?: string | null;
+  fragment_2_value?: string | null;
+  fragment_3_value?: string | null;
+  fragment_4_value?: string | null;
+  fragments_held: number;
+  fragments_required: number;
+  missing_fragments: number[];
+  fragments_recovered_count?: number;
   final_code_verified: boolean;
   final_code_input?: string;
+  final_code_assembled?: string | null;
+  is_complete?: boolean;
   verified_at?: string;
   r4_eligible: boolean;
   gate_reason: string;
 }
+
+/**
+ * A fragment counts as held whether the squad found it or bought it in the
+ * Black Market. Checking only for RECOVERED showed a squad that had paid 350
+ * points for its last fragment as still missing it.
+ */
+export const FRAGMENT_HELD_STATUSES = ['RECOVERED', 'PURCHASED'];
+
+export const holdsFragment = (
+  status: CodeHuntStatusData | undefined,
+  fragmentNumber: number
+): boolean => {
+  if (!status) return false;
+  const value = (status as unknown as Record<string, string>)[
+    `fragment_${fragmentNumber}_status`
+  ];
+  return FRAGMENT_HELD_STATUSES.includes(value);
+};
 
 export interface BlackMarketPurchaseData {
   id: string;
@@ -109,6 +141,8 @@ export interface BlackMarketPurchaseData {
   transaction_id?: string;
   details?: Record<string, any>;
   purchased_by?: string;
+  // ODDyssey Section 5: the second organiser signature on the transaction.
+  countersigned_by?: string;
   created_at: string;
 }
 
@@ -543,12 +577,41 @@ class BackendApiService {
   // ==========================================
   // Code Hunt & Final Code Gate
   // ==========================================
+  /**
+   * Records any one of the four ODDyssey fragments (ODD, 42, ECHO, PRIME).
+   * The backend route is generic; only fragments 1 and 2 had a client method,
+   * so ECHO and PRIME could not be entered from the dashboard at all.
+   */
+  async recordFragment(
+    teamId: string,
+    fragmentNumber: number,
+    payload: { fragment_value: string; overwrite?: boolean }
+  ): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/code-hunt/${teamId}/fragment/${fragmentNumber}`, payload);
+  }
+
   async recordFragment1(teamId: string, payload: { fragment_value: string; overwrite?: boolean }): Promise<ApiResponse<any>> {
-    return apiClient.post<any>(`/code-hunt/${teamId}/fragment/1`, payload);
+    return this.recordFragment(teamId, 1, payload);
   }
 
   async recordFragment2(teamId: string, payload: { fragment_value: string; overwrite?: boolean }): Promise<ApiResponse<any>> {
-    return apiClient.post<any>(`/code-hunt/${teamId}/fragment/2`, payload);
+    return this.recordFragment(teamId, 2, payload);
+  }
+
+  /**
+   * Log an ODDyssey Section 4 Round 1 rule violation against one gate.
+   * `count` is the gate's new total for that violation, not an increment.
+   */
+  async recordRound1RuleViolation(
+    teamId: string,
+    payload: {
+      mini_round_number: number;
+      violation: string;
+      count: number;
+      disqualify?: boolean;
+    }
+  ): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/1/teams/${teamId}/violations`, payload);
   }
 
   async getCodeHuntStatus(teamId: string): Promise<ApiResponse<CodeHuntStatusData>> {
@@ -605,12 +668,19 @@ class BackendApiService {
     return apiClient.get<any>('/rounds/3/catalog');
   }
 
+  /**
+   * ODDyssey Section 5, Black Market Rules: "Every transaction requires two
+   * organiser signatures." The acting organiser comes from the auth token;
+   * `countersigned_by` is the second, and the endpoint refuses the purchase
+   * without it (or if it names the same person).
+   */
   async purchaseMarketAsset(payload: {
     team_id: string;
     asset_type: string;
     quantity?: number;
     price?: number;
     details?: any;
+    countersigned_by: string;
   }): Promise<ApiResponse<BlackMarketPurchaseData>> {
     return apiClient.post<BlackMarketPurchaseData>('/rounds/3/purchase', payload);
   }

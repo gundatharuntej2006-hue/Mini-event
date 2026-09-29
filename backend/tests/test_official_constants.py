@@ -99,12 +99,12 @@ class TestRound1ExpeditionConstants:
         - rank 24 = 116
         - rank 32 = 52
         """
-        formula = lambda rank: 300 - 8 * (rank - 1)
-        assert formula(1) == 300
-        assert formula(2) == 292
-        assert formula(10) == 228
-        assert formula(24) == 116
-        assert formula(32) == 52
+        formula = lambda rank: 25 - rank   # ODDyssey Section 3: 24 down to 1
+        assert formula(1) == 24
+        assert formula(2) == 23
+        assert formula(10) == 15
+        assert formula(24) == 1
+        assert formula(23) == 2
 
 
 class TestRound2CaboConstants:
@@ -134,14 +134,15 @@ class TestRound3BlackMarketAndWalletConstants:
         assert STARTING_WALLET_BALANCE == 1000.0
 
     def test_black_market_suggested_prices(self):
-        """Unresolved decision #2: Black Market prices are suggested guidelines."""
+        """ODDyssey Section 5, Market Catalogue - six items, not four."""
         assert BLACK_MARKET_SUGGESTED_PRICES == {
-            "missing_code_fragment": 400.0,
+            "missing_code_fragment": 350.0,
             "extra_prep_time": 200.0,
             "extra_witness_question": 150.0,
             "agent_intel": 250.0,
+            "case_theme_hint": 200.0,
         }
-        assert BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED == 400.0
+        assert BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED == 350.0  # ODDyssey Section 2
         assert BLACK_MARKET_PREP_PRICE_SUGGESTED == 200.0
         assert BLACK_MARKET_WITNESS_PRICE_SUGGESTED == 150.0
         assert BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED == 250.0
@@ -149,8 +150,8 @@ class TestRound3BlackMarketAndWalletConstants:
 
 class TestCodeFragmentsAndFinalCodeGateConstants:
     def test_code_fragment_count(self):
-        """Mandatory: Exactly 2 fragments (Fragment 1 in R1, Fragment 2 in R2)."""
-        assert CODE_FRAGMENT_COUNT == 2
+        """ODDyssey Section 2: ODD - 42 - ECHO - PRIME, so four fragments."""
+        assert CODE_FRAGMENT_COUNT == 4
 
     def test_final_code_gate_mandatory_for_r4(self):
         """Mandatory: Final Code gate is required for Round 4 access."""
@@ -195,6 +196,10 @@ class TestFinaleAgentUnmaskingAndCarryoverConstants:
         assert AGENT_WRONG_GUESS == -20.0
 
     def test_black_market_carryover_weight(self):
-        """Unresolved decision #3: Suggested 10% carryover into Finale."""
-        assert FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED == 0.10
-        assert DEFAULT_CARRYOVER_WEIGHT_PERCENT == 10.0
+        """
+        ODDyssey resolves what was organiser decision #3: the final score is
+        "Legal Battle score + Agent-guessing score + Points remaining after
+        the Black Market", so the whole balance carries.
+        """
+        assert FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED == 1.0
+        assert DEFAULT_CARRYOVER_WEIGHT_PERCENT == 100.0

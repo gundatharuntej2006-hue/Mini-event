@@ -1,4 +1,6 @@
 import pytest
+
+from app.core import constants as rules
 from fastapi.testclient import TestClient
 
 def test_full_organizer_tournament_e2e_lifecycle(client: TestClient, organizer_headers: dict, marshal_headers: dict, judge_headers: dict):
@@ -148,16 +150,17 @@ def test_full_organizer_tournament_e2e_lifecycle(client: TestClient, organizer_h
     )
     assert tx_res.status_code == 200
 
-    # Team 1 transfers 20 points to Team 2
+    # ODDyssey Section 5, Black Market Rules: "Points cannot be transferred."
+    # The endpoint refuses, so the flow asserts the refusal.
     xfer_res = client.post(
         "/api/v1/rounds/3/transfer",
         json={"fromTeamId": top_12_ids[0], "toTeamId": top_12_ids[1], "amount": 20.0, "reason": "Secret Key Purchase"},
         headers=marshal_headers
     )
-    assert xfer_res.status_code == 200
+    assert xfer_res.status_code == 403
 
-    # Team 1 updates all 4 code fragments
-    for f_idx in range(4):
+    # Team 1 collects all four fragments: ODD, 42, ECHO, PRIME.
+    for f_idx in range(rules.CODE_FRAGMENT_COUNT):
         frag_res = client.put(
             "/api/v1/rounds/3/codes/fragment",
             json={"teamId": top_12_ids[0], "fragmentIndex": f_idx, "code": f"CODE-SEG-{f_idx}", "isDiscovered": True},

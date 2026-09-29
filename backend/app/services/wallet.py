@@ -93,12 +93,16 @@ class DuplicateTransactionError(WalletError):
 # ==============================================================================
 def calculate_r1_reward(rank: int, rank_schedule: Optional[Dict[int, float]] = None) -> float:
     """
-    Calculates the Round 1 Expedition points award based on squad finishing rank.
-    Official suggested formula: 300 - 8 * (rank - 1), resulting in:
-      Rank 1  -> 300 pts
-      Rank 2  -> 292 pts
-      ...
-      Rank 32 -> 52 pts
+    Round 1 rank points, per the ODDyssey plan, Section 3 (Round 1 Scoring):
+
+        1st   -> 24 pts
+        2nd   -> 23 pts
+        ...continue decreasing...
+        24th  -> 1 pt
+
+    "For Black Market points, QUALIFYING teams receive rank points" - so only
+    the fastest 24 score; ranks 25 to 32 were eliminated and earn nothing.
+
     Supports configurable custom rank schedules.
     """
     if not (1 <= rank <= 32):
@@ -108,14 +112,29 @@ def calculate_r1_reward(rank: int, rank_schedule: Optional[Dict[int, float]] = N
         return float(rank_schedule[rank])
 
     # Official default formula
-    return float(300 - 8 * (rank - 1))
+    # ODDyssey Section 3: "1st = 24 rank points, 2nd = 23, continue in order,
+    # 24th = 1". So points = 25 - rank, and only the 24 qualifying teams score.
+    # This replaced 300 - 8*(rank - 1), which ran on a completely different
+    # scale: rank 1 earned 300 rather than 24.
+    if rank > 24:
+        return 0.0
+    return float(25 - rank)
 
 
-def calculate_r2_cabo_reward(cabo_score: float, multiplier: float = 10.0) -> float:
+def calculate_r2_cabo_reward(cabo_score: float, multiplier: float = 1.0) -> float:
     """
-    Calculates the Round 2 Cabo wallet reward from validated Cabo team score.
-    Official rule: Cabo team score * 10 (where 0 <= Cabo team score <= 75).
-    Default max points: 75 * 10 = 750 pts.
+    Round 2 Cabo wallet reward, per the ODDyssey plan, Section 5:
+
+        "Each team receives 1,000 points, plus: Round 1 rank points, Round 2
+         Cabo score, Verified Agent task points."
+
+    The Cabo SCORE itself is added - the plan names no multiplier. This
+    defaulted to x10, which is a rule from an earlier event document and made
+    Round 2 worth up to 750 points against Round 1's 24. Under ODDyssey the
+    maximum Cabo contribution is 75.
+
+    The multiplier stays configurable for organisers who want to reweight it,
+    but the default now matches the plan.
     """
     if not (0.0 <= cabo_score <= float(CABO_MAX_TEAM_SCORE)):
         raise InvalidScoreError(
@@ -379,11 +398,16 @@ def award_round2_reward(
     db: Session,
     team_id: str,
     cabo_score: float,
-    multiplier: float = 10.0,
+    multiplier: float = 1.0,
     created_by: Optional[str] = None,
 ) -> WalletTransaction:
     """
     Awards Round 2 Cabo points to the squad wallet.
+
+    ODDyssey Section 5 adds the Cabo SCORE itself, with no multiplier - this
+    defaulted to x10, which came from an earlier event document and made
+    Round 2 worth up to 750 against Round 1's 24.
+
     Idempotent per (team_id, ROUND_2_CABO, r2-cabo-{team_id}).
     """
     pts = calculate_r2_cabo_reward(cabo_score, multiplier=multiplier)

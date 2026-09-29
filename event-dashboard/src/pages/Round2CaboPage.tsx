@@ -792,7 +792,11 @@ export const Round2CaboPage: React.FC = () => {
             <span className="font-bold">Cutoff Tie Detected — Finalization Blocked:</span>
             <p className="mt-0.5 leading-relaxed">
               Two or more teams share identical points across the <strong>12th-place qualification cutoff boundary</strong>.
-              In accordance with tournament guidelines, no arbitrary tie-breaker is invented. Manual organizer/marshal review is required.
+              No arbitrary tie-breaker is invented. ODDyssey Section 4 resolves this in order:
+              higher placement score, then lower combined final card total, then more first-place
+              finishes, then <strong>one sudden-death Cabo game</strong> with one representative
+              from each tied team, and finally an <strong>organiser draw</strong>. Record the
+              sudden-death or draw result against each tied squad to clear this block.
             </p>
           </div>
         </div>

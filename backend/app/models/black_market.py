@@ -105,6 +105,14 @@ class BlackMarketPurchase(Base):
         String(255),
         nullable=True
     )
+    # ODDyssey Section 5, Black Market Rules: "Every transaction requires two
+    # organiser signatures." Only one actor was recorded, so the paper control
+    # had no counterpart in the ledger - a single organiser could move a
+    # squad's points with nothing to show who else authorised it.
+    countersigned_by: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
 
     # Relationships
     team: Mapped["Team"] = relationship("Team", back_populates="black_market_purchases")

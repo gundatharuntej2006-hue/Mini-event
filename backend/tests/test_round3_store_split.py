@@ -81,10 +81,20 @@ def test_a_fragment_logged_by_the_dashboard_opens_the_round4_gate(
     )
 
 
-def test_a_transfer_made_by_the_dashboard_moves_real_money(
+def test_points_cannot_be_transferred_between_teams(
     client: TestClient, organizer_headers: dict, marshal_headers: dict
 ):
-    """/rounds/3/transfer is legacy-only; the wallets are what get spent."""
+    """
+    ODDyssey Section 5, Black Market Rules: "Points cannot be transferred."
+
+    Teams arriving at the market with different balances is the point of the
+    economy - rank points, Cabo score and agent tasks are meant to separate
+    them. A transfer lets an already-eliminated team hand its balance to an
+    ally, which turns the market into a pooled fund.
+
+    This test used to assert that a transfer succeeded and moved money. It
+    does now assert the refusal, and that no money moved.
+    """
     a = _team(client, organizer_headers, "Sender Squad")
     b = _team(client, organizer_headers, "Receiver Squad")
 
@@ -93,9 +103,10 @@ def test_a_transfer_made_by_the_dashboard_moves_real_money(
         json={"fromTeamId": a, "toTeamId": b, "amount": 200.0, "reason": "Alliance"},
         headers=marshal_headers,
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 403, r.text
+    assert "cannot be transferred" in r.text
 
     wa = client.get(f"/api/teams/{a}/wallet", headers=organizer_headers).json()["data"]
     wb = client.get(f"/api/teams/{b}/wallet", headers=organizer_headers).json()["data"]
-    assert wa["currentBalance"] == C.STARTING_WALLET_BALANCE - 200
-    assert wb["currentBalance"] == C.STARTING_WALLET_BALANCE + 200
+    assert wa["currentBalance"] == C.STARTING_WALLET_BALANCE
+    assert wb["currentBalance"] == C.STARTING_WALLET_BALANCE

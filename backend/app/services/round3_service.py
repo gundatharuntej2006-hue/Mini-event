@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone

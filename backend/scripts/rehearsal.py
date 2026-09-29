@@ -1,4 +1,4 @@
-﻿"""
+"""
 Drive a full 32-team tournament through the API and report what breaks.
 
 Run it:
@@ -202,6 +202,78 @@ check("a hint costs the documented 5 minutes",
       hinted and field(hinted, "total_penalty_seconds", "totalPenaltySeconds") == C.DEFAULT_R1_HINT_PENALTY_SECONDS,
       f"got {hinted and field(hinted, 'total_penalty_seconds', 'totalPenaltySeconds')}")
 
+# ODDyssey Section 4: "Total time = time spent at gates + hint penalties +
+# rule penalties." Take the fastest clean team and penalise it, then confirm
+# the penalty both lands and moves it down the table - the whole point of the
+# rule is that it changes who reaches Round 2.
+offender = teams[1]
+before = next((r for r in r1 if field(r, "team_id", "teamId") == offender), None)
+rank_before = before and before.get("rank")
+adj_before = before and field(before, "adjusted_total_seconds", "adjustedTotalSeconds")
+
+vio = client.post(f"/api/rounds/1/teams/{offender}/violations", json={
+    "mini_round_number": 1,
+    "violation": "UNAUTHORISED_PHONE_USE",
+    "count": 1,
+}, headers=MARSHAL)
+check("a marshal can log unauthorised phone use", vio.status_code == 200, vio.text[:200])
+
+r1_after = body(client.get("/api/rounds/1/teams", headers=ORG)) or []
+after = next((r for r in r1_after if field(r, "team_id", "teamId") == offender), None)
+adj_after = after and field(after, "adjusted_total_seconds", "adjustedTotalSeconds")
+
+check("phone use adds the documented 10 minutes",
+      adj_before is not None and adj_after is not None
+      and adj_after - adj_before == C.R1_PENALTY_PHONE_USE_SECONDS,
+      f"{adj_before} -> {adj_after}")
+check("a rule penalty actually moves the team down the table",
+      rank_before is not None and after and after.get("rank") is not None
+      and after["rank"] > rank_before,
+      f"rank {rank_before} -> {after and after.get('rank')}")
+
+# Clue damage is scored in points, not seconds. It must not also add time.
+wallet_before = body(client.get(f"/api/teams/{offender}/wallet", headers=ORG)) or {}
+bal_before = field(wallet_before, "current_balance", "currentBalance")
+
+dmg = client.post(f"/api/rounds/1/teams/{offender}/violations", json={
+    "mini_round_number": 2,
+    "violation": "CLUE_DAMAGE",
+    "count": 1,
+}, headers=MARSHAL)
+check("a marshal can log clue damage", dmg.status_code == 200, dmg.text[:200])
+
+wallet_after = body(client.get(f"/api/teams/{offender}/wallet", headers=ORG)) or {}
+bal_after = field(wallet_after, "current_balance", "currentBalance")
+check("clue damage costs 20 points and no extra time",
+      bal_before is not None and bal_after is not None
+      and bal_before - bal_after == abs(C.R1_CLUE_DAMAGE_POINT_PENALTY),
+      f"{bal_before} -> {bal_after}")
+
+r1_dmg = body(client.get("/api/rounds/1/teams", headers=ORG)) or []
+after_dmg = next((r for r in r1_dmg if field(r, "team_id", "teamId") == offender), None)
+check("clue damage adds no time penalty",
+      after_dmg and field(after_dmg, "adjusted_total_seconds", "adjustedTotalSeconds") == adj_after,
+      f"{adj_after} -> {after_dmg and field(after_dmg, 'adjusted_total_seconds', 'adjustedTotalSeconds')}")
+
+# The Round 1 data-entry screen writes through the legacy record. Re-saving it
+# must not refund the penalty - that path recomputed the adjusted time from
+# hints alone, and the screen is edited constantly during the round.
+legacy = client.put(f"/api/rounds/1/records/{offender}", json={
+    "miniRounds": [
+        {"roundNumber": leg, "durationSeconds": 300 + 1 * 11,
+         "hintsUsed": 0, "isCompleted": True}
+        for leg in (1, 2, 3)
+    ]
+}, headers=ORG)
+check("the Round 1 screen accepts a legacy edit", legacy.status_code == 200, legacy.text[:200])
+
+r1_relegacy = body(client.get("/api/rounds/1/teams", headers=ORG)) or []
+after_legacy = next((r for r in r1_relegacy if field(r, "team_id", "teamId") == offender), None)
+check("re-saving the Round 1 screen does not refund the rule penalty",
+      after_legacy
+      and field(after_legacy, "total_penalty_seconds", "totalPenaltySeconds") >= C.R1_PENALTY_PHONE_USE_SECONDS,
+      f"got {after_legacy and field(after_legacy, 'total_penalty_seconds', 'totalPenaltySeconds')}")
+
 ok1, why1 = finalized(client.post("/api/rounds/1/finalize", json={}, headers=ORG))
 check("Round 1 finalized", ok1, why1)
 
@@ -253,8 +325,11 @@ r3_teams = teams[: C.R2_QUALIFIERS]
 
 # Code fragments through the desk endpoint the dashboard uses.
 for i, tid in enumerate(r3_teams):
-    if i % 3 != 2:                      # two thirds find both fragments
-        for idx in range(C.CODE_FRAGMENT_COUNT):
+    # Two thirds find the whole code; the rest find only the Round 1 half and
+    # must buy the Round 2 fragments back at the market.
+    found = C.CODE_FRAGMENT_COUNT if i % 3 != 2 else 2
+    if True:
+        for idx in range(found):
             client.put("/api/v1/rounds/3/codes/fragment", json={
                 "teamId": tid, "fragmentIndex": idx,
                 "isDiscovered": True, "code": f"FRAG-{idx}",
@@ -285,17 +360,61 @@ check("dashboard awards reach the wallet",
 # documented recovery route, so it has to actually work.
 buyer = r3_teams[2]
 before_gate = (body(client.get(f"/api/code-hunt/eligibility/r4/{buyer}", headers=ORG)) or {}).get("isEligible")
+status_before = body(client.get(f"/api/code-hunt/{buyer}/status", headers=ORG)) or {}
+need = len(status_before.get("missingFragments") or status_before.get("missing_fragments") or [])
 bought = 0
-for _ in range(C.CODE_FRAGMENT_COUNT):
+for _ in range(need):
     buy = client.post("/api/rounds/3/purchase",
-                      json={"teamId": buyer, "assetType": "MISSING_CODE_FRAGMENT"},
+                      json={"teamId": buyer, "assetType": "MISSING_CODE_FRAGMENT",
+                            # ODDyssey Section 5: every transaction needs two
+                            # organiser signatures.
+                            "countersignedBy": "marshal-1"},
                       headers=ORG)
     if buy.status_code == 200:
         bought += 1
     else:
         note(f"purchase {bought + 1} refused: {buy.status_code} {buy.text[:160]}")
-check("a code-less team can buy every missing fragment",
-      bought == C.CODE_FRAGMENT_COUNT, f"bought {bought} of {C.CODE_FRAGMENT_COUNT}")
+check("a team can buy back every fragment it is missing",
+      need > 0 and bought == need, f"needed {need}, bought {bought}")
+
+# ODDyssey Section 5, Black Market Rules: "Every transaction requires two
+# organiser signatures." A single-signature purchase must be refused outright.
+solo = client.post("/api/rounds/3/purchase",
+                   json={"teamId": r3_teams[3], "assetType": "EXTRA_PREP_TIME"},
+                   headers=ORG)
+check("a purchase with one signature is refused",
+      solo.status_code == 400 and "two organiser signatures" in solo.text,
+      f"{solo.status_code} {solo.text[:160]}")
+
+# And stock is finite: the catalogue publishes "4 available" for prep time.
+cat = body(client.get("/api/rounds/3/market/catalog", headers=ORG)) or {}
+prep = next((i for i in (cat.get("catalog") or [])
+             if field(i, "asset_type", "assetType") == "EXTRA_PREP_TIME"), None)
+stock = prep and field(prep, "remaining_stock", "remainingStock")
+check("the market publishes what is left on the shelf",
+      prep is not None and stock is not None, f"got {prep and list(prep)}")
+
+sold = 0
+for t in r3_teams[:6]:
+    r = client.post("/api/rounds/3/purchase",
+                    json={"teamId": t, "assetType": "EXTRA_PREP_TIME",
+                          "countersignedBy": "marshal-1"},
+                    headers=ORG)
+    if r.status_code == 200:
+        sold += 1
+check("stock runs out instead of selling forever",
+      sold == C.BLACK_MARKET_STOCK["EXTRA_PREP_TIME"],
+      f"sold {sold} of a documented {C.BLACK_MARKET_STOCK['EXTRA_PREP_TIME']}")
+
+# ODDyssey affordability check. A team that found NOTHING needs 4 x 350 = 1400
+# to buy a complete code, which is more than the documented economy can produce
+# (1,000 start + 24 max rank points + 75 max Cabo + agent tasks). Worth the
+# organisers knowing: the market rescues a team that found SOME of the code,
+# not one that found none.
+best_case = C.STARTING_WALLET_BALANCE + 24 + C.CABO_MAX_TEAM_SCORE
+full_code = C.CODE_FRAGMENT_COUNT * C.BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED
+note(f"buying all {C.CODE_FRAGMENT_COUNT} fragments costs {full_code:.0f}; "
+     f"a best-case balance before agent tasks is about {best_case:.0f}")
 
 after_gate = (body(client.get(f"/api/code-hunt/eligibility/r4/{buyer}", headers=ORG)) or {}).get("isEligible")
 check("buying the Final Code opens the Round 4 gate (Section 6.2)",

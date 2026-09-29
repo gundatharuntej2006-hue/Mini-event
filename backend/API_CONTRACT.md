@@ -241,10 +241,16 @@ Authentication uses standard **JWT Bearer** tokens in the `Authorization: Bearer
 ### B. Round 1: Clue Hunt / Expedition
 - **`GET /api/v1/rounds/1/records`**
   - **Auth**: Public / Staff
-  - **Response**: List of `Round1RecordResponse` with raw total, hint penalties (120s/hint default), adjusted totals, and Top 24 qualification ranks.
+  - **Response**: List of `Round1RecordResponse` with raw total, penalties, adjusted totals, and Top 24 qualification ranks.
+  - **Scoring** (ODDyssey Section 4): `total time = gate time + hint penalties + rule penalties`. A hint costs +5 minutes (300s); the rule penalties are recorded separately (see below).
 - **`PUT /api/v1/rounds/1/records/{team_id}`**
   - **Auth**: `ORGANIZER`, `MARSHAL`
   - **Body**: `{"miniRounds": [...], "hiddenCodeRecovered": true, "hiddenCodeNotes": "Found in Archives"}`
+- **`POST /api/v1/rounds/1/teams/{team_id}/violations`**
+  - **Auth**: `ORGANIZER`, `MARSHAL`, `SCOREKEEPER`, `ADMIN`
+  - **Body**: `{"mini_round_number": 1, "violation": "UNAUTHORISED_PHONE_USE", "count": 1, "disqualify": false}`
+  - **Violations** (ODDyssey Section 4): `UNAUTHORISED_PHONE_USE` (+10 min), `TEAM_SEPARATION` (+5 min), `CLUE_DAMAGE` (-20 points, or `disqualify: true`).
+  - `count` is the gate's **new total** for that violation, not an increment, so a mis-entry is corrected by writing the right number. Only newly logged clue-damage incidents are charged.
 - **`POST /api/v1/rounds/1/records/batch`**
   - **Auth**: `ORGANIZER`, `MARSHAL`
   - **Body**: `{"records": [{"teamId": "...", "miniRounds": [...]}, ...]}`
@@ -278,6 +284,18 @@ Authentication uses standard **JWT Bearer** tokens in the `Authorization: Bearer
 - **`POST /api/v1/rounds/3/transfer`**
   - **Auth**: `ORGANIZER`, `MARSHAL`
   - **Body**: `{"fromTeamId": "...", "toTeamId": "...", "amount": 30.0, "reason": "Clue Trade"}`
+  - Returns `403` while `ALLOW_POINT_TRANSFERS` is false. ODDyssey Section 5: "Points cannot be transferred."
+- **`GET /api/v1/rounds/3/market/catalog`**
+  - **Response**: Each item carries `suggestedPrice`, `stock`, `unitsSold`, `remainingStock` and `isSoldOut`. Stock is market-wide, not per squad; `null` means "as required" (the code fragment only).
+- **`POST /api/v1/rounds/3/market/purchase`** (alias `POST /api/v1/rounds/3/purchase`)
+  - **Auth**: `ORGANIZER`, `MARSHAL`
+  - **Body**: `{"teamId": "...", "assetType": "EXTRA_PREP_TIME", "quantity": 1, "countersignedBy": "marshal-2", "details": {...}}`
+  - **`countersignedBy` is required.** ODDyssey Section 5: "Every transaction requires two organiser signatures." The acting organiser comes from the token; the countersignature must name a different person. A missing or self-naming signature returns `400` and nothing is debited.
+  - Returns `400` when the item is out of stock. Stock is checked before the wallet is touched, so a refused purchase costs nothing.
+- **`GET /api/v1/rounds/2/cabo/tie-breaks`**, **`POST`**, **`DELETE /{team_id}`**
+  - **Auth**: `ORGANIZER`, `ADMIN` (GET: any authenticated user)
+  - **Body**: `{"team_id": "...", "method": "SUDDEN_DEATH" | "ORGANISER_DRAW", "resolution_rank": 1, "notes": "..."}`
+  - ODDyssey tie-breakers 4 and 5. Tie-breakers 1-3 are computed from the scorecards; these last two are played out or drawn in the room, so an organiser enters the outcome. `resolution_rank` is the squad's finishing position within its tied group. Until both sides of a tie are recorded it stays flagged unresolved, and an unresolved tie at the 12th-place cutoff blocks finalisation.
 - **`GET /api/v1/rounds/3/codes`** & **`PUT /api/v1/rounds/3/codes/fragment`**
   - **Auth**: `ORGANIZER`, `MARSHAL`
   - **Body**: `{"teamId": "...", "fragmentIndex": 0, "code": "SIGMA-9", "isDiscovered": true}`
@@ -315,4 +333,5 @@ Authentication uses standard **JWT Bearer** tokens in the `Authorization: Bearer
   - **Auth**: `ORGANIZER`, `MARSHAL`, `JUDGE`
   - **Body**: `{"teamId": "...", "suspectedAgent": "Agent Cobalt", "actualAgent": "Agent Cobalt", "isCorrect": true, "bonusPoints": 10.0}`
 - **`GET /api/v1/rounds/5/standings`**
-  - **Response**: Final tournament podium (Champion, 1st Runner Up, 2nd Runner Up) with carryover weighting and agent verdicts.
+  - **Response**: Final tournament podium (Champion, 1st Runner Up, 2nd Runner Up) with carryover weighting and agent verdicts.
+  - **Final score** (ODDyssey Final Event Plan S1, Rulebook S8): `Legal Battle score + Agent-guessing score + remaining Black Market balance`. The balance carries in **full** (`DEFAULT_CARRYOVER_WEIGHT_PERCENT = 100`), not at the 10% the superseded Event Documentation suggested. Still configurable per event.

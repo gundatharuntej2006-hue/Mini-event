@@ -44,67 +44,45 @@ def is_organizer_or_marshal(user: Optional[User]) -> bool:
     return user is not None and user.role in (UserRole.ORGANIZER, UserRole.MARSHAL)
 
 
-@router.post("/{team_id}/fragment/1", response_model=ApiResponse[FinalCodeRecordResponse])
-def record_round1_fragment(
+@router.post("/{team_id}/fragment/{fragment_number}", response_model=ApiResponse[FinalCodeRecordResponse])
+def record_code_fragment(
     team_id: str,
+    fragment_number: int,
     payload: RecordFragmentRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role([UserRole.ORGANIZER, UserRole.MARSHAL])),
 ):
     """
-    Records Fragment 1 discovered during Round 1: The Great Expedition.
+    Record one Final Code fragment for a squad.
+
+    The ODDyssey plan has four - ODD and 42 from Round 1, ECHO and PRIME from
+    Round 2 - so this is one endpoint taking the fragment number rather than a
+    hardcoded route per fragment. /fragment/1 and /fragment/2 keep working
+    unchanged; /fragment/3 and /fragment/4 now exist.
+
     Restricted to organizers and marshals.
     """
     try:
-        record = code_hunt_service.record_fragment_1(
+        record = code_hunt_service.record_fragment(
             db=db,
             team_id=team_id,
+            fragment_number=fragment_number,
             fragment_value=payload.fragment_value,
             actor=current_user.email,
             overwrite=payload.overwrite,
         )
         return ApiResponse(
             data=record,
-            message="Fragment 1 recorded successfully"
+            message=f"Fragment {fragment_number} recorded successfully"
         )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except FragmentAlreadyRecordedError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except CodeHuntNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except CodeHuntError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.post("/{team_id}/fragment/2", response_model=ApiResponse[FinalCodeRecordResponse])
-def record_round2_fragment(
-    team_id: str,
-    payload: RecordFragmentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.ORGANIZER, UserRole.MARSHAL])),
-):
-    """
-    Records Fragment 2 discovered during Round 2: Cabo Tournament.
-    Restricted to organizers and marshals.
-    """
-    try:
-        record = code_hunt_service.record_fragment_2(
-            db=db,
-            team_id=team_id,
-            fragment_value=payload.fragment_value,
-            actor=current_user.email,
-            overwrite=payload.overwrite,
-        )
-        return ApiResponse(
-            data=record,
-            message="Fragment 2 recorded successfully"
-        )
-    except FragmentAlreadyRecordedError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except CodeHuntNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except CodeHuntError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
 
 @router.post("/{team_id}/verify", response_model=ApiResponse[FinalCodeRecordResponse])
 def verify_team_final_code(

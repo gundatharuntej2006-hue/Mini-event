@@ -7,10 +7,24 @@ import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SummaryMetric } from '../components/ui/SummaryMetric';
 import { SearchFilterToolbar } from '../components/ui/SearchFilterToolbar';
-import { backendApiService, CodeHuntStatusData } from '../services/backendApiService';
+import { backendApiService, CodeHuntStatusData, holdsFragment } from '../services/backendApiService';
+import { CODE_FRAGMENT_COUNT, CODE_FRAGMENTS } from '../constants/tournamentConstants';
 import { authService } from '../services/authService';
 import { Team } from '../types';
 import { formatTeamNumber } from '../utils/formatters';
+
+/**
+ * ODDyssey Section 2: ODD - 42 - ECHO - PRIME. Derived from the constants so
+ * this page cannot drift from the backend's fragment count again - it was
+ * hardcoded to two columns while the gate required four.
+ */
+const FRAGMENT_COLUMNS = Object.keys(CODE_FRAGMENTS)
+  .slice(0, CODE_FRAGMENT_COUNT)
+  .map((name, index) => ({
+    number: index + 1,
+    name,
+    label: `${name} (${CODE_FRAGMENTS[name]})`,
+  }));
 
 interface TeamCodeHuntRow {
   team: Team;
@@ -30,7 +44,7 @@ export function CodeFragmentsPage() {
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
   const [isVerifyModalOpen, setIsVerifyModalOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [fragmentType, setFragmentType] = useState<'1' | '2'>('1');
+  const [fragmentType, setFragmentType] = useState<number>(1);
   const [fragmentValue, setFragmentValue] = useState('');
   const [verifyCodeValue, setVerifyCodeValue] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -100,9 +114,9 @@ export function CodeFragmentsPage() {
   const verifiedCount = Object.values(statuses).filter((s) => s.final_code_verified).length;
   const r4EligibleCount = Object.values(statuses).filter((s) => s.r4_eligible).length;
 
-  const handleOpenRecord = (team: Team, type: '1' | '2') => {
+  const handleOpenRecord = (team: Team, fragmentNumber: number) => {
     setSelectedTeam(team);
-    setFragmentType(type);
+    setFragmentType(fragmentNumber);
     setFragmentValue('');
     setModalError(null);
     setIsRecordModalOpen(true);
@@ -120,17 +134,10 @@ export function CodeFragmentsPage() {
     setIsSubmitting(true);
     setModalError(null);
     try {
-      if (fragmentType === '1') {
-        await backendApiService.recordFragment1(selectedTeam.id, {
-          fragment_value: fragmentValue.trim(),
-          overwrite: true,
-        });
-      } else {
-        await backendApiService.recordFragment2(selectedTeam.id, {
-          fragment_value: fragmentValue.trim(),
-          overwrite: true,
-        });
-      }
+      await backendApiService.recordFragment(selectedTeam.id, fragmentType, {
+        fragment_value: fragmentValue.trim(),
+        overwrite: true,
+      });
       setIsRecordModalOpen(false);
       await loadData();
     } catch (err: any) {
@@ -266,8 +273,11 @@ export function CodeFragmentsPage() {
               <thead>
                 <tr className="bg-[#030712]/95 border-b border-cyan-500/20 text-[10px] uppercase tracking-wider font-mono font-semibold text-cyan-400/90">
                   <th className="py-3 px-4">Squad</th>
-                  <th className="py-3 px-4">Fragment 1 (R1)</th>
-                  <th className="py-3 px-4">Fragment 2 (R2)</th>
+                  {FRAGMENT_COLUMNS.map((f) => (
+                    <th key={f.number} className="py-3 px-4">
+                      {f.label}
+                    </th>
+                  ))}
                   <th className="py-3 px-4">Final Code Status</th>
                   <th className="py-3 px-4">R4 Eligibility</th>
                   {isStaff && <th className="py-3 px-4 text-right">Actions</th>}
@@ -275,8 +285,12 @@ export function CodeFragmentsPage() {
               </thead>
               <tbody className="divide-y divide-cyan-500/10">
                 {filteredRows.map(({ team, status }) => {
-                  const f1Found = status?.fragment_1_status === 'RECOVERED';
-                  const f2Found = status?.fragment_2_status === 'RECOVERED';
+                  // A bought fragment counts. Checking only for RECOVERED
+                  // showed a squad that had paid 350 points for its last
+                  // fragment as still missing it.
+                  const held = FRAGMENT_COLUMNS.map((f) =>
+                    holdsFragment(status ?? undefined, f.number)
+                  );
                   const isVerified = status?.final_code_verified ?? false;
 
                   return (
@@ -287,28 +301,19 @@ export function CodeFragmentsPage() {
                         </div>
                         <div className="text-[10px] font-mono text-slate-400">{team.id}</div>
                       </td>
-                      <td className="py-3 px-4">
-                        {f1Found ? (
-                          <Badge variant="success" size="sm" dot>
-                            Recovered
-                          </Badge>
-                        ) : (
-                          <Badge variant="neutral" size="sm">
-                            Missing
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {f2Found ? (
-                          <Badge variant="success" size="sm" dot>
-                            Recovered
-                          </Badge>
-                        ) : (
-                          <Badge variant="neutral" size="sm">
-                            Missing
-                          </Badge>
-                        )}
-                      </td>
+                      {FRAGMENT_COLUMNS.map((f, i) => (
+                        <td key={f.number} className="py-3 px-4">
+                          {held[i] ? (
+                            <Badge variant="success" size="sm" dot>
+                              Held
+                            </Badge>
+                          ) : (
+                            <Badge variant="neutral" size="sm">
+                              Missing
+                            </Badge>
+                          )}
+                        </td>
+                      ))}
                       <td className="py-3 px-4">
                         {isVerified ? (
                           <Badge variant="success" size="sm">
@@ -333,18 +338,15 @@ export function CodeFragmentsPage() {
                       </td>
                       {isStaff && (
                         <td className="py-3 px-4 text-right space-x-2">
-                          <button
-                            onClick={() => handleOpenRecord(team, '1')}
-                            className="px-2 py-1 text-[10px] font-mono rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60"
-                          >
-                            + Frag 1
-                          </button>
-                          <button
-                            onClick={() => handleOpenRecord(team, '2')}
-                            className="px-2 py-1 text-[10px] font-mono rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60"
-                          >
-                            + Frag 2
-                          </button>
+                          {FRAGMENT_COLUMNS.map((f) => (
+                            <button
+                              key={f.number}
+                              onClick={() => handleOpenRecord(team, f.number)}
+                              className="px-2 py-1 text-[10px] font-mono rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60"
+                            >
+                              + {f.name}
+                            </button>
+                          ))}
                           <button
                             onClick={() => handleOpenVerify(team)}
                             className="px-2 py-1 text-[10px] font-mono rounded bg-purple-950/60 border border-purple-500/40 text-purple-300 hover:bg-purple-900/60"
@@ -366,7 +368,7 @@ export function CodeFragmentsPage() {
       <Modal
         isOpen={isRecordModalOpen}
         onClose={() => setIsRecordModalOpen(false)}
-        title={`Record Fragment ${fragmentType} — ${selectedTeam?.name || ''}`}
+        title={`Record ${FRAGMENT_COLUMNS[fragmentType - 1]?.name ?? `Fragment ${fragmentType}`} — ${selectedTeam?.name || ''}`}
       >
         <div className="space-y-4">
           <p className="text-xs text-slate-300">

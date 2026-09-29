@@ -8,7 +8,7 @@ from app.schemas.common import ApiResponse, FinalizationResponse
 from app.schemas.rounds.round1 import (
     Round1OverviewResponse, Round1ConfigSchema, UpdateRound1ConfigInput,
     MiniRoundTimingInput, UpdateHintsInput, TeamRound1RecordResponse,
-    MiniRoundTimingResponse
+    MiniRoundTimingResponse, RuleViolationInput
 )
 from app.services import round1_service
 
@@ -84,6 +84,10 @@ def record_timing(
         completion_time=timing.completion_time.isoformat() if timing.completion_time else None,
         hints_used=timing.hints_used,
         hint_penalty_seconds=timing.hint_penalty_seconds,
+        phone_use_count=timing.phone_use_count or 0,
+        separation_count=timing.separation_count or 0,
+        clue_damage_count=timing.clue_damage_count or 0,
+        rule_penalty_seconds=timing.rule_penalty_seconds or 0,
         duration_seconds=timing.duration_seconds,
         adjusted_seconds=timing.adjusted_seconds,
         checkpoints=timing.checkpoints or []
@@ -106,11 +110,58 @@ def record_hints(
         completion_time=timing.completion_time.isoformat() if timing.completion_time else None,
         hints_used=timing.hints_used,
         hint_penalty_seconds=timing.hint_penalty_seconds,
+        phone_use_count=timing.phone_use_count or 0,
+        separation_count=timing.separation_count or 0,
+        clue_damage_count=timing.clue_damage_count or 0,
+        rule_penalty_seconds=timing.rule_penalty_seconds or 0,
         duration_seconds=timing.duration_seconds,
         adjusted_seconds=timing.adjusted_seconds,
         checkpoints=timing.checkpoints or []
     )
     return ApiResponse(data=res, message="Hints updated")
+
+@router.post("/teams/{team_id}/violations", response_model=ApiResponse[MiniRoundTimingResponse])
+def record_rule_violation(
+    team_id: str,
+    payload: RuleViolationInput,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "scorekeeper", "admin"]))
+):
+    """
+    Log an ODDyssey Section 4 Round 1 rule violation against one gate.
+
+        UNAUTHORISED_PHONE_USE   +10 minutes
+        TEAM_SEPARATION          +5 minutes
+        CLUE_DAMAGE              -20 points, or disqualification
+
+    Round 1 is ranked on "gate time + hint penalties + rule penalties", and
+    until now a marshal had no way to record anything but the hints.
+    """
+    timing = round1_service.record_rule_violation(
+        db=db,
+        team_id=team_id,
+        mini_round_number=payload.mini_round_number,
+        violation=payload.violation,
+        count=payload.count,
+        actor=actor,
+        disqualify=payload.disqualify,
+    )
+    res = MiniRoundTimingResponse(
+        mini_round_number=timing.mini_round_number,
+        status=timing.status,
+        start_time=timing.start_time.isoformat() if timing.start_time else None,
+        completion_time=timing.completion_time.isoformat() if timing.completion_time else None,
+        hints_used=timing.hints_used,
+        hint_penalty_seconds=timing.hint_penalty_seconds,
+        phone_use_count=timing.phone_use_count or 0,
+        separation_count=timing.separation_count or 0,
+        clue_damage_count=timing.clue_damage_count or 0,
+        rule_penalty_seconds=timing.rule_penalty_seconds or 0,
+        duration_seconds=timing.duration_seconds,
+        adjusted_seconds=timing.adjusted_seconds,
+        checkpoints=timing.checkpoints or []
+    )
+    return ApiResponse(data=res, message="Rule violation recorded")
 
 @router.get("/teams/{team_id}/result", response_model=ApiResponse[TeamRound1RecordResponse])
 def get_team_result(team_id: str, db: Session = Depends(get_db)):

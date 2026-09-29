@@ -191,18 +191,20 @@ def test_purchase_agent_intel_with_custom_price(db_session, r3_teams):
 def test_purchase_missing_code_fragment_recovery(db_session, r3_teams):
     """Verifies purchasing missing fragment recovers the fragment in FinalCodeRecord."""
     team = r3_teams[3]
-    # Squad only found fragment 1 in R1
+    # Squad found ODD, 42 and ECHO, but not PRIME.
     code_hunt_service.record_fragment_1(db_session, team.id, "FRAGMENT-ALPHA")
+    code_hunt_service.record_fragment_2(db_session, team.id, "FRAGMENT-BETA")
+    code_hunt_service.record_fragment_3(db_session, team.id, "FRAGMENT-GAMMA")
 
     code_rec_before = code_hunt_service.get_or_create_final_code_record(db_session, team.id)
-    assert code_rec_before.fragment_2_status == FragmentStatus.PENDING
+    assert code_rec_before.fragment_4_status == FragmentStatus.PENDING
 
-    # Purchase missing fragment 2
+    # Buy the one it is missing.
     bmp = black_market_service.purchase_market_asset(
         db=db_session,
         team_id=team.id,
         asset_type="MISSING_CODE_FRAGMENT",
-        details={"fragment_number": 2, "recovered_value": "FRAGMENT-BETA"},
+        details={"fragment_number": 4, "recovered_value": "FRAGMENT-DELTA"},
         actor="organizer-1"
     )
 
@@ -211,9 +213,11 @@ def test_purchase_missing_code_fragment_recovery(db_session, r3_teams):
 
     # Verify FinalCodeRecord updated
     code_rec_after = code_hunt_service.get_or_create_final_code_record(db_session, team.id)
-    assert code_rec_after.fragment_2_status == FragmentStatus.PURCHASED
-    assert code_rec_after.fragment_2_value == "FRAGMENT-BETA"
-    assert code_rec_after.final_code_assembled == "FRAGMENT-ALPHAFRAGMENT-BETA"
+    assert code_rec_after.fragment_4_status == FragmentStatus.PURCHASED
+    assert code_rec_after.fragment_4_value == "FRAGMENT-DELTA"
+    assert code_rec_after.final_code_assembled == (
+        "FRAGMENT-ALPHAFRAGMENT-BETAFRAGMENT-GAMMAFRAGMENT-DELTA"
+    )
 
 
 def test_purchase_insufficient_funds_rejected(db_session, r3_teams):
@@ -463,9 +467,11 @@ def test_standings_final_code_gate_checked_first(db_session, r3_teams):
     # Verify Final Code for squads 1..8
     for i in range(8):
         t = r3_teams[i]
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
 
     # Squad 9 has higher balance than everyone else, but NO verified Final Code!
     rich_unverified_team = r3_teams[8]
@@ -487,9 +493,11 @@ def test_standings_code_valid_ranked_by_wallet_balance(db_session, r3_teams):
     """Verifies all code-valid squads are ranked strictly descending by remaining wallet points."""
     # Verify code for all 12 squads
     for i, t in enumerate(r3_teams):
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
 
         # Set distinct wallet balances
         wallet = wallet_service.get_wallet(db_session, t.id)
@@ -510,9 +518,11 @@ def test_standings_code_contingency_when_fewer_than_8_valid(db_session, r3_teams
     # Only 5 squads verify final code
     for i in range(5):
         t = r3_teams[i]
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
 
     standings = black_market_service.calculate_round3_standings(db_session)
     assert standings["code_contingency"] is True
@@ -523,9 +533,11 @@ def test_standings_code_contingency_when_fewer_than_8_valid(db_session, r3_teams
 def test_standings_cutoff_tie_between_rank_8_and_9(db_session, r3_teams):
     """Verifies cutoff tie between 8th and 9th place flags cutoff_tie = True."""
     for i, t in enumerate(r3_teams):
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
 
         wallet = wallet_service.get_wallet(db_session, t.id)
         if i in (7, 8):  # 8th and 9th squads have exact same points and metrics
@@ -559,9 +571,11 @@ def test_finalize_round3_success_and_wallet_preservation(db_session, r3_teams):
         db_session.commit()
 
     for i, t in enumerate(r3_teams):
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
         wallet = wallet_service.get_wallet(db_session, t.id)
         wallet.current_balance = 1500.0 - (i * 30.0)
 
@@ -604,9 +618,11 @@ def test_finalize_round3_override_discrepancy(db_session, r3_teams):
     # Only 4 teams verified (would normally block finalization)
     for i in range(4):
         t = r3_teams[i]
-        code_hunt_service.record_fragment_1(db_session, t.id, f"F1-{i}")
-        code_hunt_service.record_fragment_2(db_session, t.id, f"F2-{i}")
-        code_hunt_service.verify_final_code(db_session, t.id, f"F1-{i}F2-{i}", actor="org")
+        for _n in range(1, 5):
+            code_hunt_service.record_fragment(db_session, t.id, _n, f"F{_n}-{i}")
+        code_hunt_service.verify_final_code(
+            db_session, t.id, "".join(f"F{_n}-{i}" for _n in range(1, 5)), actor="org"
+        )
 
     res = black_market_service.finalize_round3(
         db_session,
@@ -635,13 +651,17 @@ def test_api_purchase_endpoint(client, r3_teams, organizer_headers):
     payload = {
         "teamId": team.id,
         "assetType": "EXTRA_PREP_TIME",
-        "quantity": 1
+        "quantity": 1,
+        # ODDyssey Section 5: "Every transaction requires two organiser
+        # signatures." The endpoint refuses a single-signature purchase.
+        "countersignedBy": "marshal-2",
     }
     resp = client.post("/api/v1/rounds/3/market/purchase", json=payload, headers=organizer_headers)
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["assetType"] == "EXTRA_PREP_TIME"
     assert data["price"] == BLACK_MARKET_PREP_PRICE_SUGGESTED
+    assert data["countersignedBy"] == "marshal-2"
 
 
 def test_api_auction_and_bidding_flow(client, r3_teams, organizer_headers):

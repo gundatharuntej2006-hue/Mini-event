@@ -100,7 +100,7 @@ export interface AgentGuessingRecord {
 export interface FinalScoreFormulaConfig {
   panelScoreWeight: number;          // Default: 1.0 (100% of panel score)
   agentGuessingWeight: number;       // Default: 1.0 (100% of agent guessing points)
-  blackMarketWeightPercent: number;  // Suggested: 10% (0.10)
+  blackMarketWeightPercent: number;  // ODDyssey: 100% (the full remaining balance)
   isFormulaConfirmed: boolean;       // Must be explicitly confirmed by organizer
   confirmedAt?: string | null;
   confirmedBy?: string | null;

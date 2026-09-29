@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
+from app.core import constants as C
 from app.models.user import User
 from app.schemas.common import ApiResponse, FinalizationResponse
 from app.schemas.rounds.round3 import (
@@ -27,7 +28,7 @@ from app.services import black_market_service
 from app.services.black_market_service import (
     BlackMarketError, MarketClosedError, TeamNotEligibleError,
     InvalidAssetError, AuctionNotFoundError, AuctionClosedError,
-    InvalidBidError, FinalCodeGateError, RoundFinalizationError
+    InvalidBidError, FinalCodeGateError, RoundFinalizationError, OutOfStockError
 )
 
 router = APIRouter(prefix="/rounds/3", tags=["Round 3 — The Black Market"])
@@ -61,6 +62,34 @@ def purchase_asset_api(
     Purchase a Black Market asset (missing code fragment, prep time, intel, etc.).
     Debits team tournament wallet atomically and maintains audit trail.
     """
+    # ODDyssey Section 5, Black Market Rules: "Every transaction requires
+    # two organiser signatures" (Rulebook: "Every purchase needs two
+    # organisers to sign off on it"). The acting organiser comes from the
+    # token; the second must be named, and must be someone else - a person
+    # signing their own transaction twice is not a second signature.
+    countersigner = (payload.countersigned_by or "").strip()
+    if C.REQUIRE_BLACK_MARKET_DUAL_SIGNATURE:
+        if not countersigner:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Every Black Market transaction requires two organiser "
+                    "signatures. Provide 'countersigned_by' with the second "
+                    "organiser's identifier."
+                ),
+            )
+        if countersigner.lower() in {
+            (actor.id or "").lower(),
+            (getattr(actor, "email", "") or "").lower(),
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "The countersignature must be a second organiser, not the "
+                    "one recording the transaction."
+                ),
+            )
+
     try:
         bmp = black_market_service.purchase_market_asset(
             db=db,
@@ -69,10 +98,11 @@ def purchase_asset_api(
             quantity=payload.quantity,
             price=payload.price,
             details=payload.details,
-            actor=actor.id
+            actor=actor.id,
+            countersigned_by=countersigner or None,
         )
         return ApiResponse(data=bmp, message="Black Market asset purchase completed successfully")
-    except (MarketClosedError, TeamNotEligibleError, InvalidAssetError) as e:
+    except (MarketClosedError, TeamNotEligibleError, InvalidAssetError, OutOfStockError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         if "Insufficient funds" in str(e):

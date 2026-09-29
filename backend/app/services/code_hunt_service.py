@@ -19,7 +19,11 @@ from sqlalchemy.orm import Session
 from app.models.code_hunt import FinalCodeRecord, FragmentStatus
 from app.models.team import Team
 from app.models.black_market import BlackMarketPurchase, BlackMarketAssetType, PurchaseStatus
-from app.core.constants import BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED
+from app.core.constants import (
+    BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED,
+    CODE_FRAGMENT_COUNT,
+    COMPLETE_SECRET_CODE,
+)
 from app.services.wallet import debit_black_market_purchase, InsufficientFundsError
 from app.services.audit_service import log_audit_event
 
@@ -60,6 +64,41 @@ class Round4GateError(CodeHuntError):
 # ==============================================================================
 # FRAGMENT RECORDING
 # ==============================================================================
+#: The fragments that make up the Final Code, in code order.
+#: ODDyssey Section 2: ODD - 42 - ECHO - PRIME.
+FRAGMENT_NUMBERS = tuple(range(1, CODE_FRAGMENT_COUNT + 1))
+_OWNED = (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+
+
+def _validate_fragment_number(n: int) -> None:
+    if n not in FRAGMENT_NUMBERS:
+        raise ValueError(
+            f"Fragment number must be one of {list(FRAGMENT_NUMBERS)}; got {n}. "
+            f"The Final Code is {COMPLETE_SECRET_CODE}."
+        )
+
+
+def frag_status(record: FinalCodeRecord, n: int) -> FragmentStatus:
+    return getattr(record, f"fragment_{n}_status")
+
+
+def frag_value(record: FinalCodeRecord, n: int) -> Optional[str]:
+    return getattr(record, f"fragment_{n}_value")
+
+
+def owns_fragment(record: FinalCodeRecord, n: int) -> bool:
+    return frag_status(record, n) in _OWNED
+
+
+def owns_all_fragments(record: FinalCodeRecord) -> bool:
+    return all(owns_fragment(record, n) for n in FRAGMENT_NUMBERS)
+
+
+def missing_fragments(record: FinalCodeRecord) -> list:
+    """Fragment numbers the team does not yet hold, in code order."""
+    return [n for n in FRAGMENT_NUMBERS if not owns_fragment(record, n)]
+
+
 def get_or_create_final_code_record(db: Session, team_id: str) -> FinalCodeRecord:
     """Retrieves existing FinalCodeRecord or initializes a new one for the squad."""
     team = db.query(Team).filter(Team.id == team_id).first()
@@ -70,60 +109,68 @@ def get_or_create_final_code_record(db: Session, team_id: str) -> FinalCodeRecor
     if not record:
         record = FinalCodeRecord(
             team_id=team_id,
-            fragment_1_status=FragmentStatus.PENDING,
-            fragment_2_status=FragmentStatus.PENDING,
             final_code_verified=False,
+            **{f"fragment_{n}_status": FragmentStatus.PENDING for n in FRAGMENT_NUMBERS},
         )
         db.add(record)
         db.flush()
     return record
 
 
-def record_fragment_1(
+def record_fragment(
     db: Session,
     team_id: str,
+    fragment_number: int,
     fragment_value: str,
     actor: Optional[str] = None,
     overwrite: bool = False,
 ) -> FinalCodeRecord:
     """
-    Records Fragment 1 (discovered during Round 1: The Great Expedition).
-    Prevents silent overwrite unless explicit organizer override is requested.
-    Idempotent if the same fragment value is submitted again.
+    Record any one of the Final Code fragments.
+
+    ODDyssey Section 2 has four - ODD and 42 from Round 1, ECHO and PRIME from
+    Round 2 - so recording them is one generic operation rather than a function
+    per fragment. record_fragment_1 and record_fragment_2 remain as thin
+    wrappers so existing callers keep working.
     """
+    _validate_fragment_number(fragment_number)
     if not fragment_value or not fragment_value.strip():
-        raise CodeHuntError("Fragment 1 value cannot be empty.")
+        raise CodeHuntError(f"Fragment {fragment_number} value cannot be empty.")
 
     clean_val = fragment_value.strip()
     record = get_or_create_final_code_record(db, team_id)
 
-    if record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
-        if record.fragment_1_value == clean_val:
+    if owns_fragment(record, fragment_number):
+        if frag_value(record, fragment_number) == clean_val:
             return record  # Idempotent
         if not overwrite:
             raise FragmentAlreadyRecordedError(
-                f"Fragment 1 already recorded for team '{team_id}'. Use overwrite=True to modify."
+                f"Fragment {fragment_number} already recorded for team '{team_id}'. "
+                "Use overwrite=True to modify."
             )
 
     now = datetime.now(timezone.utc)
-    record.fragment_1_value = clean_val
-    record.fragment_1_status = FragmentStatus.RECOVERED
-    record.fragment_1_discovered_at = now
+    setattr(record, f"fragment_{fragment_number}_value", clean_val)
+    setattr(record, f"fragment_{fragment_number}_status", FragmentStatus.RECOVERED)
+    setattr(record, f"fragment_{fragment_number}_discovered_at", now)
     record.updated_at = now
 
-    # Try assembling final code if Fragment 2 is also available
-    if record.fragment_2_value:
-        record.final_code_assembled = f"{clean_val}{record.fragment_2_value}"
+    # Assemble as soon as every fragment is present.
+    if all(frag_value(record, n) for n in FRAGMENT_NUMBERS):
+        record.final_code_assembled = "".join(
+            frag_value(record, n).strip() for n in FRAGMENT_NUMBERS
+        )
 
     log_audit_event(
         db=db,
-        action="FRAGMENT_1_RECORDED",
+        action=f"FRAGMENT_{fragment_number}_RECORDED",
         entity_type="FinalCodeRecord",
         entity_id=record.id,
         actor_id=actor or "system",
         actor_role="ORGANIZER",
-        round_number=1,
-        details={"team_id": team_id, "status": record.fragment_1_status.value}
+        # Fragments 1-2 are hidden in Round 1, fragments 3-4 in Round 2.
+        round_number=1 if fragment_number <= 2 else 2,
+        details={"team_id": team_id, "status": frag_status(record, fragment_number).value},
     )
 
     db.commit()
@@ -131,71 +178,42 @@ def record_fragment_1(
     return record
 
 
-def record_fragment_2(
-    db: Session,
-    team_id: str,
-    fragment_value: str,
-    actor: Optional[str] = None,
-    overwrite: bool = False,
-) -> FinalCodeRecord:
-    """
-    Records Fragment 2 (discovered during Round 2: Cabo Tournament).
-    Prevents silent overwrite unless explicit organizer override is requested.
-    Idempotent if the same fragment value is submitted again.
-    """
-    if not fragment_value or not fragment_value.strip():
-        raise CodeHuntError("Fragment 2 value cannot be empty.")
-
-    clean_val = fragment_value.strip()
-    record = get_or_create_final_code_record(db, team_id)
-
-    if record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
-        if record.fragment_2_value == clean_val:
-            return record  # Idempotent
-        if not overwrite:
-            raise FragmentAlreadyRecordedError(
-                f"Fragment 2 already recorded for team '{team_id}'. Use overwrite=True to modify."
-            )
-
-    now = datetime.now(timezone.utc)
-    record.fragment_2_value = clean_val
-    record.fragment_2_status = FragmentStatus.RECOVERED
-    record.fragment_2_discovered_at = now
-    record.updated_at = now
-
-    # Try assembling final code if Fragment 1 is also available
-    if record.fragment_1_value:
-        record.final_code_assembled = f"{record.fragment_1_value}{clean_val}"
-
-    log_audit_event(
-        db=db,
-        action="FRAGMENT_2_RECORDED",
-        entity_type="FinalCodeRecord",
-        entity_id=record.id,
-        actor_id=actor or "system",
-        actor_role="ORGANIZER",
-        round_number=2,
-        details={"team_id": team_id, "status": record.fragment_2_status.value}
-    )
-
-    db.commit()
-    db.refresh(record)
-    return record
+def record_fragment_3(db: Session, team_id: str, fragment_value: str,
+                      actor: Optional[str] = None, overwrite: bool = False) -> FinalCodeRecord:
+    """ECHO - Round 2, marked Cabo cards."""
+    return record_fragment(db, team_id, 3, fragment_value, actor, overwrite)
 
 
-# ==============================================================================
-# FINAL CODE ASSEMBLY & VERIFICATION
-# ==============================================================================
+def record_fragment_4(db: Session, team_id: str, fragment_value: str,
+                      actor: Optional[str] = None, overwrite: bool = False) -> FinalCodeRecord:
+    """PRIME - Round 2, Prime Number Challenge."""
+    return record_fragment(db, team_id, 4, fragment_value, actor, overwrite)
+
+
+def record_fragment_1(db: Session, team_id: str, fragment_value: str,
+                      actor: Optional[str] = None, overwrite: bool = False) -> FinalCodeRecord:
+    """ODD - Round 1, The Signal Scramble."""
+    return record_fragment(db, team_id, 1, fragment_value, actor, overwrite)
+
+
+def record_fragment_2(db: Session, team_id: str, fragment_value: str,
+                      actor: Optional[str] = None, overwrite: bool = False) -> FinalCodeRecord:
+    """42 - Round 1, The Route Riddle."""
+    return record_fragment(db, team_id, 2, fragment_value, actor, overwrite)
+
 def assemble_final_code(db: Session, team_id: str) -> Optional[str]:
     """
-    Assembles the 2-fragment Final Code if and only if both Fragment 1 and Fragment 2 exist.
-    Returns assembled code string or None if incomplete.
+    Assemble the Final Code once EVERY fragment is held.
+
+    ODDyssey Section 2: ODD - 42 - ECHO - PRIME. This checked only fragments 1
+    and 2, so a team holding half the code would have had a "complete" one.
+    Returns the assembled string, or None if any fragment is still missing.
     """
     record = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
-    if not record or not record.fragment_1_value or not record.fragment_2_value:
+    if not record or not all(frag_value(record, n) for n in FRAGMENT_NUMBERS):
         return None
 
-    assembled = f"{record.fragment_1_value.strip()}{record.fragment_2_value.strip()}"
+    assembled = "".join(frag_value(record, n).strip() for n in FRAGMENT_NUMBERS)
     if record.final_code_assembled != assembled:
         record.final_code_assembled = assembled
         db.commit()
@@ -287,28 +305,29 @@ def recover_missing_fragment(
     price: Optional[float] = None,
     actor: Optional[str] = None,
     recovered_value: Optional[str] = None,
+    countersigned_by: Optional[str] = None,
 ) -> FinalCodeRecord:
     """
     Purchases a missing code fragment using tournament wallet points in Round 3.
     Requirements:
     - Team must actually be missing that fragment (PENDING or MISSING).
     - Prevents purchasing an already recovered/purchased fragment.
-    - Debits wallet dynamically (default 400.0 suggested price, configurable).
+    - Debits wallet at the documented price (350 under ODDyssey, configurable).
     - Creates BLACK_MARKET_PURCHASE ledger record.
     - Sets fragment status to PURCHASED.
+
+    Works for any of the four fragments. "Teams may purchase more than one
+    missing fragment" (ODDyssey Section 2), so a team short of several can buy
+    each of them.
     """
-    if fragment_number not in (1, 2):
-        raise ValueError("Fragment number must be 1 or 2.")
+    _validate_fragment_number(fragment_number)
 
     record = get_or_create_final_code_record(db, team_id)
 
-    if fragment_number == 1 and record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
+    if owns_fragment(record, fragment_number):
         raise MissingFragmentPurchaseError(
-            f"Fragment 1 is already owned by team '{team_id}' (status: {record.fragment_1_status.value})."
-        )
-    elif fragment_number == 2 and record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
-        raise MissingFragmentPurchaseError(
-            f"Fragment 2 is already owned by team '{team_id}' (status: {record.fragment_2_status.value})."
+            f"Fragment {fragment_number} is already owned by team '{team_id}' "
+            f"(status: {frag_status(record, fragment_number).value})."
         )
 
     actual_price = float(price) if price is not None else float(BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED)
@@ -334,51 +353,51 @@ def recover_missing_fragment(
         transaction_id=tx.id,
         status=PurchaseStatus.COMPLETED,
         details={"fragment_number": fragment_number},
-        purchased_by=actor
+        purchased_by=actor,
+        # ODDyssey Section 5: every Black Market transaction carries two
+        # organiser signatures. The fragment is the most expensive item on
+        # sale and the one that decides Round 4 eligibility, so it is exactly
+        # the transaction that needs both names on it.
+        countersigned_by=countersigned_by,
     )
     db.add(bmp)
 
     now = datetime.now(timezone.utc)
-    if fragment_number == 1:
-        record.fragment_1_status = FragmentStatus.PURCHASED
-        record.fragment_1_discovered_at = now
-        if recovered_value:
-            record.fragment_1_value = recovered_value.strip()
-    else:
-        record.fragment_2_status = FragmentStatus.PURCHASED
-        record.fragment_2_discovered_at = now
-        if recovered_value:
-            record.fragment_2_value = recovered_value.strip()
+    setattr(record, f"fragment_{fragment_number}_status", FragmentStatus.PURCHASED)
+    setattr(record, f"fragment_{fragment_number}_discovered_at", now)
+    if recovered_value:
+        setattr(record, f"fragment_{fragment_number}_value", recovered_value.strip())
 
     record.updated_at = now
 
     # A purchased fragment has no physical QR to read, so give it a value if the
     # caller supplied none - otherwise the code can never assemble and the team
     # stays locked out of Round 4 despite having paid for it.
-    if fragment_number == 1 and not record.fragment_1_value:
-        record.fragment_1_value = f"PURCHASED-1-{team_id[:8]}"
-    if fragment_number == 2 and not record.fragment_2_value:
-        record.fragment_2_value = f"PURCHASED-2-{team_id[:8]}"
-
-    if record.fragment_1_value and record.fragment_2_value:
-        record.final_code_assembled = f"{record.fragment_1_value.strip()}{record.fragment_2_value.strip()}"
-
-        # Section 6.2 prices this item as the thing that "completes the Final
-        # Code needed for Round 4". So completing the pair by purchase has to
-        # satisfy the gate, which checks final_code_verified.
-        #
-        # It did not. A team that bought both fragments for 800 points still
-        # read as ineligible, because verification is a separate desk step that
-        # an organiser had to remember after taking the money. Found by
-        # scripts/rehearsal.py: buy both, gate stays False.
-        #
-        # There is nothing left to verify by hand here - the organiser sold the
-        # fragments, so the platform already knows the team holds them.
-        both_owned = (
-            record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
-            and record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    if not frag_value(record, fragment_number):
+        setattr(
+            record,
+            f"fragment_{fragment_number}_value",
+            f"PURCHASED-{fragment_number}-{team_id[:8]}",
         )
-        if both_owned and not record.final_code_verified:
+
+    if all(frag_value(record, n) for n in FRAGMENT_NUMBERS):
+        record.final_code_assembled = "".join(
+            frag_value(record, n).strip() for n in FRAGMENT_NUMBERS
+        )
+
+        # ODDyssey Section 5 sells the missing fragment as the thing that
+        # "Completes one code section", and Section 2 requires all four to
+        # qualify. So completing the set by purchase has to satisfy the gate,
+        # which checks final_code_verified.
+        #
+        # It did not. A team that bought its missing fragments still read as
+        # ineligible, because verification was a separate desk step an organiser
+        # had to remember AFTER taking the money. Found by
+        # scripts/rehearsal.py: buy the lot, gate stays False.
+        #
+        # There is nothing left to verify by hand - the organiser sold the
+        # fragments, so the platform already knows the team holds them.
+        if owns_all_fragments(record) and not record.final_code_verified:
             record.final_code_verified = True
             # The columns are verified_at / verified_by, not
             # final_code_verified_at / _by. Assigning the longer names would
@@ -434,38 +453,43 @@ def get_code_hunt_status(db: Session, team_id: str, is_organizer: bool = False) 
     Non-organizer callers see fragment status and verification state, but NOT secret code strings.
     """
     record = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
+
+    # Reported per fragment, for however many the Final Code has - four under
+    # ODDyssey. Hardcoding 1 and 2 meant the dashboard could only ever show
+    # half a team's progress.
     if not record:
-        return {
+        status: Dict[str, Any] = {
             "team_id": team_id,
-            "fragment_1_status": FragmentStatus.PENDING,
-            "fragment_1_discovered_at": None,
-            "fragment_2_status": FragmentStatus.PENDING,
-            "fragment_2_discovered_at": None,
             "final_code_verified": False,
             "is_complete": False,
             "verified_at": None,
             "verified_by": None,
-            "fragment_1_value": None,
-            "fragment_2_value": None,
             "final_code_assembled": None,
+            "fragments_held": 0,
+            "fragments_required": CODE_FRAGMENT_COUNT,
+            "missing_fragments": list(FRAGMENT_NUMBERS),
         }
+        for n in FRAGMENT_NUMBERS:
+            status[f"fragment_{n}_status"] = FragmentStatus.PENDING
+            status[f"fragment_{n}_discovered_at"] = None
+            status[f"fragment_{n}_value"] = None
+        return status
 
-    is_complete = bool(
-        record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
-        and record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
-    )
+    held = [n for n in FRAGMENT_NUMBERS if owns_fragment(record, n)]
 
-    return {
+    status = {
         "team_id": record.team_id,
-        "fragment_1_status": record.fragment_1_status,
-        "fragment_1_discovered_at": record.fragment_1_discovered_at,
-        "fragment_2_status": record.fragment_2_status,
-        "fragment_2_discovered_at": record.fragment_2_discovered_at,
         "final_code_verified": record.final_code_verified,
-        "is_complete": is_complete,
+        "is_complete": owns_all_fragments(record),
         "verified_at": record.verified_at,
         "verified_by": record.verified_by,
-        "fragment_1_value": record.fragment_1_value if is_organizer else None,
-        "fragment_2_value": record.fragment_2_value if is_organizer else None,
         "final_code_assembled": record.final_code_assembled if is_organizer else None,
+        "fragments_held": len(held),
+        "fragments_required": CODE_FRAGMENT_COUNT,
+        "missing_fragments": missing_fragments(record),
     }
+    for n in FRAGMENT_NUMBERS:
+        status[f"fragment_{n}_status"] = frag_status(record, n)
+        status[f"fragment_{n}_discovered_at"] = getattr(record, f"fragment_{n}_discovered_at")
+        status[f"fragment_{n}_value"] = frag_value(record, n) if is_organizer else None
+    return status

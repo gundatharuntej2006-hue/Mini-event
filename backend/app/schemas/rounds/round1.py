@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
 
+from app.core.constants import DEFAULT_R1_HINT_PENALTY_SECONDS, R1_RULE_VIOLATIONS
+
 class CheckpointInput(BaseModel):
     checkpoint_id: str
     name: str
@@ -17,8 +19,28 @@ class UpdateHintsInput(BaseModel):
     mini_round_number: int = Field(..., ge=1, le=3)
     hints_used: int = Field(..., ge=0)
 
+class RuleViolationInput(BaseModel):
+    """
+    One ODDyssey Section 4 rule violation logged against a Round 1 gate.
+
+    `count` is the gate's new total for that violation, not an increment, so a
+    marshal corrects a mis-entry by writing the right number.
+    """
+    mini_round_number: int = Field(..., ge=1, le=3)
+    violation: str = Field(
+        ...,
+        description=f"One of: {', '.join(R1_RULE_VIOLATIONS)}",
+    )
+    count: int = Field(default=1, ge=0)
+    # "Moving or damaging a clue: -20 points OR disqualification." The marshal
+    # chooses; the platform never escalates on its own.
+    disqualify: bool = False
+
 class Round1ConfigSchema(BaseModel):
-    penalty_per_hint_seconds: int = 120
+    # Was 120 - two minutes - which contradicted the plan's "+5 minutes" and
+    # would have been served to any client that read a config with the field
+    # missing.
+    penalty_per_hint_seconds: int = DEFAULT_R1_HINT_PENALTY_SECONDS
     checkpoint_names: List[str] = []
     is_finalized: bool = False
     finalized_at: Optional[str] = None
@@ -35,6 +57,11 @@ class MiniRoundTimingResponse(BaseModel):
     completion_time: Optional[str] = None
     hints_used: int = 0
     hint_penalty_seconds: int = 0
+    # ODDyssey Section 4 rule penalties, alongside the hint penalty.
+    phone_use_count: int = 0
+    separation_count: int = 0
+    clue_damage_count: int = 0
+    rule_penalty_seconds: int = 0
     duration_seconds: Optional[int] = None
     adjusted_seconds: Optional[int] = None
     checkpoints: List[Any] = []
@@ -46,6 +73,9 @@ class TeamRound1RecordResponse(BaseModel):
     mini_rounds: List[MiniRoundTimingResponse]
     raw_total_seconds: Optional[int] = None
     total_penalty_seconds: int = 0
+    total_hint_penalty_seconds: int = 0
+    total_rule_penalty_seconds: int = 0
+    clue_damage_count: int = 0
     adjusted_total_seconds: Optional[int] = None
     fastest_mini_round_seconds: Optional[int] = None
     is_complete: bool = False

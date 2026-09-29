@@ -24,7 +24,9 @@ from app.services.cabo_service import (
     CaboAssignmentError,
     CaboScorecardError,
     CaboFinalizationError,
+    CaboTieBreakError,
 )
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/rounds/2", tags=["Round 2 — Cabo"])
 
@@ -242,3 +244,99 @@ def finalize_cabo_round(
         )
     except CaboFinalizationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ==============================================================================
+# CABO TIE-BREAKERS 4 & 5 (ODDyssey Section 4)
+# ==============================================================================
+class CaboTieBreakInput(BaseModel):
+    """
+    One squad's result from ODDyssey tie-breaker 4 (sudden-death Cabo game)
+    or 5 (organiser draw). `resolution_rank` is its finishing position within
+    the tied group, 1 being first.
+    """
+    team_id: str
+    method: str = Field(..., description="SUDDEN_DEATH or ORGANISER_DRAW")
+    resolution_rank: int = Field(..., ge=1)
+    notes: Optional[str] = None
+
+
+@router.get("/cabo/tie-breaks", response_model=ApiResponse[List[Dict[str, Any]]])
+def list_cabo_tie_breaks(
+    db: Session = Depends(get_db),
+    actor: User = Depends(get_current_user),
+):
+    """Every recorded sudden-death or organiser-draw result for Round 2."""
+    rows = cabo_service.list_cabo_tie_breaks(db)
+    data = [
+        {
+            "id": r.id,
+            "team_id": r.team_id,
+            "method": r.method,
+            "resolution_rank": r.resolution_rank,
+            "notes": r.notes,
+            "resolved_by": r.resolved_by,
+            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+        }
+        for r in rows
+    ]
+    return ApiResponse(data=data, message=f"Retrieved {len(data)} tie-break result(s)")
+
+
+@router.post("/cabo/tie-breaks", response_model=ApiResponse[Dict[str, Any]])
+def record_cabo_tie_break(
+    payload: CaboTieBreakInput,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"])),
+):
+    """
+    Record ODDyssey tie-breaker 4 or 5 for one squad.
+
+        4. One sudden-death Cabo game with one representative per tied team
+        5. Organiser draw if still tied
+
+    Tie-breakers 1-3 are computed from the scorecards. These last two are
+    played out or drawn in the room, so an organiser enters the outcome; until
+    they do, a fully level tie across the 12th-place cutoff blocks Round 2
+    finalisation with no way to clear it.
+    """
+    try:
+        row = cabo_service.record_cabo_tie_break(
+            db=db,
+            team_id=payload.team_id,
+            method=payload.method,
+            resolution_rank=payload.resolution_rank,
+            actor=actor.email,
+            notes=payload.notes,
+        )
+    except CaboTieBreakError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return ApiResponse(
+        data={
+            "id": row.id,
+            "team_id": row.team_id,
+            "method": row.method,
+            "resolution_rank": row.resolution_rank,
+            "notes": row.notes,
+            "resolved_by": row.resolved_by,
+            "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        },
+        message="Cabo tie-break result recorded",
+    )
+
+
+@router.delete("/cabo/tie-breaks/{team_id}", response_model=ApiResponse[Dict[str, Any]])
+def clear_cabo_tie_break(
+    team_id: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"])),
+):
+    """Remove a squad's recorded tie-break result, e.g. after a mis-entry."""
+    removed = cabo_service.clear_cabo_tie_break(db, team_id)
+    if not removed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No tie-break result recorded for team '{team_id}'.",
+        )
+    return ApiResponse(data={"team_id": team_id, "cleared": True}, message="Tie-break result cleared")
