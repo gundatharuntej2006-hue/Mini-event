@@ -34,6 +34,12 @@ import { MetricCard } from '../components/dashboard/MetricCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SearchFilterToolbar } from '../components/ui/SearchFilterToolbar';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
+import { backendApiService, CaboTieBreakData } from '../services/backendApiService';
+import {
+  CABO_TIE_BREAKERS,
+  CABO_TIE_BREAK_METHODS,
+  CABO_TIE_BREAK_METHOD_LABELS,
+} from '../constants/tournamentConstants';
 
 type TabView = 'leaderboard' | 'game1' | 'game2' | 'game3';
 type SortField = 'rank' | 'teamNumber' | 'name' | 'totalPoints' | 'g1' | 'g2' | 'g3';
@@ -76,6 +82,19 @@ export const Round2CaboPage: React.FC = () => {
   const [gameNotesInput, setGameNotesInput] = useState<string>('');
   const [gameFormError, setGameFormError] = useState<string | null>(null);
 
+  // ODDyssey tie-breakers 4 and 5. Tie-breakers 1-3 come off the scorecards;
+  // these last two are played out or drawn in the room, so an organiser
+  // records the outcome. Without this the platform flagged a level tie as
+  // unresolved with no way to resolve it - and an unresolved tie at the
+  // 12th-place cutoff blocks finalisation.
+  const [isTieBreakOpen, setIsTieBreakOpen] = useState(false);
+  const [tieBreakMethod, setTieBreakMethod] = useState<string>('SUDDEN_DEATH');
+  const [tieBreakOrder, setTieBreakOrder] = useState<Record<string, string>>({});
+  const [tieBreakNotes, setTieBreakNotes] = useState('');
+  const [tieBreakSaved, setTieBreakSaved] = useState<CaboTieBreakData[]>([]);
+  const [tieBreakError, setTieBreakError] = useState<string | null>(null);
+  const [tieBreakBusy, setTieBreakBusy] = useState(false);
+
   // Config Drawer Form States
   const [configDirection, setConfigDirection] = useState<CaboScoringDirection>('higher_is_better');
   const [configTiePolicy, setConfigTiePolicy] = useState<CaboTiePolicy>('strict_unique');
@@ -110,6 +129,91 @@ export const Round2CaboPage: React.FC = () => {
     });
     return unsubscribe;
   }, []);
+
+  // The squads the metrics could not separate. These are exactly the ones a
+  // sudden-death game or a draw has to order.
+  const tiedRecords = useMemo(
+    () => (data?.records || []).filter((r) => r.tieRequiresReview),
+    [data]
+  );
+
+  const loadTieBreaks = async () => {
+    try {
+      const res = await backendApiService.getCaboTieBreaks();
+      if (res.success && res.data) setTieBreakSaved(res.data);
+    } catch {
+      // A read failure must not blank the form the organiser is filling in.
+    }
+  };
+
+  const openTieBreakModal = async () => {
+    setTieBreakError(null);
+    setTieBreakNotes('');
+    await loadTieBreaks();
+    setIsTieBreakOpen(true);
+  };
+
+  const savedFor = (teamId: string) => tieBreakSaved.find((t) => t.team_id === teamId);
+
+  const submitTieBreak = async () => {
+    if (tiedRecords.length === 0) return;
+    setTieBreakBusy(true);
+    setTieBreakError(null);
+    try {
+      const entries = tiedRecords
+        .map((rec) => ({ rec, raw: (tieBreakOrder[rec.teamId] || '').trim() }))
+        .filter((e) => e.raw !== '');
+
+      if (entries.length < tiedRecords.length) {
+        throw new Error(
+          'Give every tied squad a finishing position. Recording only one side ' +
+            'of a tie does not separate it, so the tie stays unresolved.'
+        );
+      }
+
+      const ranks = entries.map((e) => Number(e.raw));
+      if (ranks.some((r) => !Number.isInteger(r) || r < 1)) {
+        throw new Error('Finishing positions must be whole numbers, 1 or greater.');
+      }
+      if (new Set(ranks).size !== ranks.length) {
+        throw new Error(
+          'Two squads cannot share a finishing position - that is the tie you are breaking.'
+        );
+      }
+
+      for (const entry of entries) {
+        await backendApiService.recordCaboTieBreak({
+          team_id: entry.rec.teamId,
+          method: tieBreakMethod,
+          resolution_rank: Number(entry.raw),
+          notes: tieBreakNotes.trim() || undefined,
+        });
+      }
+
+      await loadTieBreaks();
+      await loadRound2();
+      setIsTieBreakOpen(false);
+    } catch (err: unknown) {
+      setTieBreakError((err as Error).message || 'Failed to record the tie-break result.');
+    } finally {
+      setTieBreakBusy(false);
+    }
+  };
+
+  const clearTieBreak = async (teamId: string) => {
+    setTieBreakBusy(true);
+    setTieBreakError(null);
+    try {
+      await backendApiService.clearCaboTieBreak(teamId);
+      setTieBreakOrder((prev) => ({ ...prev, [teamId]: '' }));
+      await loadTieBreaks();
+      await loadRound2();
+    } catch (err: unknown) {
+      setTieBreakError((err as Error).message || 'Failed to clear the tie-break result.');
+    } finally {
+      setTieBreakBusy(false);
+    }
+  };
 
   // Filter & Sort for Overall Standings
   const filteredAndSortedRecords = useMemo(() => {
@@ -784,6 +888,150 @@ export const Round2CaboPage: React.FC = () => {
         </div>
       )}
 
+      {/* ODDyssey tie-breakers 4 and 5 */}
+      <Modal
+        isOpen={isTieBreakOpen}
+        onClose={() => setIsTieBreakOpen(false)}
+        title="Cabo Tie-Breakers 4 &amp; 5"
+        subtitle="Record the sudden-death result or the organiser draw for the squads the metrics could not separate"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
+            <div className="font-semibold text-slate-800 mb-1.5">
+              ODDyssey Section 4 &mdash; in order
+            </div>
+            <ol className="list-decimal list-inside space-y-0.5 text-slate-600">
+              {CABO_TIE_BREAKERS.map((step, i) => (
+                <li key={step} className={i < 3 ? 'text-slate-400' : ''}>
+                  {step}
+                  {i < 3 && <span className="ml-1 text-[10px]">(computed from the scorecards)</span>}
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {tiedRecords.length === 0 ? (
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+              No squad is currently tied on all three scored metrics. Nothing to break.
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  How was it settled?
+                </label>
+                <select
+                  value={tieBreakMethod}
+                  onChange={(e) => setTieBreakMethod(e.target.value)}
+                  disabled={tieBreakBusy}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  {CABO_TIE_BREAK_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {CABO_TIE_BREAK_METHOD_LABELS[m]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  The platform never breaks a tie at random. Play the sudden-death game or hold
+                  the draw, then record what happened.
+                </p>
+              </div>
+
+              <div>
+                <div className="font-semibold text-slate-700 mb-1.5">
+                  Finishing position within the tied group
+                </div>
+                <div className="space-y-1.5">
+                  {tiedRecords.map((rec) => {
+                    const saved = savedFor(rec.teamId);
+                    return (
+                      <div
+                        key={rec.teamId}
+                        className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-800 truncate">
+                            {formatTeamNumber(rec.teamNumber)} &mdash; {rec.teamName}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500">
+                            {rec.totalPoints ?? 0} pts
+                            {saved && (
+                              <span className="ml-2 text-emerald-700">
+                                recorded: #{saved.resolution_rank} by{' '}
+                                {CABO_TIE_BREAK_METHOD_LABELS[saved.method] || saved.method}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <input
+                          type="number"
+                          min="1"
+                          placeholder={saved ? String(saved.resolution_rank) : '#'}
+                          value={tieBreakOrder[rec.teamId] ?? ''}
+                          onChange={(e) =>
+                            setTieBreakOrder((prev) => ({ ...prev, [rec.teamId]: e.target.value }))
+                          }
+                          disabled={tieBreakBusy}
+                          className="w-16 px-2 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                        />
+                        {saved && (
+                          <button
+                            type="button"
+                            onClick={() => clearTieBreak(rec.teamId)}
+                            disabled={tieBreakBusy}
+                            className="px-2 py-1 text-[10px] rounded border border-rose-200 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  1 finished first. Every tied squad needs a position &mdash; recording one side
+                  of a tie does not separate it.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Notes (optional)
+                </label>
+                <input
+                  type="text"
+                  value={tieBreakNotes}
+                  onChange={(e) => setTieBreakNotes(e.target.value)}
+                  disabled={tieBreakBusy}
+                  placeholder="e.g. sudden-death played at table 7, witnessed by two volunteers"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+
+              {tieBreakError && (
+                <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px]">
+                  {tieBreakError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsTieBreakOpen(false)}
+                  disabled={tieBreakBusy}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={submitTieBreak} disabled={tieBreakBusy}>
+                  {tieBreakBusy ? 'Recording...' : 'Record Result'}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+
       {/* Cutoff & Tie Warning Banner */}
       {data?.engine.tiesAffectingCutoff ? (
         <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-3">
@@ -798,6 +1046,14 @@ export const Round2CaboPage: React.FC = () => {
               from each tied team, and finally an <strong>organiser draw</strong>. Record the
               sudden-death or draw result against each tied squad to clear this block.
             </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2"
+              onClick={openTieBreakModal}
+            >
+              Record Tie-Break Result
+            </Button>
           </div>
         </div>
       ) : null}

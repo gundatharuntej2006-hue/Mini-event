@@ -911,3 +911,127 @@ class TestAgentTaskAllowance:
             task_description="Replacement for the withdrawn one", actor="organizer-1",
         )
         assert replacement is not None
+
+
+# ==============================================================================
+# 8. THE SHAPES THE NEW ORGANISER SCREENS READ
+# ==============================================================================
+class TestOrganiserScreenContracts:
+    """
+    The dashboard reads these responses by exact key name. This project has
+    already been bitten once by a screen writing to one store while the service
+    that decided the outcome read another, so the field names the Market
+    Catalogue and Cabo Tie-Break screens depend on are pinned here rather than
+    assumed.
+    """
+
+    def test_the_catalog_serves_the_keys_the_market_screen_reads(
+        self, client, organizer_headers
+    ):
+        res = client.get("/api/rounds/3/market/catalog", headers=organizer_headers)
+        assert res.status_code == 200, res.text
+        payload = res.json()["data"]
+
+        assert "catalog" in payload
+        items = payload["catalog"]
+        assert len(items) == 5, [i.get("assetType") for i in items]
+
+        for item in items:
+            for key in (
+                "assetType",
+                "name",
+                "description",
+                "suggestedPrice",
+                "stock",
+                "unitsSold",
+                "remainingStock",
+                "isSoldOut",
+            ):
+                assert key in item, f"{item.get('assetType')} is missing {key}"
+
+        by_type = {i["assetType"]: i for i in items}
+        # "As required" reaches the screen as null, and must never read sold out.
+        assert by_type["MISSING_CODE_FRAGMENT"]["remainingStock"] is None
+        assert by_type["MISSING_CODE_FRAGMENT"]["isSoldOut"] is False
+        assert by_type["EXTRA_PREP_TIME"]["remainingStock"] == 4
+        assert by_type["CASE_THEME_HINT"]["suggestedPrice"] == 200.0
+
+    def test_stock_falls_as_the_screen_sells(self, client, organizer_headers, r3_stock_teams):
+        before = {
+            i["assetType"]: i
+            for i in client.get(
+                "/api/rounds/3/market/catalog", headers=organizer_headers
+            ).json()["data"]["catalog"]
+        }
+        assert before["EXTRA_WITNESS_QUESTION"]["remainingStock"] == 8
+
+        res = client.post(
+            "/api/rounds/3/market/purchase",
+            json={
+                "teamId": r3_stock_teams[0].id,
+                "assetType": "EXTRA_WITNESS_QUESTION",
+                "quantity": 3,
+                "countersignedBy": "marshal-2",
+            },
+            headers=organizer_headers,
+        )
+        assert res.status_code == 200, res.text
+
+        after = {
+            i["assetType"]: i
+            for i in client.get(
+                "/api/rounds/3/market/catalog", headers=organizer_headers
+            ).json()["data"]["catalog"]
+        }
+        assert after["EXTRA_WITNESS_QUESTION"]["unitsSold"] == 3
+        assert after["EXTRA_WITNESS_QUESTION"]["remainingStock"] == 5
+
+    def test_the_tie_break_endpoints_serve_the_keys_the_r2_screen_reads(
+        self, client, organizer_headers, db_session
+    ):
+        team = _cabo_team(db_session, 31)
+
+        posted = client.post(
+            "/api/rounds/2/cabo/tie-breaks",
+            json={
+                "team_id": team.id,
+                "method": "SUDDEN_DEATH",
+                "resolution_rank": 1,
+                "notes": "played at table 7",
+            },
+            headers=organizer_headers,
+        )
+        assert posted.status_code == 200, posted.text
+
+        listed = client.get("/api/rounds/2/cabo/tie-breaks", headers=organizer_headers)
+        assert listed.status_code == 200, listed.text
+        rows = listed.json()["data"]
+        mine = next(r for r in rows if r["team_id"] == team.id)
+        for key in ("id", "team_id", "method", "resolution_rank", "notes", "resolved_by", "resolved_at"):
+            assert key in mine, f"tie-break row is missing {key}"
+        assert mine["method"] == "SUDDEN_DEATH"
+        assert mine["resolution_rank"] == 1
+
+        cleared = client.delete(
+            f"/api/rounds/2/cabo/tie-breaks/{team.id}", headers=organizer_headers
+        )
+        assert cleared.status_code == 200, cleared.text
+
+        # Clearing something that is not there is a 404, which is what the
+        # screen needs in order to say so rather than silently succeed.
+        again = client.delete(
+            f"/api/rounds/2/cabo/tie-breaks/{team.id}", headers=organizer_headers
+        )
+        assert again.status_code == 404
+
+    def test_an_unknown_method_is_refused_with_a_readable_message(
+        self, client, organizer_headers, db_session
+    ):
+        team = _cabo_team(db_session, 32)
+        res = client.post(
+            "/api/rounds/2/cabo/tie-breaks",
+            json={"team_id": team.id, "method": "COIN_FLIP", "resolution_rank": 1},
+            headers=organizer_headers,
+        )
+        assert res.status_code == 400
+        assert "SUDDEN_DEATH" in res.json()["message"]

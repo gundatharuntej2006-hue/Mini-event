@@ -131,6 +131,21 @@ export const holdsFragment = (
   return FRAGMENT_HELD_STATUSES.includes(value);
 };
 
+/**
+ * One squad's result from ODDyssey tie-breaker 4 (sudden-death Cabo game) or
+ * 5 (organiser draw). `resolution_rank` is its finishing position within the
+ * tied group, 1 being first.
+ */
+export interface CaboTieBreakData {
+  id: string;
+  team_id: string;
+  method: 'SUDDEN_DEATH' | 'ORGANISER_DRAW' | string;
+  resolution_rank: number;
+  notes?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+}
+
 export interface BlackMarketPurchaseData {
   id: string;
   team_id: string;
@@ -664,6 +679,33 @@ class BackendApiService {
   // ==========================================
   // Round 3: The Black Market Economy
   // ==========================================
+  // ==========================================
+  // Round 2 - Cabo tie-breakers 4 and 5 (ODDyssey Section 4)
+  // ==========================================
+  /**
+   * Tie-breakers 1-3 are computed from the scorecards. The last two - a
+   * sudden-death Cabo game, then an organiser draw - are played out or drawn
+   * in the room, so an organiser records the outcome here. Until both sides of
+   * a tie are recorded it stays flagged unresolved, and an unresolved tie at
+   * the 12th-place cutoff blocks Round 2 finalisation.
+   */
+  async getCaboTieBreaks(): Promise<ApiResponse<CaboTieBreakData[]>> {
+    return apiClient.get<CaboTieBreakData[]>('/rounds/2/cabo/tie-breaks');
+  }
+
+  async recordCaboTieBreak(payload: {
+    team_id: string;
+    method: string;
+    resolution_rank: number;
+    notes?: string;
+  }): Promise<ApiResponse<CaboTieBreakData>> {
+    return apiClient.post<CaboTieBreakData>('/rounds/2/cabo/tie-breaks', payload);
+  }
+
+  async clearCaboTieBreak(teamId: string): Promise<ApiResponse<any>> {
+    return apiClient.delete<any>(`/rounds/2/cabo/tie-breaks/${teamId}`);
+  }
+
   async getMarketCatalog(): Promise<ApiResponse<any>> {
     return apiClient.get<any>('/rounds/3/catalog');
   }

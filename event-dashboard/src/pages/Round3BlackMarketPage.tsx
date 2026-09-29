@@ -41,8 +41,27 @@ import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { EmptyState } from '../components/ui/EmptyState';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
+import { backendApiService } from '../services/backendApiService';
+import { ShoppingCart } from 'lucide-react';
+import { CODE_FRAGMENT_COUNT } from '../constants/tournamentConstants';
 
-type TabView = 'leaderboard' | 'economy' | 'hidden_code';
+type TabView = 'leaderboard' | 'economy' | 'hidden_code' | 'market';
+
+/**
+ * One row of the ODDyssey Section 5 Market Catalogue as the backend serves it.
+ * `remainingStock` is null for "as required" - only the code fragment, which
+ * is the Round 4 gate and must never run out.
+ */
+interface MarketCatalogItem {
+  assetType: string;
+  name: string;
+  description: string;
+  suggestedPrice: number;
+  stock: number | null;
+  unitsSold: number;
+  remainingStock: number | null;
+  isSoldOut: boolean;
+}
 type SortField = 'rank' | 'teamNumber' | 'name' | 'currentBalance' | 'totalEarned' | 'totalSpent' | 'fragments';
 
 export const Round3BlackMarketPage: React.FC = () => {
@@ -52,6 +71,21 @@ export const Round3BlackMarketPage: React.FC = () => {
 
   // Navigation / Tabs
   const [activeTab, setActiveTab] = useState<TabView>('leaderboard');
+
+  // ODDyssey Section 5 Market Catalogue. The catalogue has published stock
+  // ("4 available", "8 available") since the backend started enforcing it, but
+  // nothing here rendered it - and nothing here could make a purchase, so the
+  // two-organiser-signature rule had no way to be exercised.
+  const [catalog, setCatalog] = useState<MarketCatalogItem[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [buyTeamId, setBuyTeamId] = useState('');
+  const [buyAsset, setBuyAsset] = useState('');
+  const [buyQuantity, setBuyQuantity] = useState(1);
+  const [buyCountersigner, setBuyCountersigner] = useState('');
+  const [buyFragmentNumber, setBuyFragmentNumber] = useState('');
+  const [buyBusy, setBuyBusy] = useState(false);
+  const [buyResult, setBuyResult] = useState<string | null>(null);
+  const [buyError, setBuyError] = useState<string | null>(null);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -153,7 +187,11 @@ export const Round3BlackMarketPage: React.FC = () => {
         scoringDirection: res.config.scoringDirection,
         isScoringConfigured: res.config.isScoringConfigured,
         isRequiredForQualification: res.config.hiddenCodeConfig.isRequiredForQualification,
-        requiredFragmentCount: res.config.hiddenCodeConfig.requiredFragmentCount ?? 2,
+        // ODDyssey Section 2: the code is ODD - 42 - ECHO - PRIME. This fell
+        // back to 2, so a config that had not set the count showed a squad
+        // two fragments short of the gate as complete.
+        requiredFragmentCount:
+          res.config.hiddenCodeConfig.requiredFragmentCount ?? CODE_FRAGMENT_COUNT,
         isCodeConfigured: res.config.hiddenCodeConfig.isConfigured,
         instructionsNote: res.config.hiddenCodeConfig.instructionsNote || '',
       });
@@ -180,6 +218,61 @@ export const Round3BlackMarketPage: React.FC = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  const loadCatalog = async () => {
+    try {
+      const res = await backendApiService.getMarketCatalog();
+      const items = (res?.data?.catalog || []) as MarketCatalogItem[];
+      setCatalog(items);
+      setCatalogError(null);
+      if (!buyAsset && items.length) setBuyAsset(items[0].assetType);
+    } catch (err: unknown) {
+      setCatalogError((err as Error).message || 'Failed to load the market catalogue.');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'market') loadCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const submitPurchase = async () => {
+    setBuyBusy(true);
+    setBuyError(null);
+    setBuyResult(null);
+    try {
+      if (!buyTeamId) throw new Error('Choose the squad making the purchase.');
+      if (!buyAsset) throw new Error('Choose an item.');
+      if (!buyCountersigner.trim()) {
+        throw new Error(
+          'Every Black Market transaction needs two organiser signatures. Name the second organiser.'
+        );
+      }
+
+      const details =
+        buyAsset === 'MISSING_CODE_FRAGMENT' && buyFragmentNumber.trim()
+          ? { fragment_number: Number(buyFragmentNumber) }
+          : undefined;
+
+      await backendApiService.purchaseMarketAsset({
+        team_id: buyTeamId,
+        asset_type: buyAsset,
+        quantity: buyQuantity,
+        countersigned_by: buyCountersigner.trim(),
+        details,
+      });
+
+      const team = data?.records.find((r) => r.teamId === buyTeamId);
+      setBuyResult(`Sold ${buyQuantity} x ${buyAsset} to ${team?.teamName || buyTeamId}.`);
+      setBuyFragmentNumber('');
+      await loadCatalog();
+      await loadData();
+    } catch (err: unknown) {
+      setBuyError((err as Error).message || 'Purchase failed.');
+    } finally {
+      setBuyBusy(false);
+    }
+  };
 
   // Filtered and Sorted Records for Leaderboard
   const processedRecords = useMemo(() => {
@@ -851,6 +944,21 @@ export const Round3BlackMarketPage: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('market')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-t-lg transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+              activeTab === 'market'
+                ? 'border-cyan-400 text-cyan-300 bg-cyan-950/40 shadow-[0_0_15px_rgba(34,211,238,0.15)]'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+            }`}
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            <span>Market Catalogue &amp; Stock</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#030712]/90 font-mono text-cyan-300 border border-cyan-500/30">
+              {catalog.length || 5} items
+            </span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('hidden_code')}
             className={`px-3.5 py-2 text-xs font-semibold rounded-t-lg transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
               activeTab === 'hidden_code'
@@ -1381,6 +1489,188 @@ export const Round3BlackMarketPage: React.FC = () => {
       )}
 
       {/* TAB 3: HIDDEN CODE TRACKER */}
+      {/* TAB 4: MARKET CATALOGUE & STOCK (ODDyssey Section 5) */}
+      {activeTab === 'market' && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader
+              title="Market Catalogue"
+              subtitle="ODDyssey Section 5. Stock is market-wide, not per squad - once an item sells out it is gone for everyone."
+            />
+            <CardContent className="p-0">
+              {catalogError ? (
+                <div className="p-4 text-xs text-rose-300">{catalogError}</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-[#030712]/95 border-b border-cyan-500/20 text-[10px] uppercase tracking-wider font-mono font-semibold text-cyan-400/90">
+                        <th className="py-3 px-4">Item</th>
+                        <th className="py-3 px-4 text-right">Price</th>
+                        <th className="py-3 px-4 text-right">Sold</th>
+                        <th className="py-3 px-4 text-right">Remaining</th>
+                        <th className="py-3 px-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-cyan-500/10">
+                      {catalog.map((item) => (
+                        <tr key={item.assetType} className="hover:bg-cyan-500/5 transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-200">{item.name}</div>
+                            <div className="text-[10px] text-slate-400">{item.description}</div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-amber-300">
+                            {item.suggestedPrice}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-300">
+                            {item.unitsSold}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-300">
+                            {item.remainingStock === null ? 'as required' : item.remainingStock}
+                          </td>
+                          <td className="py-3 px-4">
+                            {item.remainingStock === null ? (
+                              <Badge variant="neutral" size="sm">
+                                Unlimited
+                              </Badge>
+                            ) : item.isSoldOut ? (
+                              <Badge variant="danger" size="sm">
+                                Sold out
+                              </Badge>
+                            ) : (
+                              <Badge variant="success" size="sm" dot>
+                                In stock
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {catalog.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-6 px-4 text-center text-slate-400">
+                            Catalogue not loaded.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Record a Purchase"
+              subtitle="Every transaction requires two organiser signatures (ODDyssey Section 5). Purchases cannot be cancelled."
+            />
+            <CardContent className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">Squad</label>
+                  <select
+                    value={buyTeamId}
+                    onChange={(e) => setBuyTeamId(e.target.value)}
+                    disabled={buyBusy}
+                    className="w-full px-3 py-2 bg-[#090d1a] border border-cyan-500/30 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                  >
+                    <option value="">Select a squad...</option>
+                    {(data?.records || []).map((rec) => (
+                      <option key={rec.teamId} value={rec.teamId}>
+                        {formatTeamNumber(rec.teamNumber)} - {rec.teamName} (
+                        {rec.ledger.currentBalance} pts)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">Item</label>
+                  <select
+                    value={buyAsset}
+                    onChange={(e) => setBuyAsset(e.target.value)}
+                    disabled={buyBusy}
+                    className="w-full px-3 py-2 bg-[#090d1a] border border-cyan-500/30 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                  >
+                    {catalog.map((item) => (
+                      <option key={item.assetType} value={item.assetType} disabled={item.isSoldOut}>
+                        {item.name} - {item.suggestedPrice} pts
+                        {item.isSoldOut ? ' (sold out)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">Quantity</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={buyQuantity}
+                    onChange={(e) => setBuyQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    disabled={buyBusy}
+                    className="w-full px-3 py-2 bg-[#090d1a] border border-cyan-500/30 rounded-lg font-mono text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-300 mb-1">
+                    Second organiser signature
+                  </label>
+                  <input
+                    type="text"
+                    value={buyCountersigner}
+                    onChange={(e) => setBuyCountersigner(e.target.value)}
+                    disabled={buyBusy}
+                    placeholder="Name or ID of the countersigning organiser"
+                    className="w-full px-3 py-2 bg-[#090d1a] border border-cyan-500/30 rounded-lg text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                  />
+                </div>
+
+                {buyAsset === 'MISSING_CODE_FRAGMENT' && (
+                  <div>
+                    <label className="block font-semibold text-slate-300 mb-1">
+                      Fragment number (optional)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={CODE_FRAGMENT_COUNT}
+                      value={buyFragmentNumber}
+                      onChange={(e) => setBuyFragmentNumber(e.target.value)}
+                      disabled={buyBusy}
+                      placeholder="lowest missing"
+                      className="w-full px-3 py-2 bg-[#090d1a] border border-cyan-500/30 rounded-lg font-mono text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-1">
+                      Left blank, the squad is sold the lowest-numbered fragment it is missing, so
+                      repeated purchases walk through the whole code.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {buyError && (
+                <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/40 text-rose-300 text-[11px]">
+                  {buyError}
+                </div>
+              )}
+              {buyResult && (
+                <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-[11px]">
+                  {buyResult}
+                </div>
+              )}
+
+              <div className="flex justify-end">
+                <Button onClick={submitPurchase} disabled={buyBusy}>
+                  {buyBusy ? 'Recording...' : 'Record Purchase'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {activeTab === 'hidden_code' && (
         <div className="space-y-4">
           {/* Confidentiality Notice */}
