@@ -810,3 +810,104 @@ class TestFullCarryover:
         assert breakdown["carryover_percent"] == 100.0
         assert breakdown["wallet_carryover_points"] == 450.0
         assert breakdown["total_final_score"] == 60.0 + 30.0 + 450.0
+
+
+# ==============================================================================
+# 7. TWO TASKS PER AGENT (Section 7, Secret Agent Programme)
+# ==============================================================================
+class TestAgentTaskAllowance:
+    """
+    "Give every agent two tasks during the event. Each successfully verified
+    task earns 50 points."
+
+    Two tasks is the whole of what the agent track can add to a squad's wallet:
+    100 points. Nothing capped it, so tasks could be handed out indefinitely
+    and mint points the Black Market is explicitly forbidden to sell ("Teams
+    cannot buy more points"). That matters because the wallet now carries into
+    the final score in full.
+    """
+
+    def _dossier(self, db_session, team):
+        from app.services import secret_agent_service
+        from app.models.participant import Participant, ParticipantRole
+
+        player = Participant(
+            id=f"p-agent-{team.id}",
+            team_id=team.id,
+            name="Agent One",
+            email=f"agent-{team.id}@example.com",
+            usn=f"USN-{team.team_number:03d}-A",
+            role=ParticipantRole.MEMBER,
+        )
+        db_session.add(player)
+        db_session.commit()
+        return secret_agent_service.assign_secret_agent(
+            db=db_session, team_id=team.id, participant_id=player.id, actor="organizer-1"
+        )
+
+    def test_the_allowance_matches_the_plan(self):
+        assert C.AGENT_TASKS_PER_AGENT == 2
+        assert C.AGENT_MAX_TASK_POINTS == 100.0
+        assert C.AGENT_MAX_TASK_POINTS == C.AGENT_TASKS_PER_AGENT * C.AGENT_TASK_REWARD
+
+    def test_two_tasks_are_allowed_and_a_third_is_not(self, db_session, r1_team):
+        from app.services import secret_agent_service
+        from app.services.secret_agent_service import AgentTaskError
+
+        self._dossier(db_session, r1_team)
+        for n in (1, 2):
+            secret_agent_service.create_agent_task(
+                db=db_session, team_id=r1_team.id,
+                task_description=f"Task number {n}", actor="organizer-1",
+            )
+
+        with pytest.raises(AgentTaskError) as exc:
+            secret_agent_service.create_agent_task(
+                db=db_session, team_id=r1_team.id,
+                task_description="Task number three", actor="organizer-1",
+            )
+        assert "2 agent task" in str(exc.value)
+
+    def test_an_organiser_can_still_assign_a_third_deliberately(self, db_session, r1_team):
+        """The cap stops an accident, not a decision."""
+        from app.services import secret_agent_service
+
+        self._dossier(db_session, r1_team)
+        for n in (1, 2):
+            secret_agent_service.create_agent_task(
+                db=db_session, team_id=r1_team.id,
+                task_description=f"Task number {n}", actor="organizer-1",
+            )
+        extra = secret_agent_service.create_agent_task(
+            db=db_session, team_id=r1_team.id,
+            task_description="Replacement task", actor="organizer-1",
+            allow_extra=True,
+        )
+        assert extra is not None
+
+    def test_a_cancelled_task_frees_its_slot(self, db_session, r1_team):
+        """
+        Withdrawing a task is not the same as the agent having attempted it, so
+        it should not burn one of the two.
+        """
+        from app.services import secret_agent_service
+        from app.models.agent import AgentTaskStatus
+
+        self._dossier(db_session, r1_team)
+        first = secret_agent_service.create_agent_task(
+            db=db_session, team_id=r1_team.id,
+            task_description="Task to be withdrawn", actor="organizer-1",
+        )
+        secret_agent_service.create_agent_task(
+            db=db_session, team_id=r1_team.id,
+            task_description="Task number two", actor="organizer-1",
+        )
+
+        first.status = AgentTaskStatus.CANCELLED
+        db_session.commit()
+
+        replacement = secret_agent_service.create_agent_task(
+            db=db_session, team_id=r1_team.id,
+            task_description="Replacement for the withdrawn one", actor="organizer-1",
+        )
+        assert replacement is not None

@@ -109,6 +109,7 @@ def create_task(
             task_description=payload.task_description,
             reward_points=payload.reward_points,
             actor=current_user.email,
+            allow_extra=payload.allow_extra,
         )
         return ApiResponse(
             data=task,

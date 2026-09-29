@@ -26,6 +26,7 @@ CABO = "app/services/cabo_service.py"
 ROUND_SERVICE = "app/services/round_service.py"
 CHAMP_SCORING = "app/scoring/championship_scoring.py"
 API_R3 = "app/api/rounds/round3.py"
+AGENT_SERVICE = "app/services/secret_agent_service.py"
 
 CONFORMANCE = "tests/test_documentation_conformance.py"
 ODDYSSEY = "tests/test_oddyssey_rules.py"
@@ -114,9 +115,12 @@ MUTATIONS = [
      "total_penalty_seconds = total_hint_penalty_seconds",
      ODDYSSEY),
     ("clue damage scored as time as well as points", SCORING_R1,
-     "        + separation * R1_PENALTY_TEAM_SEPARATION_SECONDS\n    )",
-     "        + separation * R1_PENALTY_TEAM_SEPARATION_SECONDS\n"
-     "        + max(0, int(mini_round.get('clue_damage_count', 0) or 0)) * 60\n    )",
+     "    return sum(",
+     "    return max(0, int(mini_round.get('clue_damage_count', 0) or 0)) * 60 + sum(",
+     ODDYSSEY),
+    ("a violation silently priced at zero", CONSTANTS,
+     '    "UNAUTHORISED_PHONE_USE": R1_PENALTY_PHONE_USE_SECONDS,',
+     '    "UNAUTHORISED_PHONE_USE": 0,',
      ODDYSSEY),
 
     ("legacy bridge refunds the rule penalty on every edit", ROUND_SERVICE,
@@ -126,6 +130,16 @@ MUTATIONS = [
     ("legacy record total drops the rule penalty", ROUND_SERVICE,
      "    total_penalty += float(rule_penalty_seconds or 0)",
      "    total_penalty += 0.0",
+     ODDYSSEY),
+
+    # --- ODDyssey Section 7: two tasks per agent -----------------------------
+    ("agent task allowance 2 -> 10", CONSTANTS,
+     "AGENT_TASKS_PER_AGENT: Final[int] = 2",
+     "AGENT_TASKS_PER_AGENT: Final[int] = 10",
+     ODDYSSEY),
+    ("the allowance is never checked", AGENT_SERVICE,
+     "    if not allow_extra:",
+     "    if False:",
      ODDYSSEY),
 
     # --- ODDyssey Section 5: market stock ------------------------------------

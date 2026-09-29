@@ -316,6 +316,10 @@ Authentication uses standard **JWT Bearer** tokens in the `Authorization: Bearer
 - **`POST /api/v1/rounds/4/scores`**
   - **Auth**: `ORGANIZER`, `MARSHAL`, `JUDGE`
   - **Body**: `{"judgeId": "...", "judgeName": "...", "teamId": "...", "scores": {"arguments": 28, "crossExam": 24}}`
+- **`POST /api/v1/secret-agents/{team_id}/tasks`**
+  - **Auth**: `ORGANIZER`, `MARSHAL`
+  - **Body**: `{"taskDescription": "...", "rewardPoints": 50.0, "allowExtra": false}`
+  - ODDyssey Section 7: "Give every agent two tasks during the event. Each successfully verified task earns 50 points." A third assignment returns `400` unless `allowExtra` is set, so the agent track cannot mint points beyond the documented 100 by accident. Cancelled tasks free their slot.
 - **`POST /api/v1/rounds/4/agent-guess`**
   - **Auth**: `ORGANIZER`, `MARSHAL`, `JUDGE`
   - **Body**: `{"teamId": "...", "outcome": "correct", "pointsAwarded": 10.0}`

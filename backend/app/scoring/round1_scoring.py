@@ -1,10 +1,7 @@
 ﻿from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from app.core.constants import (
-    R1_PENALTY_PHONE_USE_SECONDS,
-    R1_PENALTY_TEAM_SEPARATION_SECONDS,
-)
+from app.core.constants import R1_RULE_PENALTY_SECONDS
 
 
 def compute_rule_penalty_seconds(mini_round: Dict[str, Any]) -> int:
@@ -19,11 +16,16 @@ def compute_rule_penalty_seconds(mini_round: Dict[str, Any]) -> int:
     Clue damage is scored in points, not seconds, so it adds no time here;
     round1_service applies its wallet penalty separately.
     """
-    phone = max(0, int(mini_round.get("phone_use_count", 0) or 0))
-    separation = max(0, int(mini_round.get("separation_count", 0) or 0))
-    return (
-        phone * R1_PENALTY_PHONE_USE_SECONDS
-        + separation * R1_PENALTY_TEAM_SEPARATION_SECONDS
+    counts = {
+        "UNAUTHORISED_PHONE_USE": mini_round.get("phone_use_count", 0),
+        "TEAM_SEPARATION": mini_round.get("separation_count", 0),
+    }
+    # Priced from the single table in constants rather than from two separate
+    # constants read here. The hint penalty drifted once because the same
+    # number lived in more than one place.
+    return sum(
+        max(0, int(counts.get(violation, 0) or 0)) * seconds
+        for violation, seconds in R1_RULE_PENALTY_SECONDS.items()
     )
 
 

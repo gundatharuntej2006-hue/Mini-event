@@ -194,6 +194,17 @@ DEPRECATED_R3_FRAGMENT_COUNT: Final[int] = 2
 # 6. PASSIVE TRACK: UNDERCOVER SECRET AGENTS
 # ==============================================================================
 AGENT_TASK_REWARD: Final[float] = 50.0   # +50 pts awarded per verified secret sabotage/task
+
+# ODDyssey Section 7: "Give every agent two tasks during the event. Each
+# successfully verified task earns 50 points." Two tasks is the agent track's
+# entire contribution to the economy - 100 points at most - and nothing capped
+# it, so tasks could be handed out indefinitely and mint points the Black
+# Market is explicitly forbidden to sell ("Teams cannot buy more points").
+# Organisers can still exceed the cap deliberately; they cannot do it by
+# accident.
+AGENT_TASKS_PER_AGENT: Final[int] = 2
+AGENT_MAX_TASK_POINTS: Final[float] = AGENT_TASKS_PER_AGENT * AGENT_TASK_REWARD
+
 PENALTY_MIN: Final[float] = -50.0        # Rule infraction / misconduct minimum penalty
 PENALTY_MAX: Final[float] = -200.0       # Rule infraction / misconduct maximum penalty
 

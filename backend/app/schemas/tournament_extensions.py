@@ -194,6 +194,9 @@ class SecretAgentDossierResponse(BaseModel):
 class SecretAgentTaskCreate(BaseModel):
     task_description: str = Field(..., min_length=5, serialization_alias="taskDescription", alias="taskDescription")
     reward_points: float = Field(default=50.0, serialization_alias="rewardPoints", alias="rewardPoints")
+    # ODDyssey Section 7 gives every agent two tasks. Set this to assign a
+    # third deliberately; without it the third assignment is refused.
+    allow_extra: bool = Field(default=False, serialization_alias="allowExtra", alias="allowExtra")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
