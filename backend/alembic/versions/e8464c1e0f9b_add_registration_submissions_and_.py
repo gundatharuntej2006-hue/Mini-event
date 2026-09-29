@@ -42,9 +42,9 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_registration_submissions_external_submission_id'), 'registration_submissions', ['external_submission_id'], unique=True)
-    op.add_column('event_settings', sa.Column('registration_auto_approve', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+    op.add_column('event_settings', sa.Column('registration_auto_approve', sa.Boolean(), server_default=sa.false(), nullable=False))
     op.add_column('event_settings', sa.Column('webhook_secret', sa.String(length=255), server_default=sa.text("''"), nullable=False))
-    op.add_column('event_settings', sa.Column('public_registration_open', sa.Boolean(), server_default=sa.text('1'), nullable=False))
+    op.add_column('event_settings', sa.Column('public_registration_open', sa.Boolean(), server_default=sa.true(), nullable=False))
     # ### end Alembic commands ###
 
 

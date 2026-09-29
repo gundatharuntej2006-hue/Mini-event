@@ -27,14 +27,35 @@ down_revision: Union[str, None] = "1d7dc59f4a11"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_STATUS = sa.Enum(
-    "PENDING", "RECOVERED", "PURCHASED", "MISSING",
-    name="fragment_status_enum",
-    create_constraint=False,
-)
+_LABELS = ("PENDING", "RECOVERED", "PURCHASED", "MISSING")
+_ENUM_NAME = "fragment_status_enum"
+
+
+def _status_type():
+    """
+    The fragment-status type, reusing the one that already exists.
+
+    1d7dc59f4a11 created final_code_records with fragment_1_status as an Enum,
+    which on PostgreSQL also created the TYPE fragment_status_enum. Adding two
+    more columns of that same type must NOT try to create it again — Postgres
+    fails with "type already exists" — so the dialect-specific ENUM is asked
+    for with create_type=False.
+
+    SQLite has no enum types at all; it stores them as VARCHAR with an
+    optional CHECK. That is exactly why this was invisible locally: every
+    test and every migration rehearsal ran on SQLite, where re-declaring an
+    enum is free, and the first Postgres this ever met was production.
+    """
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        from sqlalchemy.dialects import postgresql
+
+        return postgresql.ENUM(*_LABELS, name=_ENUM_NAME, create_type=False)
+    return sa.Enum(*_LABELS, name=_ENUM_NAME, create_constraint=False)
 
 
 def upgrade() -> None:
+    _STATUS = _status_type()
     with op.batch_alter_table("final_code_records", schema=None) as batch_op:
         batch_op.add_column(sa.Column(
             "fragment_3_status", _STATUS, nullable=False, server_default="PENDING"
