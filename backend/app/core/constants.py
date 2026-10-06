@@ -216,6 +216,8 @@ MISSING_FRAGMENT_PENALTY: Final[float] = -350.0  # -350 points per missing fragm
 # 6. PASSIVE TRACK: UNDERCOVER SECRET AGENTS
 # ==============================================================================
 AGENT_TASK_REWARD: Final[float] = 50.0   # +50 pts awarded per verified secret sabotage/task
+AGENT_TASKS_PER_AGENT: Final[int] = 2    # Maximum 2 tasks per agent
+AGENT_MAX_TASK_POINTS: Final[float] = 100.0
 PENALTY_MIN: Final[float] = -50.0        # Rule infraction / misconduct minimum penalty
 PENALTY_MAX: Final[float] = -200.0       # Rule infraction / misconduct maximum penalty
 

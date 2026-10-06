@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from fastapi.testclient import TestClient
 
 def test_round_progression_gating_and_immutability(
@@ -161,8 +161,8 @@ def test_round3_code_fragments_and_balance_tiebreaker(
     client.put("/api/v1/rounds/3/codes/fragment", json={"teamId": t2, "fragmentIndex": 2, "isDiscovered": True, "code": "BETA-3"}, headers=marshal_headers)
 
     standings = {s["teamId"]: s for s in client.get("/api/v1/rounds/3/standings").json()["data"]}
-    assert standings[t1]["currentBalance"] == 150.0
-    assert standings[t2]["currentBalance"] == 150.0
+    assert standings[t1]["currentBalance"] == 1050.0  # 1,000 start + 50 earned
+    assert standings[t2]["currentBalance"] == 1050.0
     assert standings[t1]["fragmentsDiscovered"] == 1
     assert standings[t2]["fragmentsDiscovered"] == 3
 
@@ -192,10 +192,10 @@ def test_secret_agent_tasks_and_scoring(
         headers=judge_headers
     )
     assert r4_guess.status_code == 200
-    assert r4_guess.json()["data"]["pointsAwarded"] == 10.0
+    assert r4_guess.json()["data"]["pointsAwarded"] == 30.0  # Section 8.2
     assert r4_guess.json()["data"]["isVerified"] is True
 
-    # Grand Finale: Correct Agent Verdict (+10 bonus)
+    # Grand Finale: Correct Agent Verdict (+30, Section 8.2)
     verdict_correct = client.post(
         "/api/v1/rounds/5/agent-verdict",
         json={
@@ -207,9 +207,9 @@ def test_secret_agent_tasks_and_scoring(
         headers=judge_headers
     )
     assert verdict_correct.status_code == 200
-    assert verdict_correct.json()["data"]["bonusPoints"] == 10.0
+    assert verdict_correct.json()["data"]["bonusPoints"] == 30.0
 
-    # Grand Finale: Incorrect Agent Verdict (-5 penalty)
+    # Grand Finale: Incorrect Agent Verdict (-20, Section 8.2)
     t_wrong = client.post("/api/v1/teams", json={"name": "Agent Mistake Squad"}, headers=organizer_headers).json()["data"]["id"]
     verdict_wrong = client.post(
         "/api/v1/rounds/5/agent-verdict",
@@ -222,7 +222,7 @@ def test_secret_agent_tasks_and_scoring(
         headers=judge_headers
     )
     assert verdict_wrong.status_code == 200
-    assert verdict_wrong.json()["data"]["penaltyPoints"] == -5.0
+    assert verdict_wrong.json()["data"]["penaltyPoints"] == -20.0
 
 
 def test_finale_configurable_advancing_count_ambiguity(
@@ -237,7 +237,7 @@ def test_finale_configurable_advancing_count_ambiguity(
     """
     # Verify Round 4 default qualifying count is 3
     r4_info = client.get("/api/v1/rounds/4").json()["data"]
-    assert r4_info["qualifyingTeamsCount"] == 3
+    assert r4_info["qualifyingTeamsCount"] == 8  # Section 9.1
 
     # Organizer updates Round 4 qualifying count to 8 (if all 8 courtroom teams attend finale)
     update_res = client.put(

@@ -1,12 +1,17 @@
 import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from fastapi import HTTPException, status
 
+from app.core import constants as C
+from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
+from app.models.wallet import TransactionType as WalletTransactionType
+from app.services import wallet as wallet_service
+from app.services import code_hunt_service
 from app.db.base import utc_now
 from app.models.round_models import (
     RoundState,
@@ -55,7 +60,20 @@ from app.schemas.rounds import (
     FinaleTeamSummary,
 )
 
-# Default Round metadata definitions
+# Default Round metadata definitions.
+#
+# These values are read from app.core.constants, NOT written as literals.
+#
+# This module and the newer app/services/round{1..4}_service.py are BOTH live -
+# api/router.py mounts the r1..r4 routers and this legacy rounds.router, and
+# the dashboard still calls /rounds/1/records here. Until one of the two layers
+# is retired, they must agree, or the same tournament is scored differently
+# depending on which endpoint the frontend happened to call.
+#
+# They did not agree. Every value below was the pre-documentation default:
+# a 120s hint penalty, a 100-point starting balance, 4 code fragments, +10/-5
+# agent guessing, a 0.0 carryover weight and a twelve-tier Cabo ladder - none
+# of which appear in the Event Documentation.
 DEFAULT_ROUNDS = [
     {
         "id": 1,
@@ -67,7 +85,7 @@ DEFAULT_ROUNDS = [
         "status": "In Progress",
         "location": "Campus Grounds & Quadrangles",
         "config_json": {
-            "hintPenaltySeconds": 120,
+            "hintPenaltySeconds": C.DEFAULT_R1_HINT_PENALTY_SECONDS,
             "miniRoundsCount": 3,
             "tieBreakerRule": "fastest_mini_round"
         }
@@ -84,10 +102,10 @@ DEFAULT_ROUNDS = [
         "config_json": {
             "totalGames": 3,
             "scoringDirection": "high_is_better",
-            "placementPoints": {
-                "1": 100, "2": 80, "3": 65, "4": 55, "5": 45, "6": 35,
-                "7": 25, "8": 20, "9": 15, "10": 10, "11": 5, "12": 0
-            }
+            # Section 5.3: a Cabo table seats five, scoring 5/3/2/1/0. The
+            # twelve-tier 100/80/65/... ladder that was here appears nowhere in
+            # the documentation and made Round 2 outweigh every other source.
+            "placementPoints": {"1": 5, "2": 3, "3": 2, "4": 1, "5": 0}
         }
     },
     {
@@ -100,8 +118,8 @@ DEFAULT_ROUNDS = [
         "status": "Scheduled",
         "location": "Commerce Wing Hub",
         "config_json": {
-            "startingBalance": 100.0,
-            "codeFragmentsCount": 4,
+            "startingBalance": C.STARTING_WALLET_BALANCE,
+            "codeFragmentsCount": C.CODE_FRAGMENT_COUNT,
             "allowNegativeBalance": False
         }
     },
@@ -109,31 +127,39 @@ DEFAULT_ROUNDS = [
         "id": 4,
         "name": "The Legal Battle",
         "codename": "ROUND_4_LEGAL_BATTLE",
-        "description": "8 squads in 4 courtroom pairings argue fictional cases before faculty judges. Top 3 qualify.",
-        "initial_teams_count": 8,
-        "qualifying_teams_count": 3,
+        # Sections 7 and 9.1: all 8 finalists argue and all 8 are ranked.
+        # There is no cut to three before the finale - the podium is what the
+        # final ranking produces. A 3-team finale also contradicts Section 8.1,
+        # where every team guesses "the other 7 finalist teams".
+        "description": "8 squads in 4 courtroom pairings argue fictional cases before faculty judges.",
+        "initial_teams_count": C.R4_FINALISTS,
+        "qualifying_teams_count": C.R4_ADVANCING_COUNT,
         "status": "Scheduled",
         "location": "Moot Court Hall",
         "config_json": {
-            "totalPairs": 4,
-            "agentGuessBonus": 10.0,
-            "maxJuryScore": 100.0
+            "totalPairs": C.R4_PAIRS,
+            "agentGuessBonus": C.AGENT_CORRECT_GUESS,
+            "maxJuryScore": C.R4_RUBRIC_TOTAL_MAX
         }
     },
     {
         "id": 5,
         "name": "Grand Finale",
         "codename": "GRAND_FINALE",
-        "description": "The final 3 teams face the Grand Jury and unmask secret agents for the championship.",
-        "initial_teams_count": 3,
+        "description": "The 8 finalists unmask secret agents; the final ranking decides the championship.",
+        "initial_teams_count": C.R4_FINALISTS,
         "qualifying_teams_count": 1,
         "status": "Scheduled",
         "location": "Main Auditorium Stage",
         "config_json": {
-            "carryoverWeight": 0.0,
+            # Section 9.1: "Final Score = Legal Battle panel score + Agent
+            # guessing points + 10% of remaining Black Market points." A weight
+            # of 0.0 dropped the economy out of the championship entirely and
+            # made Round 3 spending consequence-free.
+            "carryoverWeight": C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
             "juryWeight": 1.0,
-            "agentBonusPoints": 10.0,
-            "agentPenaltyPoints": -5.0
+            "agentBonusPoints": C.AGENT_CORRECT_GUESS,
+            "agentPenaltyPoints": C.AGENT_WRONG_GUESS
         }
     }
 ]
@@ -256,7 +282,249 @@ def initialize_round1_records(db: Session):
     db.commit()
 
 
-def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 120.0):
+def mirror_round3_transaction_to_wallet(
+    db: Session, tx: Round3Transaction, user: User
+) -> None:
+    """
+    Copy a legacy Round 3 transaction into the team's wallet.
+
+    Round 3 is split the same way Round 1 was, and worse - across money as well
+    as data. api/router.py mounts the new r3_router before the legacy
+    rounds.router, so paths defined by both go to the new layer, while paths
+    only the legacy one defines still go to the legacy one. The dashboard calls
+    a mix:
+
+        /rounds/3/transactions   legacy only  -> round3_transactions
+        /rounds/3/transfer       legacy only  -> round3_transactions
+        /rounds/3/purchase       new          -> team_wallets
+        /teams/{id}/wallet       new          -> team_wallets
+
+    So a marshal awarding points through the dashboard wrote them to
+    round3_transactions, while purchases and the Round 3 standings that decide
+    Round 4 entry read team_wallets. The points existed and could not be spent.
+
+    Proven by test_round3_store_split.py before this existed: award 500, wallet
+    still reads 1000.
+
+    BRIDGE, NOT DESIGN - same caveat as the Round 1 mirror. The legacy
+    transaction is the source; the wallet entry is derived from it. Reversals go
+    through the new router already, so they are not mirrored here.
+    """
+    reference_id = tx.id
+    description = tx.reason or "Round 3 adjustment"
+
+    if tx.type == "earn":
+        wallet_service.credit(
+            db,
+            team_id=tx.team_id,
+            amount=float(tx.amount),
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            description=description,
+            reference_type="round3_transaction",
+            reference_id=reference_id,
+            created_by=user.name,
+        )
+    elif tx.type == "spend":
+        wallet_service.debit(
+            db,
+            team_id=tx.team_id,
+            amount=float(tx.amount),
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            description=description,
+            reference_type="round3_transaction",
+            reference_id=reference_id,
+            created_by=user.name,
+            allow_negative_balance=True,  # the legacy layer already checked
+        )
+    elif tx.type == "adjustment":
+        # A legacy adjustment can be either sign; the wallet splits them.
+        if float(tx.amount) >= 0:
+            wallet_service.credit(
+                db, team_id=tx.team_id, amount=float(tx.amount),
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                description=description, reference_type="round3_transaction",
+                reference_id=reference_id, created_by=user.name,
+            )
+        else:
+            wallet_service.debit(
+                db, team_id=tx.team_id, amount=abs(float(tx.amount)),
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                description=description, reference_type="round3_transaction",
+                reference_id=reference_id, created_by=user.name,
+                allow_negative_balance=True,
+            )
+
+
+def mirror_round3_code_to_code_hunt(db: Session, rec: Round3CodeRecord, user: User) -> None:
+    """
+    Copy legacy code-fragment state into the code-hunt store.
+
+    The dashboard logs fragments through /rounds/3/codes/fragment, which only
+    the legacy router defines, so they land in round3_code_records. The Round 4
+    gate reads FinalCodeRecord in the code-hunt store, which is a different
+    table - so a team could hold both fragments and still be told it has no
+    Final Code.
+
+    Proven before this existed: log both fragments, then
+    /code-hunt/eligibility/r4/{team} answers "Team has NOT verified their Final
+    Code and cannot enter Round 4."
+
+    Fragment 1 belongs to Round 1 and fragment 2 to Round 2 (Section 3.1), which
+    is how the code-hunt store models them, so indices 0 and 1 map onto those.
+    """
+    fragments = rec.fragments_json or []
+
+    def value_at(index: int) -> Optional[str]:
+        for f in fragments:
+            if f.get("index") == index and f.get("isDiscovered"):
+                return f.get("code") or f"FRAGMENT-{index + 1}"
+        return None
+
+    # The legacy record indexes fragments from 0; the code-hunt store numbers
+    # them from 1. Mirror EVERY fragment the Final Code has - four under
+    # ODDyssey. This handled only the first two, so a team that logged all four
+    # at the desk still read as holding half a code.
+    recorded = 0
+    for index in range(C.CODE_FRAGMENT_COUNT):
+        value = value_at(index)
+        if value:
+            code_hunt_service.record_fragment(
+                db, team_id=rec.team_id, fragment_number=index + 1,
+                fragment_value=value, actor=user.name, overwrite=True,
+            )
+            recorded += 1
+
+    # The gate checks a VERIFIED code, not merely stored fragments. The legacy
+    # flow has no separate verification step - the code verifier logging every
+    # fragment at the desk IS the verification - so completing the set here is
+    # what must satisfy it.
+    if recorded == C.CODE_FRAGMENT_COUNT:
+        assembled = code_hunt_service.assemble_final_code(db, rec.team_id)
+        if assembled:
+            code_hunt_service.verify_final_code(
+                db, team_id=rec.team_id, supplied_code=assembled,
+                actor=user.name,
+                notes="Verified via the Round 3 code desk (/rounds/3/codes/fragment)",
+            )
+
+
+def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_hint: float) -> None:
+    """
+    Copy a legacy Round1Record into the round1_timings store.
+
+    WHY THIS EXISTS - read before changing anything here.
+
+    Round 1 has two stores that were never connected:
+
+        the dashboard writes to  /rounds/1/records  ->  round1_records
+        qualification reads      MiniRoundTimingModel -> round1_timings
+
+    The frontend never calls the endpoint that writes round1_timings. So every
+    checkpoint time a marshal entered on the day would land in round1_records,
+    and process_round1_standings would then compute Round 1 qualification from
+    an empty table. Nobody would qualify, on the first round of the event.
+
+    Round 2 does not have this problem - the dashboard uses /rounds/2/cabo/*,
+    which is the same layer its scoring reads. This is Round 1 only.
+
+    THIS IS A BRIDGE, NOT THE DESIGN. The right fix is to retire one of the two
+    layers and point the dashboard at the survivor, which needs the frontend
+    changed and so needs Tharun. Until then this keeps the authoritative store
+    fed, with the legacy record as the single source and round1_timings derived
+    from it one-directionally.
+
+    Consequence to know: anything written directly through the new Round 1 API
+    for a team will be overwritten the next time that team's legacy record is
+    saved. Nothing calls that API today, but do not start without removing this.
+    """
+    mini_rounds = rec.mini_rounds_json or []
+
+    # Keep the new layer's config in step, since standings read the penalty
+    # from it rather than from the legacy round state.
+    cfg = db.query(Round1ConfigModel).filter(Round1ConfigModel.id == 1).first()
+    if cfg is None:
+        cfg = Round1ConfigModel(
+            id=1,
+            penalty_per_hint_seconds=int(penalty_per_hint),
+            checkpoint_names=list(C.DEFAULT_R1_CHECKPOINTS),
+            is_finalized=False,
+        )
+        db.add(cfg)
+    elif cfg.penalty_per_hint_seconds != int(penalty_per_hint):
+        cfg.penalty_per_hint_seconds = int(penalty_per_hint)
+
+    for mr in mini_rounds:
+        number = mr.get("roundNumber")
+        if number is None:
+            continue
+
+        timing_id = f"r1-{rec.team_id}-{number}"
+        timing = db.query(MiniRoundTimingModel).filter(
+            MiniRoundTimingModel.id == timing_id
+        ).first()
+        if timing is None:
+            timing = MiniRoundTimingModel(
+                id=timing_id, team_id=rec.team_id, mini_round_number=number
+            )
+            db.add(timing)
+
+        duration = mr.get("durationSeconds")
+        hints = int(mr.get("hintsUsed") or 0)
+        completed = bool(mr.get("isCompleted"))
+
+        timing.hints_used = hints
+        timing.hint_penalty_seconds = int(hints * penalty_per_hint)
+
+        # ODDyssey Section 4 rule penalties live only on the timing row - the
+        # legacy record has nowhere to carry them. Recomputing the adjusted
+        # time from hints alone would refund a phone-use or separation penalty
+        # every time anyone re-saved the legacy timings, which the Round 1 data
+        # entry screen does on every edit.
+        rule_penalty = int(timing.rule_penalty_seconds or 0)
+
+        # compute_mini_round RECOMPUTES the duration from start_time and
+        # completion_time and ignores duration_seconds entirely - a mini round
+        # with no timestamps is treated as "Not Started" and scores nothing. The
+        # legacy record only carries a duration, so synthesise a matching pair.
+        # Only the interval matters; the absolute clock time is never read.
+        if completed and duration is not None:
+            anchor = rec.updated_at or utc_now()
+            timing.start_time = anchor
+            timing.completion_time = anchor + timedelta(seconds=int(duration))
+            timing.status = "Completed"
+            timing.duration_seconds = int(duration)
+            timing.adjusted_seconds = int(duration + hints * penalty_per_hint + rule_penalty)
+        else:
+            timing.start_time = None
+            timing.completion_time = None
+            timing.status = "Not Started"
+            timing.duration_seconds = None
+            timing.adjusted_seconds = None
+
+        if timing.checkpoints is None:
+            timing.checkpoints = []
+
+
+def get_team_rule_penalty_seconds(db: Session, team_id: str) -> int:
+    """
+    ODDyssey Section 4 rule penalties for one squad, summed across its gates.
+
+    These live on the timing rows, not on the legacy Round 1 record, which has
+    no column for them. The legacy leaderboard is what the dashboard shows and
+    what get_round1_standings ranks, so it has to fetch them rather than
+    recompute the adjusted time from hints alone.
+    """
+    rows = db.query(MiniRoundTimingModel).filter(
+        MiniRoundTimingModel.team_id == team_id
+    ).all()
+    return sum(int(r.rule_penalty_seconds or 0) for r in rows)
+
+
+def calculate_round1_record_scores(
+    rec: Round1Record,
+    penalty_per_hint: float = C.DEFAULT_R1_HINT_PENALTY_SECONDS,
+    rule_penalty_seconds: float = 0.0,
+):
     """Calculate raw total, penalties, adjusted total, and fastest mini-round."""
     mini_rounds = rec.mini_rounds_json or []
     raw_seconds = 0.0
@@ -288,6 +556,11 @@ def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 
         if not mr.get("isCompleted", False):
             all_completed = False
 
+    # "Total time = time spent at gates + hint penalties + rule penalties."
+    # Only the hint half was summed here, so a squad penalised for phone use
+    # or for splitting up still showed - and ranked on - its unpenalised time.
+    total_penalty += float(rule_penalty_seconds or 0)
+
     rec.raw_total_seconds = raw_seconds if all_completed else None
     rec.total_penalty_seconds = total_penalty
     rec.adjusted_total_seconds = (raw_seconds + total_penalty) if all_completed else None
@@ -298,11 +571,13 @@ def calculate_round1_record_scores(rec: Round1Record, penalty_per_hint: float = 
 def get_round1_records(db: Session) -> List[Round1Record]:
     initialize_round1_records(db)
     round_state = get_round_by_number(db, 1)
-    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", 120.0))
+    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
     
     records = db.execute(select(Round1Record)).scalars().all()
     for rec in records:
-        calculate_round1_record_scores(rec, penalty_per_hint)
+        calculate_round1_record_scores(
+            rec, penalty_per_hint, get_team_rule_penalty_seconds(db, rec.team_id)
+        )
     
     # Sort and rank records
     # Completed records sorted ascending by adjusted_total_seconds, then fastest_mini_round_seconds
@@ -354,9 +629,15 @@ def update_round1_record(db: Session, team_id: str, data: Round1RecordUpdateRequ
     rec.last_edited_by = user.name
     
     round_state = get_round_by_number(db, 1)
-    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", 120.0))
-    calculate_round1_record_scores(rec, penalty_per_hint)
-    
+    penalty_per_hint = float(round_state.config_json.get("hintPenaltySeconds", C.DEFAULT_R1_HINT_PENALTY_SECONDS))
+    # Mirror FIRST: the mirror writes the timing rows, and the rule penalties
+    # this record's totals need are read back off them.
+    mirror_round1_record_to_timings(db, rec, penalty_per_hint)
+    db.flush()
+    calculate_round1_record_scores(
+        rec, penalty_per_hint, get_team_rule_penalty_seconds(db, rec.team_id)
+    )
+
     db.commit()
     db.refresh(rec)
     return rec
@@ -401,7 +682,12 @@ def record_round2_placement(db: Session, data: Round2PlacementCreate, user: User
     pts_table = round_state.config_json.get("placementPoints", {})
     calculated_pts = data.points
     if calculated_pts is None:
-        calculated_pts = float(pts_table.get(str(data.placement), max(0, 100 - (data.placement - 1) * 10)))
+        # Fall back to the documented Section 5.3 table rather than an invented
+        # formula. The old fallback, `100 - (placement - 1) * 10`, produced
+        # points that appear nowhere in the Event Documentation.
+        calculated_pts = float(
+            pts_table.get(str(data.placement), C.CABO_PLACEMENT_POINTS.get(data.placement, 0))
+        )
     
     existing = db.execute(
         select(Round2Placement).where(
@@ -549,6 +835,9 @@ def create_round3_transaction(db: Session, data: Round3TransactionCreate, user: 
         notes=data.notes
     )
     db.add(tx)
+    db.flush()
+    # Feed the wallet, which is what purchases and Round 3 standings spend.
+    mirror_round3_transaction_to_wallet(db, tx, user)
     db.commit()
     db.refresh(tx)
     return tx
@@ -587,7 +876,30 @@ def reverse_round3_transaction(db: Session, transaction_id: str, user: User) -> 
 
 
 def transfer_round3_funds(db: Session, data: Round3TransferRequest, user: User) -> Tuple[Round3Transaction, Round3Transaction]:
-    """Transfer funds between two teams using deterministic row-locking order."""
+    """
+    Transfer funds between two teams using deterministic row-locking order.
+
+    DISABLED BY DEFAULT. The ODDyssey plan, Section 5 (Black Market Rules),
+    states plainly: "Points cannot be transferred." Teams arriving at the
+    market with different balances is the whole point of the economy - Round 1
+    rank points, Cabo score and agent tasks are meant to be the difference
+    between them. Transfers let a team that is already eliminated hand its
+    balance to an ally, which turns the market into a pooled fund.
+
+    The machinery is kept rather than deleted, because an organiser may need to
+    correct a mis-entered award on the day. Flip ALLOW_POINT_TRANSFERS to
+    re-enable it, and expect to justify that to the committee.
+    """
+    if not C.ALLOW_POINT_TRANSFERS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Points cannot be transferred between teams (ODDyssey plan, "
+                "Section 5, Black Market Rules). To correct a mistake, reverse "
+                "the original transaction instead."
+            ),
+        )
+
     _check_round_not_finalized(db, 3)
     _validate_team_exists(db, data.from_team_id)
     _validate_team_exists(db, data.to_team_id)
@@ -630,6 +942,11 @@ def transfer_round3_funds(db: Session, data: Round3TransferRequest, user: User) 
     
     db.add(sender_tx)
     db.add(receiver_tx)
+    db.flush()
+    # Both sides have to move in the wallet, or a transfer would take points
+    # from a team that could still spend them.
+    mirror_round3_transaction_to_wallet(db, sender_tx, user)
+    mirror_round3_transaction_to_wallet(db, receiver_tx, user)
     db.commit()
     db.refresh(sender_tx)
     db.refresh(receiver_tx)
@@ -675,7 +992,10 @@ def update_round3_code_fragment(db: Session, data: Round3CodeFragmentUpdate, use
     if rec.is_complete and not rec.verified_at:
         rec.verified_at = utc_now()
         rec.verified_by = user.name
-        
+
+    db.flush()
+    # Feed the code-hunt store, which is what the Round 4 gate reads.
+    mirror_round3_code_to_code_hunt(db, rec, user)
     db.commit()
     db.refresh(rec)
     return rec
@@ -683,7 +1003,7 @@ def update_round3_code_fragment(db: Session, data: Round3CodeFragmentUpdate, use
 
 def get_round3_standings(db: Session) -> List[Round3TeamSummary]:
     round_state = get_round_by_number(db, 3)
-    starting_balance = float(round_state.config_json.get("startingBalance", 100.0))
+    starting_balance = float(round_state.config_json.get("startingBalance", C.STARTING_WALLET_BALANCE))
     qualifying_count = round_state.qualifying_teams_count
     
     teams = db.execute(select(Team).where(Team.status != TeamStatus.DISQUALIFIED)).scalars().all()
@@ -719,7 +1039,7 @@ def get_round3_standings(db: Session) -> List[Round3TeamSummary]:
             net_adjustments=adjustments,
             current_balance=current_bal,
             fragments_discovered=discovered,
-            total_fragments=4,
+            total_fragments=C.CODE_FRAGMENT_COUNT,
             is_code_complete=is_complete,
             qualification_status="Pending"
         ))
@@ -885,7 +1205,7 @@ def submit_round4_agent_guess(db: Session, data: Round4AgentGuessSubmit, user: U
     _check_round_not_finalized(db, 4)
     _validate_team_exists(db, data.team_id)
     round_state = get_round_by_number(db, 4)
-    bonus = float(round_state.config_json.get("agentGuessBonus", 10.0))
+    bonus = float(round_state.config_json.get("agentGuessBonus", C.AGENT_CORRECT_GUESS))
     
     pts = data.points_awarded
     if pts is None:
@@ -1037,8 +1357,8 @@ def submit_finale_agent_verdict(db: Session, data: FinaleAgentVerdictSubmit, use
     _check_round_not_finalized(db, 5)
     _validate_team_exists(db, data.team_id)
     round_state = get_round_by_number(db, 5)
-    default_bonus = float(round_state.config_json.get("agentBonusPoints", 10.0))
-    default_penalty = float(round_state.config_json.get("agentPenaltyPoints", -5.0))
+    default_bonus = float(round_state.config_json.get("agentBonusPoints", C.AGENT_CORRECT_GUESS))
+    default_penalty = float(round_state.config_json.get("agentPenaltyPoints", C.AGENT_WRONG_GUESS))
     
     bonus = data.bonus_points if data.bonus_points is not None else (default_bonus if data.is_correct else 0.0)
     penalty = data.penalty_points if data.penalty_points is not None else (default_penalty if data.is_correct is False else 0.0)
@@ -1078,7 +1398,7 @@ def submit_finale_agent_verdict(db: Session, data: FinaleAgentVerdictSubmit, use
 
 def get_finale_standings(db: Session) -> List[FinaleTeamSummary]:
     round_state = get_round_by_number(db, 5)
-    carryover_weight = float(round_state.config_json.get("carryoverWeight", 0.0))
+    carryover_weight = float(round_state.config_json.get("carryoverWeight", C.FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED))
     
     teams = db.execute(select(Team).where(Team.status != TeamStatus.DISQUALIFIED)).scalars().all()
     scorecards = db.execute(select(FinaleScorecard)).scalars().all()

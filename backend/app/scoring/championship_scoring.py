@@ -5,6 +5,15 @@ Source of Truth: Reconciled Official Event Documentation.
 Official Final Championship Score Formula:
     Final Score = Legal Battle Panel Score + Agent Guessing Points + (Remaining Black Market Wallet Points * carryover_weight)
 
+    ODDyssey (Final Event Plan section 1, and the Rulebook section 8) states
+    the final score as "Legal Battle score + Agent-guessing score + Points
+    remaining after the Black Market" - the balance carries in FULL, so the
+    weight is 1.0. It defaulted to 0.10, which came from the older Event
+    Documentation where the weight was an explicitly unresolved organiser
+    decision. At 10%, a squad finishing on 900 points contributed 90, and
+    the whole Black Market economy was nearly decorative next to a
+    100-point Legal Battle score.
+
 Rules & Safeguards:
 1. Exactly 8 finalists enter the Championship.
 2. Legal Battle score is strictly from finalized Round 4 (0.0 to 100.0).
@@ -13,7 +22,7 @@ Rules & Safeguards:
    - Wrong = -20.0
    - Unguessed = 0.0
 4. Remaining Black Market points are the team's wallet balance after Round 3.
-5. Default carryover weight is 10% (0.10) and is configurable.
+5. Default carryover weight is 100% (1.0), per ODDyssey; still configurable.
 6. All 3 components are preserved separately.
 7. Under-the-hood scores (R4, Guessing, Wallet) are never modified when calculating composites.
 8. Cutoff & Podium Ties:
@@ -31,6 +40,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from app.core.constants import (
     DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+    FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
     AGENT_CORRECT_GUESS,
     AGENT_WRONG_GUESS,
     R4_ADVANCING_COUNT,
@@ -42,7 +52,7 @@ def calculate_final_championship_score(
     legal_battle_score: Optional[float],
     agent_guessing_points: float,
     remaining_black_market_points: float,
-    carryover_weight: float = 0.10,
+    carryover_weight: float = FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
 ) -> Dict[str, Any]:
     """
     Pure calculation of a squad's composite final championship score.
@@ -87,7 +97,7 @@ def calculate_final_championship_score(
 
 def calculate_championship_standings(
     finalist_records: List[Dict[str, Any]],
-    carryover_weight: float = 0.10,
+    carryover_weight: float = FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
     expected_finalists: int = 8,
     round4_finalized: bool = True,
     guessing_finalized: bool = True,

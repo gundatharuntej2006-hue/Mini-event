@@ -6,6 +6,7 @@ from app.core.constants import (
     AGENT_GUESS_MAX,
     R4_ADVANCING_COUNT,
     DEFAULT_CARRYOVER_WEIGHT_PERCENT,
+    FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
 )
 
 
@@ -258,7 +259,13 @@ def calculate_overall_final_score(
 ) -> Dict[str, Any]:
     """
     Computes overall final tournament score breakdown:
-    Final Score = Legal Battle Panel Score + Agent Guessing Points + 10% of Remaining Black Market Wallet Points.
+    Final Score = Legal Battle Panel Score + Agent Guessing Points
+                + Remaining Black Market Wallet Points.
+
+    ODDyssey (Final Event Plan section 1, Rulebook section 8) carries the
+    remaining balance in FULL, so carryover_percent is 100. This said "10% of
+    remaining points", which came from the older Event Documentation where the
+    weight was an unresolved organiser decision.
     Note: All 3 components are preserved separately.
     """
     r4_val = float(round4_score) if round4_score is not None else 0.0
@@ -281,7 +288,7 @@ def calculate_final_championship_score(
     legal_battle_score: Optional[float],
     agent_guessing_points: float,
     remaining_black_market_points: float,
-    carryover_weight: float = 0.10,
+    carryover_weight: float = FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED,
 ) -> Dict[str, Any]:
     """
     Pure calculation of the final championship score:

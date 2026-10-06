@@ -171,35 +171,37 @@ def test_05_negative_balance_is_rejected(db_session, test_team):
     assert wallet.current_balance == 1000.0  # Balance untouched
 
 
-def test_06_r1_rank_1_gives_300(db_session, test_team):
-    """Requirement 6: Round 1 rank 1 awards 300 points."""
+def test_06_r1_rank_1_gives_24(db_session, test_team):
+    """ODDyssey Section 3: Round 1 rank 1 awards 24 points (was 300)."""
     pts = calculate_r1_reward(1)
-    assert pts == 300.0
+    assert pts == 24.0
 
     tx = award_round1_reward(db_session, test_team.id, rank=1)
-    assert tx.amount == 300.0
-    assert tx.balance_after == 1300.0
+    assert tx.amount == 24.0
+    assert tx.balance_after == 1024.0
     assert tx.transaction_type == TransactionType.ROUND1_REWARD
 
 
-def test_07_r1_rank_32_gives_52(db_session, test_team):
-    """Requirement 7: Round 1 rank 32 awards 52 points."""
-    pts = calculate_r1_reward(32)
-    assert pts == 52.0
+def test_07_r1_rank_24_gives_1(db_session, test_team):
+    """ODDyssey Section 3: rank 24 awards 1 point; ranks past 24 were eliminated."""
+    pts = calculate_r1_reward(24)
+    assert pts == 1.0
+    # Ranks 25-32 were eliminated in Round 1 and earn no rank points.
+    assert calculate_r1_reward(32) == 0.0
 
-    tx = award_round1_reward(db_session, test_team.id, rank=32)
-    assert tx.amount == 52.0
-    assert tx.balance_after == 1052.0
+    tx = award_round1_reward(db_session, test_team.id, rank=24)
+    assert tx.amount == 1.0
+    assert tx.balance_after == 1001.0
 
 
 def test_08_r1_intermediate_ranks_follow_default_formula(db_session):
-    """Requirement 8: R1 intermediate ranks follow 300 - 8 * (rank - 1)."""
-    assert calculate_r1_reward(2) == 292.0
-    assert calculate_r1_reward(3) == 284.0
-    assert calculate_r1_reward(10) == 228.0
-    assert calculate_r1_reward(16) == 180.0
-    assert calculate_r1_reward(24) == 116.0
-    assert calculate_r1_reward(31) == 60.0
+    """ODDyssey Section 3: rank points run 24 down to 1, i.e. 25 - rank."""
+    assert calculate_r1_reward(2) == 23.0
+    assert calculate_r1_reward(3) == 22.0
+    assert calculate_r1_reward(10) == 15.0
+    assert calculate_r1_reward(16) == 9.0
+    assert calculate_r1_reward(24) == 1.0
+    assert calculate_r1_reward(31) == 0.0   # eliminated, no rank points
 
 
 def test_09_invalid_r1_rank_is_rejected(db_session, test_team):
@@ -214,14 +216,14 @@ def test_09_invalid_r1_rank_is_rejected(db_session, test_team):
         award_round1_reward(db_session, test_team.id, rank=-5)
 
 
-def test_10_r2_score_75_produces_750_default_wallet_points(db_session, test_team):
-    """Requirement 10: R2 score 75 produces 750 default wallet points (score x 10)."""
+def test_10_r2_score_75_produces_75_default_wallet_points(db_session, test_team):
+    """ODDyssey Section 5: the Cabo SCORE is added, with no multiplier."""
     pts = calculate_r2_cabo_reward(75.0)
-    assert pts == 750.0
+    assert pts == 75.0
 
     tx = award_round2_reward(db_session, test_team.id, cabo_score=75.0)
-    assert tx.amount == 750.0
-    assert tx.balance_after == 1750.0
+    assert tx.amount == 75.0
+    assert tx.balance_after == 1075.0
     assert tx.transaction_type == TransactionType.ROUND2_REWARD
 
 
@@ -375,33 +377,33 @@ def test_19_transaction_before_after_balances_are_correct(db_session, test_team)
 
     tx1 = award_round1_reward(db_session, test_team.id, rank=1)
     assert tx1.balance_before == 1000.0
-    assert tx1.balance_after == 1300.0
+    assert tx1.balance_after == 1024.0
     assert tx1.balance_after == tx1.balance_before + tx1.amount
 
     tx2 = debit_black_market_purchase(
         db=db_session,
         team_id=test_team.id,
-        amount=400.0,
+        amount=350.0,   # ODDyssey Section 2: a missing fragment costs 350
         purchase_id="p-unique-19",
         asset_description="Fragment",
     )
-    assert tx2.balance_before == 1300.0
-    assert tx2.balance_after == 900.0
+    assert tx2.balance_before == 1024.0
+    assert tx2.balance_after == 674.0
     assert tx2.balance_after == tx2.balance_before + tx2.amount  # amount is -400.0
 
 
 def test_20_duplicate_reward_does_not_double_credit(db_session, test_team):
     """Requirement 20: Retrying the same reward operation is idempotent and does not double-credit."""
     tx1 = award_round1_reward(db_session, test_team.id, rank=2)
-    assert tx1.amount == 292.0
-    assert tx1.balance_after == 1292.0
+    assert tx1.amount == 23.0
+    assert tx1.balance_after == 1023.0
 
     # Retry same reward
     tx2 = award_round1_reward(db_session, test_team.id, rank=2)
     assert tx1.id == tx2.id
 
     wallet = get_wallet(db_session, test_team.id)
-    assert wallet.current_balance == 1292.0  # Not 1584.0
+    assert wallet.current_balance == 1023.0  # Not 1046.0
 
 
 def test_21_duplicate_purchase_does_not_double_debit(db_session, test_team):

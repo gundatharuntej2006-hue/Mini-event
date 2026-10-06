@@ -29,11 +29,11 @@ def test_get_all_rounds_initializes_five_rounds(client: TestClient):
     assert rounds[3]["id"] == 4
     assert rounds[3]["codename"] == "ROUND_4_LEGAL_BATTLE"
     assert rounds[3]["initialTeamsCount"] == 8
-    assert rounds[3]["qualifyingTeamsCount"] == 3
+    assert rounds[3]["qualifyingTeamsCount"] == 8  # Sections 7 and 9.1: all 8 finalists are ranked
     
     assert rounds[4]["id"] == 5
     assert rounds[4]["codename"] == "GRAND_FINALE"
-    assert rounds[4]["initialTeamsCount"] == 3
+    assert rounds[4]["initialTeamsCount"] == 8  # Section 9.1: "the 8 finalists"
     assert rounds[4]["qualifyingTeamsCount"] == 1
 
 
@@ -93,8 +93,8 @@ def test_round1_scoring_and_ranking(client: TestClient, organizer_headers: dict,
     assert t1_update.status_code == 200
     data1 = t1_update.json()["data"]
     assert data1["rawTotalSeconds"] == 300.0
-    assert data1["totalPenaltySeconds"] == 120.0
-    assert data1["adjustedTotalSeconds"] == 420.0
+    assert data1["totalPenaltySeconds"] == 300.0  # Section 4.3: +5 minutes
+    assert data1["adjustedTotalSeconds"] == 600.0  # 300s raw + one 5-minute hint
     assert data1["fastestMiniRoundSeconds"] == 80.0
     assert data1["isComplete"] is True
     assert data1["hiddenCodeRecovered"] is True
@@ -122,7 +122,7 @@ def test_round1_scoring_and_ranking(client: TestClient, organizer_headers: dict,
     assert recs[t2_id]["qualificationStatus"] == "Qualified"
 
     assert recs[t1_id]["rank"] == 2
-    assert recs[t1_id]["adjustedTotalSeconds"] == 420.0
+    assert recs[t1_id]["adjustedTotalSeconds"] == 600.0  # 300s raw + one 5-minute hint
     assert recs[t1_id]["qualificationStatus"] == "Qualified"
 
     assert recs[t3_id]["rank"] is None
@@ -187,20 +187,21 @@ def test_round3_black_market_economy_and_transfers(client: TestClient, organizer
         json={"fromTeamId": t1, "toTeamId": t2, "amount": 30.0, "reason": "Secret Document Purchase"},
         headers=marshal_headers
     )
-    assert transfer_resp.status_code == 200
+    # ODDyssey Section 5: "Points cannot be transferred."
+    assert transfer_resp.status_code == 403
 
-    # Check standings: T1 should have 100 + 50 - 30 = 120; T2 should have 100 + 30 = 130
+    # No transfer happened, so T1 keeps its 1000 + 50 and T2 its 1000.
     st = {s["teamId"]: s for s in client.get("/api/v1/rounds/3/standings").json()["data"]}
-    assert st[t1]["currentBalance"] == 120.0
-    assert st[t2]["currentBalance"] == 130.0
+    assert st[t1]["currentBalance"] == 1050.0  # Section 3.3: start on 1,000
+    assert st[t2]["currentBalance"] == 1000.0
 
     # Reversal of earn transaction
     rev_resp = client.post(f"/api/v1/rounds/3/transactions/{tx_id}/reverse", headers=organizer_headers)
     assert rev_resp.status_code == 200
 
-    # Check updated balance: T1 has 120 - 50 = 70.0
+    # Check updated balance: T1 has 1050 - 50 = 1000.0 (Section 3.3: start on 1,000)
     st_after = {s["teamId"]: s for s in client.get("/api/v1/rounds/3/standings").json()["data"]}
-    assert st_after[t1]["currentBalance"] == 70.0
+    assert st_after[t1]["currentBalance"] == 1000.0
 
     # Update code fragment discovery
     frag_resp = client.put(

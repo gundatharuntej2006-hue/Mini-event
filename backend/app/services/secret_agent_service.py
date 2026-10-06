@@ -23,7 +23,7 @@ from app.models.agent import (
 )
 from app.models.team import Team
 from app.models.participant import Participant
-from app.core.constants import AGENT_TASK_REWARD
+from app.core.constants import AGENT_TASK_REWARD, AGENT_TASKS_PER_AGENT
 from app.services.wallet import award_agent_task_reward
 from app.services.audit_service import log_audit_event
 
@@ -155,10 +155,19 @@ def create_agent_task(
     task_description: str,
     reward_points: float = AGENT_TASK_REWARD,
     actor: Optional[str] = None,
+    allow_extra: bool = False,
 ) -> SecretAgentTask:
     """
     Creates a new undercover task/mission for the squad's secret agent.
     Task starts in ASSIGNED status.
+
+    ODDyssey Section 7: "Give every agent two tasks during the event." Two
+    tasks at 50 points each is the whole of what the agent track can add to a
+    squad's wallet. Nothing capped it, so tasks could be handed out
+    indefinitely and mint points the Black Market is explicitly forbidden to
+    sell. Cancelled tasks do not count against the allowance, and an organiser
+    who genuinely needs a third can pass allow_extra - the cap stops an
+    accident, not a decision.
     """
     if not task_description or not task_description.strip():
         raise AgentTaskError("Task description cannot be empty.")
@@ -173,6 +182,18 @@ def create_agent_task(
     )
     if not dossier:
         raise AgentNotFoundError(f"Team '{team_id}' does not have an active Secret Agent dossier.")
+
+    if not allow_extra:
+        live = [
+            t for t in (dossier.tasks or [])
+            if t.status != AgentTaskStatus.CANCELLED
+        ]
+        if len(live) >= AGENT_TASKS_PER_AGENT:
+            raise AgentTaskError(
+                f"Team '{team_id}' already has {len(live)} agent task(s). "
+                f"The plan gives every agent {AGENT_TASKS_PER_AGENT}. Cancel an "
+                f"existing task, or pass allow_extra to assign another anyway."
+            )
 
     task = SecretAgentTask(
         dossier_id=dossier.id,

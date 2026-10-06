@@ -49,6 +49,8 @@ from app.models.progression import AuditLog
 from app.services.code_hunt_service import (
     record_fragment_1,
     record_fragment_2,
+    record_fragment_3,
+    record_fragment_4,
     assemble_final_code,
     verify_final_code,
     recover_missing_fragment,
@@ -171,12 +173,22 @@ def test_final_code_cannot_assemble_with_only_fragment_2(db_session, sample_squa
 
 
 def test_final_code_assembles_with_both_fragments(db_session, sample_squads):
-    """Requirement 6: Final code assembles only when both Fragment 1 and Fragment 2 exist."""
+    """
+    The Final Code assembles only when EVERY fragment exists.
+
+    ODDyssey Section 2: ODD - 42 - ECHO - PRIME, four fragments. This asserted
+    that two were enough, which would have let a team holding half a code
+    through the Round 4 gate.
+    """
     team = sample_squads[0]
     record_fragment_1(db_session, team.id, "ALPHA-1234", actor="organizer@bmsit.in")
     record_fragment_2(db_session, team.id, "BRAVO-5678", actor="organizer@bmsit.in")
+    assert assemble_final_code(db_session, team.id) is None, "two of four is not a code"
+
+    record_fragment_3(db_session, team.id, "CHARLIE-9", actor="organizer@bmsit.in")
+    record_fragment_4(db_session, team.id, "DELTA-0", actor="organizer@bmsit.in")
     assembled = assemble_final_code(db_session, team.id)
-    assert assembled == "ALPHA-1234BRAVO-5678"
+    assert assembled == "ALPHA-1234BRAVO-5678CHARLIE-9DELTA-0"
 
 
 def test_correct_final_code_verifies_successfully(db_session, sample_squads):
@@ -184,8 +196,13 @@ def test_correct_final_code_verifies_successfully(db_session, sample_squads):
     team = sample_squads[0]
     record_fragment_1(db_session, team.id, "ALPHA-1234", actor="organizer@bmsit.in")
     record_fragment_2(db_session, team.id, "BRAVO-5678", actor="organizer@bmsit.in")
+    record_fragment_3(db_session, team.id, "CHARLIE-9", actor="organizer@bmsit.in")
+    record_fragment_4(db_session, team.id, "DELTA-0", actor="organizer@bmsit.in")
 
-    result = verify_final_code(db_session, team.id, "ALPHA-1234BRAVO-5678", actor="lead_organizer@bmsit.in")
+    result = verify_final_code(
+        db_session, team.id, "ALPHA-1234BRAVO-5678CHARLIE-9DELTA-0",
+        actor="lead_organizer@bmsit.in",
+    )
     assert result is True
 
     record = db_session.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team.id).first()
@@ -227,7 +244,9 @@ def test_verified_code_cannot_be_downgraded(db_session, sample_squads):
     team = sample_squads[0]
     record_fragment_1(db_session, team.id, "ALPHA", actor="organizer@bmsit.in")
     record_fragment_2(db_session, team.id, "BETA", actor="organizer@bmsit.in")
-    verify_final_code(db_session, team.id, "ALPHABETA", actor="organizer@bmsit.in")
+    record_fragment_3(db_session, team.id, "GAMMA", actor="organizer@bmsit.in")
+    record_fragment_4(db_session, team.id, "DELTA", actor="organizer@bmsit.in")
+    verify_final_code(db_session, team.id, "ALPHABETAGAMMADELTA", actor="organizer@bmsit.in")
 
     # Second call returns True
     res = verify_final_code(db_session, team.id, "ANYTHING", actor="organizer@bmsit.in")
@@ -297,20 +316,25 @@ def test_purchase_creates_wallet_ledger_entry(db_session, sample_squads):
 def test_purchased_fragment_status_update(db_session, sample_squads):
     """Requirement 15: Purchased fragment updates status correctly and allows final code verification."""
     team = sample_squads[0]
+    # Found three at the gates; buys the fourth back at the market.
     record_fragment_1(db_session, team.id, "FRAG1", actor="organizer@bmsit.in")
+    record_fragment_2(db_session, team.id, "FRAG2", actor="organizer@bmsit.in")
+    record_fragment_3(db_session, team.id, "FRAG3", actor="organizer@bmsit.in")
     recover_missing_fragment(
         db_session,
         team_id=team.id,
-        fragment_number=2,
-        price=400.0,
+        fragment_number=4,
+        price=350.0,
         actor="organizer@bmsit.in",
-        recovered_value="FRAG2",
+        recovered_value="FRAG4",
     )
 
     assembled = assemble_final_code(db_session, team.id)
-    assert assembled == "FRAG1FRAG2"
+    assert assembled == "FRAG1FRAG2FRAG3FRAG4"
 
-    verified = verify_final_code(db_session, team.id, "FRAG1FRAG2", actor="organizer@bmsit.in")
+    # Completing the set by purchase already satisfies the gate, so verifying
+    # again is idempotent rather than a second requirement.
+    verified = verify_final_code(db_session, team.id, "FRAG1FRAG2FRAG3FRAG4", actor="organizer@bmsit.in")
     assert verified is True
 
 
@@ -330,7 +354,9 @@ def test_round4_eligibility_true_after_verified_code(db_session, sample_squads):
     team = sample_squads[0]
     record_fragment_1(db_session, team.id, "A", actor="organizer@bmsit.in")
     record_fragment_2(db_session, team.id, "B", actor="organizer@bmsit.in")
-    verify_final_code(db_session, team.id, "AB", actor="organizer@bmsit.in")
+    record_fragment_3(db_session, team.id, "C", actor="organizer@bmsit.in")
+    record_fragment_4(db_session, team.id, "D", actor="organizer@bmsit.in")
+    verify_final_code(db_session, team.id, "ABCD", actor="organizer@bmsit.in")
 
     assert can_enter_round4(db_session, team.id) is True
     # Does not raise
@@ -588,6 +614,25 @@ def test_code_hunt_api_endpoints(client, organizer_headers, sample_squads):
     assert r2.status_code == 200
     assert r2.json()["data"]["fragment2Status"] == "RECOVERED"
 
+    # 2b. Fragments 3 and 4 - ECHO and PRIME, hidden in Round 2 under the
+    # ODDyssey plan. The route now takes the fragment number, so /fragment/3
+    # and /fragment/4 work through the same endpoint.
+    r3 = client.post(
+        f"/api/v1/code-hunt/{team.id}/fragment/3",
+        json={"fragmentValue": "F3_VAL"},
+        headers=organizer_headers,
+    )
+    assert r3.status_code == 200
+    assert r3.json()["data"]["fragment3Status"] == "RECOVERED"
+
+    r4 = client.post(
+        f"/api/v1/code-hunt/{team.id}/fragment/4",
+        json={"fragmentValue": "F4_VAL"},
+        headers=organizer_headers,
+    )
+    assert r4.status_code == 200
+    assert r4.json()["data"]["fragment4Status"] == "RECOVERED"
+
     # 3. Check Status
     r_stat = client.get(f"/api/v1/code-hunt/{team.id}/status")
     assert r_stat.status_code == 200
@@ -596,7 +641,7 @@ def test_code_hunt_api_endpoints(client, organizer_headers, sample_squads):
     # 4. Verify Final Code
     r_ver = client.post(
         f"/api/v1/code-hunt/{team.id}/verify",
-        json={"suppliedCode": "F1_VALF2_VAL", "notes": "Approved by judges"},
+        json={"suppliedCode": "F1_VALF2_VALF3_VALF4_VAL", "notes": "Approved by judges"},
         headers=organizer_headers,
     )
     assert r_ver.status_code == 200
