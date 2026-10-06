@@ -215,7 +215,10 @@ export function calculateFinalScoreBreakdown(
   agentRecord: AgentGuessingRecord | undefined,
   blackMarketBalance: number,
   formula: FinalScoreFormulaConfig,
-  isGuessingConfigured: boolean
+  isGuessingConfigured: boolean,
+  r1Points: number = 0,
+  r2Cabo: number = 0,
+  agentTaskCredits: number = 0
 ): TeamFinalScoreBreakdown {
   const missingComponents: string[] = [];
 
@@ -249,15 +252,36 @@ export function calculateFinalScoreBreakdown(
   const isComplete = missingComponents.length === 0 && panelScore !== null;
 
   if (isComplete) {
-    let sum = (weightedPanel ?? 0) + bmContribution;
-    if (agentGuessingPoints !== null) {
-      sum += agentGuessingPoints * formula.agentGuessingWeight;
+    const isMultiRound = r1Points > 0 || r2Cabo > 0 || agentTaskCredits > 0;
+    if (isMultiRound) {
+      // Official Composite: R1 Points + R2 Cabo + Agent Task Credits + R3 Balance + R4 Legal + Agent Guess Points
+      finalScore = Number(
+        (
+          r1Points +
+          r2Cabo +
+          agentTaskCredits +
+          blackMarketBalance +
+          (panelScore ?? 0) +
+          (agentGuessingPoints ?? 0)
+        ).toFixed(2)
+      );
+    } else {
+      let sum = (weightedPanel ?? 0) + bmContribution;
+      if (agentGuessingPoints !== null) {
+        sum += agentGuessingPoints * formula.agentGuessingWeight;
+      }
+      finalScore = Number(sum.toFixed(2));
     }
-    finalScore = Number(sum.toFixed(2));
   }
 
   return {
     teamId,
+    r1Points,
+    r2Cabo,
+    agentTaskCredits,
+    r3Balance: blackMarketBalance,
+    r4LegalScore: panelScore,
+    agentGuessPoints: agentGuessingPoints ?? 0,
     rawPanelScore: rawPanel,
     weightedPanelScore: weightedPanel,
     agentGuessingPoints,
@@ -273,8 +297,8 @@ export function calculateFinalScoreBreakdown(
  * Standings and Qualification Engine for Round 4: The Legal Battle.
  *
  * Evaluates:
- * - Verification that exactly 8 teams qualified from Round 3.
- * - Confirmation of team pairings and case assignments.
+ * - Verification that exactly 4 teams qualified from Round 3.
+ * - Confirmation of 2 team pairings and case assignments.
  * - Stage progression across Preparation 1, Hearing 1, File Exchange, Prep 2, Hearing 2.
  * - Faculty judging panel score completion.
  * - Final score formula confirmation and calculation.
@@ -295,37 +319,37 @@ export function processRound4Standings(
     label: 'Round 3: The Black Market Finalized',
     passed: r3Check,
     details: r3Check
-      ? 'Official Round 3 results sealed. 8 finalist squads advanced.'
+      ? 'Official Round 3 results sealed. 4 finalist squads advanced.'
       : 'Round 3 results must be finalized before Round 4 can proceed.',
     severity: 'blocker',
   });
 
-  // 2. Check exactly 8 participating squads
-  const teamCountCheck = records.length === 8;
+  // 2. Check exactly 4 participating squads
+  const teamCountCheck = records.length === 4;
   checklist.push({
     id: 'squad-count',
-    label: 'Exactly 8 Finalist Squads Participating',
+    label: 'Exactly 4 Finalist Squads Participating',
     passed: teamCountCheck,
-    details: `Detected ${records.length} participating squads (Expected: 8).`,
+    details: `Detected ${records.length} participating squads (Expected: 4).`,
     severity: 'blocker',
   });
 
   // 3. Check pairings confirmation
-  const pairsFormed = pairs.length === 4 && pairs.every((p) => p.teamAId && p.teamBId);
+  const pairsFormed = pairs.length === 2 && pairs.every((p) => p.teamAId && p.teamBId);
   const pairingsConfirmed = pairsFormed && pairs.every((p) => p.isConfirmed);
   checklist.push({
     id: 'pairings-confirmed',
-    label: '4 Team Matchup Pairings Confirmed',
+    label: '2 Semifinal Matchup Pairings Confirmed',
     passed: pairingsConfirmed,
     details: pairingsConfirmed
-      ? 'All 4 head-to-head pairings officially confirmed by organizers.'
-      : 'Pairings must be formed and explicitly confirmed by organizers.',
+      ? 'All 2 head-to-head semifinal pairings officially confirmed by organizers.'
+      : 'Pairings must be formed (2 semifinal matches) and explicitly confirmed by organizers.',
     severity: 'blocker',
   });
 
   // 4. Check case assignments and sides
   const casesAssigned =
-    pairs.length === 4 &&
+    pairs.length === 2 &&
     pairs.every(
       (p) =>
         p.caseName &&
@@ -338,8 +362,8 @@ export function processRound4Standings(
     label: 'Fictional Legal Cases & Sides Assigned',
     passed: casesAssigned,
     details: casesAssigned
-      ? 'All 4 pairs have designated legal cases and counsel sides.'
-      : 'Assign official case titles and team sides for all 4 pairs.',
+      ? 'All 2 pairs have designated legal cases and counsel sides.'
+      : 'Assign official case titles and team sides for all 2 pairs.',
     severity: 'blocker',
   });
 
@@ -367,7 +391,7 @@ export function processRound4Standings(
     label: 'Faculty Panel Scorecards Submitted',
     passed: judgesComplete,
     details: judgesComplete
-      ? 'All 8 finalist squads have complete submitted judging scores.'
+      ? 'All 4 finalist squads have complete submitted judging scores.'
       : 'Faculty judging scorecards are missing or incomplete for one or more squads.',
     severity: 'blocker',
   });
@@ -521,7 +545,7 @@ export function computeRound4SummaryStats(
   round3QualifiedCount: number,
   engine: Round4EngineResult
 ): Round4SummaryStats {
-  const pairingsConfirmed = pairs.length === 4 && pairs.every((p) => p.isConfirmed);
+  const pairingsConfirmed = pairs.length === 2 && pairs.every((p) => p.isConfirmed);
   const casesAssignedCount = pairs.filter((p) => p.caseName && p.caseName.trim().length > 0).length;
 
   let prep1 = 0;

@@ -168,6 +168,7 @@ export function processRound3Standings(
   round2Finalized: boolean
 ): Round3EngineResult {
   const isHigherBetter = config.scoringDirection === 'higher_is_better';
+  const cutoff = 6;
 
   // Sort teams strictly by the configured ranking metric
   const sortedRecords = [...records].sort((a, b) => {
@@ -202,24 +203,23 @@ export function processRound3Standings(
     rec.tieReason = undefined;
   });
 
-  // Check for ties spanning the 8th-place cutoff boundary
-  // Cutoff is between Rank #8 (advancing) and Rank #9 (eliminated)
+  // Check for ties spanning the cutoff boundary
+  // Cutoff is between Rank #cutoff (advancing) and Rank #(cutoff + 1) (eliminated)
   metricGroups.forEach((group, metricVal) => {
     if (group.length > 1) {
       const ranks = group.map((r) => r.rank!);
       const minRank = Math.min(...ranks);
       const maxRank = Math.max(...ranks);
 
-      // A tie affects the cutoff if the group contains rank <= 8 AND rank > 8
-      const spansCutoff = minRank <= 8 && maxRank >= 9;
+      const spansCutoff = minRank <= cutoff && maxRank >= cutoff + 1;
 
       group.forEach((rec) => {
         if (spansCutoff) {
           rec.tieRequiresReview = true;
-          rec.tieReason = `Tied on ${metricVal} points spanning the 8th-place cutoff (Ranks #${minRank}–#${maxRank}). Official tournament rules require manual marshal review.`;
+          rec.tieReason = `Tied on ${metricVal} points spanning the ${cutoff}th-place cutoff (Ranks #${minRank}–#${maxRank}). Official tournament rules require manual marshal review.`;
           tiesAffectingCutoff = true;
-        } else if (maxRank <= 8) {
-          rec.tieReason = `Tied on ${metricVal} points with ${group.length - 1} other squad(s) inside the Top 8.`;
+        } else if (maxRank <= cutoff) {
+          rec.tieReason = `Tied on ${metricVal} points with ${group.length - 1} other squad(s) inside Top ${cutoff}.`;
         } else {
           rec.tieReason = `Tied on ${metricVal} points with ${group.length - 1} other squad(s) in the elimination zone.`;
         }
@@ -232,15 +232,15 @@ export function processRound3Standings(
     if (!round2Finalized) {
       rec.qualificationStatus = 'Round 2 Pending';
     } else if (config.isFinalized) {
-      rec.qualificationStatus = rec.rank! <= 8 ? 'Finalized Qualified' : 'Finalized Eliminated';
+      rec.qualificationStatus = rec.rank! <= cutoff ? 'Finalized Qualified' : 'Finalized Eliminated';
     } else if (rec.tieRequiresReview) {
       rec.qualificationStatus = 'Tie Review Needed';
-    } else if (config.hiddenCodeConfig.isRequiredForQualification && !rec.codeRecord.isComplete) {
+    } else if (config.hiddenCodeConfig.isRequiredForQualification && !rec.codeRecord.isComplete && !rec.hasCompleteKey) {
       rec.qualificationStatus = 'Code Incomplete';
     } else if (!config.isScoringConfigured) {
       rec.qualificationStatus = 'Standings Provisional';
-    } else if (rec.rank! <= 8) {
-      rec.qualificationStatus = 'Provisional Top 8';
+    } else if (rec.rank! <= cutoff) {
+      rec.qualificationStatus = 'Provisional Top 6';
     } else {
       rec.qualificationStatus = 'Provisional Cutoff';
     }
@@ -253,34 +253,34 @@ export function processRound3Standings(
   if (!round2Finalized) {
     canFinalize = false;
     blockReason = 'Round 2 (Cabo) results are not yet officially finalized. Finalize Round 2 first.';
-  } else if (records.length !== 12) {
+  } else if (records.length < 6) {
     canFinalize = false;
-    blockReason = `Expected exactly 12 qualified squads from Round 2, but found ${records.length}. Organizer review required.`;
+    blockReason = `Expected at least 6 qualified squads from Round 2, but found ${records.length}. Organizer review required.`;
   } else if (!config.isScoringConfigured) {
     canFinalize = false;
     blockReason = 'Scoring and ranking rules have not been officially confirmed by organizers. Review and confirm in Rules & Settings.';
   } else if (tiesAffectingCutoff) {
     canFinalize = false;
-    blockReason = 'An unresolved tie affects the 8th-place qualification cutoff boundary. Manual marshal review is required before finalization.';
+    blockReason = `An unresolved tie affects the ${cutoff}th-place qualification cutoff boundary. Manual marshal review is required before finalization.`;
   } else if (config.hiddenCodeConfig.isRequiredForQualification) {
     if (!config.hiddenCodeConfig.isConfigured || config.hiddenCodeConfig.requiredFragmentCount === null) {
       canFinalize = false;
       blockReason = 'Hidden code completion is set as mandatory for qualification, but official fragment requirements have not been configured.';
     } else {
-      const incompleteTop8 = sortedRecords.filter((r) => r.rank! <= 8 && !r.codeRecord.isComplete);
-      if (incompleteTop8.length > 0) {
+      const incompleteTop = sortedRecords.filter((r) => r.rank! <= cutoff && !r.codeRecord.isComplete && !r.hasCompleteKey);
+      if (incompleteTop.length > 0) {
         canFinalize = false;
-        blockReason = `${incompleteTop8.length} squad(s) currently in the Top 8 have not satisfied the mandatory hidden code requirement.`;
+        blockReason = `${incompleteTop.length} squad(s) currently in the Top ${cutoff} have not satisfied the mandatory qualification code key requirement.`;
       }
     }
   }
 
-  const top8TeamIds = sortedRecords
-    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 8)
+  const topTeamIds = sortedRecords
+    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= cutoff)
     .map((r) => r.teamId);
 
   const eliminatedTeamIds = sortedRecords
-    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank > 8)
+    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank > cutoff)
     .map((r) => r.teamId);
 
   return {
@@ -288,7 +288,9 @@ export function processRound3Standings(
     canFinalize,
     blockReason,
     tiesAffectingCutoff,
-    top8TeamIds,
+    top6TeamIds: topTeamIds,
+    top4TeamIds: topTeamIds.slice(0, 4),
+    top8TeamIds: topTeamIds,
     eliminatedTeamIds,
   };
 }
@@ -301,15 +303,16 @@ export function computeRound3SummaryStats(
   transactions: BlackMarketTransaction[],
   config: BlackMarketConfig,
   round2Finalized: boolean,
-  round2QualifiedCount: number
+  round2QualifiedCount: number = 12
 ): Round3SummaryStats {
-  const codeCompletedCount = records.filter((r) => r.codeRecord.isComplete).length;
+  const cutoff = 6;
+  const codeCompletedCount = records.filter((r) => r.codeRecord.isComplete || r.hasCompleteKey).length;
   const tiesAffectingCutoffCount = records.filter((r) => r.tieRequiresReview).length;
-  const provisionalTop8Count = records.filter(
-    (r) => r.rank !== null && r.rank !== undefined && r.rank <= 8
+  const provisionalTop6Count = records.filter(
+    (r) => r.rank !== null && r.rank !== undefined && r.rank <= cutoff
   ).length;
   const provisionalEliminatedCount = records.filter(
-    (r) => r.rank !== null && r.rank !== undefined && r.rank > 8
+    (r) => r.rank !== null && r.rank !== undefined && r.rank > cutoff
   ).length;
 
   let totalVolume = 0;
@@ -327,7 +330,9 @@ export function computeRound3SummaryStats(
     totalVolumeTransacted: totalVolume,
     codeCompletedCount,
     codeConfigured: config.hiddenCodeConfig.isConfigured,
-    provisionalTop8Count,
+    provisionalTop6Count,
+    provisionalTop4Count: Math.min(4, provisionalTop6Count),
+    provisionalTop8Count: provisionalTop6Count,
     provisionalEliminatedCount,
     tiesAffectingCutoffCount,
     isScoringConfigured: config.isScoringConfigured,

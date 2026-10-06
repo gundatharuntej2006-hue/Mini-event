@@ -30,7 +30,7 @@ export function RoundProgressCard({ steps }: RoundProgressCardProps) {
       <Card>
         <CardHeader
           title="Tournament Progression & Elimination Pipeline"
-          subtitle="32 Squads competing across 4 progressive elimination rounds into the Grand Finale"
+          subtitle="32 Squads competing across 3 progressive elimination rounds down to Top 6 Qualifiers"
           action={
             <Badge variant="neutral" size="sm">
               Telemetry Offline
@@ -56,7 +56,7 @@ export function RoundProgressCard({ steps }: RoundProgressCardProps) {
       <Card>
         <CardHeader
           title="Tournament Progression & Elimination Pipeline"
-          subtitle="32 Squads competing across 4 progressive elimination rounds into the Grand Finale"
+          subtitle="32 Squads competing across 3 progressive elimination rounds down to Top 6 Qualifiers"
           action={
             <Badge variant="neutral" size="sm">
               Empty Pipeline
@@ -77,26 +77,28 @@ export function RoundProgressCard({ steps }: RoundProgressCardProps) {
     );
   }
 
+  const displaySteps = steps.filter((s) => s.roundNumber <= 3);
+
   // Calculate current active stage for header badge
-  const activeStep = steps.find((s) => s.status === 'Live' || s.status === 'In Progress') 
-    || steps.find((s) => s.status === 'Scheduled') 
-    || steps[steps.length - 1];
+  const activeStep = displaySteps.find((s) => s.status === 'Live' || s.status === 'In Progress') 
+    || displaySteps.find((s) => s.status === 'Scheduled') 
+    || displaySteps[displaySteps.length - 1];
   const stageNum = activeStep ? activeStep.roundNumber : 1;
 
   return (
     <Card>
       <CardHeader
         title="Tournament Progression & Elimination Pipeline"
-        subtitle="32 Squads competing across 4 progressive elimination rounds into the Grand Finale"
+        subtitle="32 Squads competing across 3 progressive elimination rounds down to Top 6 Qualifiers"
         action={
           <Badge variant="primary" size="sm">
-            Stage {stageNum} of {steps.length} Active
+            Stage {stageNum} of {displaySteps.length} Active
           </Badge>
         }
       />
       <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 relative">
-          {steps.map((step, idx) => {
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 relative">
+          {displaySteps.map((step, idx) => {
             const Icon = getRoundIcon(step.roundNumber);
             const isLive = step.status === 'Live' || step.status === 'In Progress';
             const isCompleted = step.status === 'Completed';

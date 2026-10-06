@@ -15,6 +15,7 @@ from app.schemas.tournament_extensions import (
     BlackMarketCatalogItem,
     BlackMarketAssetPurchaseRequest,
     BlackMarketPurchaseResponse,
+    BlackMarketApproveRequest,
     BlackMarketAuctionCreateRequest,
     BlackMarketAuctionResponse,
     BlackMarketBidCreateRequest,
@@ -80,12 +81,96 @@ def purchase_asset_api(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.get("/purchases/pending", response_model=ApiResponse[List[BlackMarketPurchaseResponse]])
+@router.get("/market/purchases/pending", response_model=ApiResponse[List[BlackMarketPurchaseResponse]])
+def get_pending_purchases_api(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """List all purchases awaiting two-organizer approval."""
+    pending = black_market_service.list_pending_purchases(db)
+    return ApiResponse(data=pending, message=f"Retrieved {len(pending)} pending purchase(s)")
+
+
 @router.get("/purchases/{team_id}", response_model=ApiResponse[List[BlackMarketPurchaseResponse]])
 @router.get("/market/purchases/{team_id}", response_model=ApiResponse[List[BlackMarketPurchaseResponse]])
 def get_team_purchases(team_id: str, db: Session = Depends(get_db)):
     """Get all Black Market purchases for a specific squad."""
     purchases = black_market_service.get_team_market_purchases(db, team_id)
     return ApiResponse(data=purchases, message=f"Purchases for team '{team_id}' retrieved")
+
+
+@router.post("/purchases/{purchase_id}/approve", response_model=ApiResponse[BlackMarketPurchaseResponse])
+@router.post("/market/purchases/{purchase_id}/approve", response_model=ApiResponse[BlackMarketPurchaseResponse])
+def approve_purchase_api(
+    purchase_id: str,
+    payload: Optional[BlackMarketApproveRequest] = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """
+    Approve a Black Market deduction with organizer signature.
+    Two distinct organizer approvals required before wallet deduction takes effect.
+    """
+    try:
+        second_org = payload.second_organizer_id if payload else None
+        notes = payload.notes if payload else None
+        bmp = black_market_service.approve_market_purchase(
+            db=db,
+            purchase_id=purchase_id,
+            actor=actor.username or actor.id,
+            second_organizer_id=second_org,
+            notes=notes
+        )
+        return ApiResponse(data=bmp, message=f"Purchase approval processed (status: {bmp.approval_status})")
+    except BlackMarketError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        if "Insufficient funds" in str(e):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/purchases/{purchase_id}/reject", response_model=ApiResponse[BlackMarketPurchaseResponse])
+@router.post("/market/purchases/{purchase_id}/reject", response_model=ApiResponse[BlackMarketPurchaseResponse])
+def reject_purchase_api(
+    purchase_id: str,
+    payload: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """Reject a pending Black Market purchase without deducting wallet points."""
+    try:
+        reason = payload.get("reason") if payload else None
+        bmp = black_market_service.reject_market_purchase(
+            db=db,
+            purchase_id=purchase_id,
+            actor=actor.username or actor.id,
+            rejection_reason=reason
+        )
+        return ApiResponse(data=bmp, message="Purchase rejected successfully")
+    except BlackMarketError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/starting-balance/{team_id}", response_model=ApiResponse[Dict[str, Any]])
+def get_starting_balance_breakdown_api(team_id: str, db: Session = Depends(get_db)):
+    """
+    Get Round 3 Starting Balance breakdown:
+    1000 + R1 rank points + R2 Cabo score (raw, not * 10) + (verified Secret Agent tasks * 50).
+    """
+    breakdown = black_market_service.calculate_team_starting_balance(db, team_id)
+    return ApiResponse(data=breakdown, message=f"Starting balance breakdown for team '{team_id}'")
+
+
+@router.post("/sync-balances", response_model=ApiResponse[List[Dict[str, Any]]])
+def sync_balances_api(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """Synchronize official Starting Balance and wallet ledger for all Round 3 squads."""
+    synced = black_market_service.sync_round3_starting_balances(db, actor=actor.id)
+    return ApiResponse(data=synced, message=f"Synchronized starting balance for {len(synced)} squads")
 
 
 # ==============================================================================
@@ -307,6 +392,7 @@ def get_teams(db: Session = Depends(get_db)):
     return ApiResponse(data=overview["records"])
 
 
+@router.get("/standings", response_model=ApiResponse[List[TeamRound3RecordResponse]])
 @router.get("/leaderboard", response_model=ApiResponse[List[TeamRound3RecordResponse]])
 def get_leaderboard(db: Session = Depends(get_db)):
     """Get server-side calculated leaderboard based on configured ranking metric."""
@@ -433,6 +519,47 @@ def finalize_round3(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "admin"]))
 ):
-    """Officially seal Round 3 results and advance 8 squads to Round 4: The Legal Battle."""
+    """Officially seal Round 3 results and advance 6 squads to Round 4: The Legal Battle."""
     res = round3_service.finalize_round3(db, actor, payload)
     return ApiResponse(data=res, message=res.get("message"))
+
+
+# ==============================================================================
+# 5. BINARY CODE CHECKER & TEAM INVENTORY (PLAYER VIEW)
+# ==============================================================================
+@router.post("/code/check", response_model=ApiResponse[Dict[str, Any]])
+@router.post("/market/code/check", response_model=ApiResponse[Dict[str, Any]])
+def check_code_key_api(
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+):
+    """
+    Binary Code Checker for squads entering decoded keys.
+    Returns strictly:
+      {'valid': True, 'message': 'Valid Key'}
+    or
+      {'valid': False, 'message': 'Invalid Key'}
+    Never leaks expected codes or internal secrets.
+    """
+    team_id = payload.get("team_id") or payload.get("teamId")
+    code = payload.get("code") or payload.get("key") or ""
+    if not team_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required.")
+
+    result = black_market_service.check_decoded_key(db=db, team_id=team_id, code_input=str(code))
+    return ApiResponse(data=result, message=result["message"])
+
+
+@router.get("/teams/{team_id}/inventory", response_model=ApiResponse[Dict[str, Any]])
+@router.get("/teams/{team_id}/status", response_model=ApiResponse[Dict[str, Any]])
+def get_team_inventory_api(
+    team_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Private Squad Status / Team Portal endpoint:
+    Returns wallet balance, owned code items (1 & 2), owned powerups (1 & 2),
+    key completion status, and isolated purchase history.
+    """
+    status_data = black_market_service.get_team_inventory_status(db=db, team_id=team_id)
+    return ApiResponse(data=status_data, message=f"Inventory status for team '{team_id}' retrieved")

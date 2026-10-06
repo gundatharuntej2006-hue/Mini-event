@@ -76,13 +76,13 @@ export function QuickActionsPanel() {
             onClick={() =>
               triggerAction(
                 'Advance Elimination Bracket',
-                'Evaluates Round 1 Expedition scores and finalizes 24 qualified teams for Round 2 (Cabo).'
+                'Evaluates Round 1 Expedition scores and finalizes 16 qualified teams for Round 2 (Cabo).'
               )
             }
           >
             <div className="text-left">
               <div className="text-xs font-orbitron font-semibold text-slate-100">Advance Elimination</div>
-              <div className="text-[11px] font-mono text-slate-400 font-normal">Calculate top 24 cutoffs</div>
+              <div className="text-[11px] font-mono text-slate-400 font-normal">Calculate top 16 cutoffs</div>
             </div>
           </Button>
 

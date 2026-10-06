@@ -103,9 +103,18 @@ export function CodeFragmentsPage() {
   const handleOpenRecord = (team: Team, type: '1' | '2') => {
     setSelectedTeam(team);
     setFragmentType(type);
-    setFragmentValue('');
+    setFragmentValue(type === '1' ? 'ODD' : '42');
     setModalError(null);
     setIsRecordModalOpen(true);
+  };
+
+  const handleConfirmGate3 = async (team: Team) => {
+    try {
+      await backendApiService.confirmGate3Fragments(team.id);
+      await loadData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to confirm Gate 3');
+    }
   };
 
   const handleOpenVerify = (team: Team) => {
@@ -161,7 +170,7 @@ export function CodeFragmentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Campus Code Hunt & Final Code Gate"
-        subtitle="Cryptographic fragments recovery across Rounds 1 & 2 leading into Round 4 Eligibility"
+        subtitle="Cryptographic fragments recovery across Rounds: Gate 1 (ODD), Gate 2 (42), Gate 3 (Confirmed), Round 2 (ECHO), Round 3 (PRIME)"
         badge={
           <Badge variant="primary" size="sm">
             Official Gatekeeper
@@ -266,8 +275,9 @@ export function CodeFragmentsPage() {
               <thead>
                 <tr className="bg-[#030712]/95 border-b border-cyan-500/20 text-[10px] uppercase tracking-wider font-mono font-semibold text-cyan-400/90">
                   <th className="py-3 px-4">Squad</th>
-                  <th className="py-3 px-4">Fragment 1 (R1)</th>
-                  <th className="py-3 px-4">Fragment 2 (R2)</th>
+                  <th className="py-3 px-4">Gate 1: ODD</th>
+                  <th className="py-3 px-4">Gate 2: 42</th>
+                  <th className="py-3 px-4">Gate 3 Confirmed</th>
                   <th className="py-3 px-4">Final Code Status</th>
                   <th className="py-3 px-4">R4 Eligibility</th>
                   {isStaff && <th className="py-3 px-4 text-right">Actions</th>}
@@ -277,6 +287,7 @@ export function CodeFragmentsPage() {
                 {filteredRows.map(({ team, status }) => {
                   const f1Found = status?.fragment_1_status === 'RECOVERED';
                   const f2Found = status?.fragment_2_status === 'RECOVERED';
+                  const gate3Done = status?.gate_3_confirmed ?? false;
                   const isVerified = status?.final_code_verified ?? false;
 
                   return (
@@ -290,7 +301,7 @@ export function CodeFragmentsPage() {
                       <td className="py-3 px-4">
                         {f1Found ? (
                           <Badge variant="success" size="sm" dot>
-                            Recovered
+                            ODD
                           </Badge>
                         ) : (
                           <Badge variant="neutral" size="sm">
@@ -301,12 +312,23 @@ export function CodeFragmentsPage() {
                       <td className="py-3 px-4">
                         {f2Found ? (
                           <Badge variant="success" size="sm" dot>
-                            Recovered
+                            42
                           </Badge>
                         ) : (
                           <Badge variant="neutral" size="sm">
                             Missing
                           </Badge>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        {gate3Done ? (
+                          <span className="inline-flex items-center gap-1 font-mono text-emerald-400 font-bold text-[11px]">
+                            <Check className="w-3 h-3" /> CONFIRMED
+                          </span>
+                        ) : (
+                          <span className="font-mono text-slate-500 text-[11px]">
+                            Pending
+                          </span>
                         )}
                       </td>
                       <td className="py-3 px-4">
@@ -332,18 +354,27 @@ export function CodeFragmentsPage() {
                         )}
                       </td>
                       {isStaff && (
-                        <td className="py-3 px-4 text-right space-x-2">
+                        <td className="py-3 px-4 text-right space-x-1.5">
                           <button
                             onClick={() => handleOpenRecord(team, '1')}
                             className="px-2 py-1 text-[10px] font-mono rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60"
+                            title="Award Gate 1 fragment ODD"
                           >
-                            + Frag 1
+                            + Gate 1 (ODD)
                           </button>
                           <button
                             onClick={() => handleOpenRecord(team, '2')}
                             className="px-2 py-1 text-[10px] font-mono rounded bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60"
+                            title="Award Gate 2 fragment 42"
                           >
-                            + Frag 2
+                            + Gate 2 (42)
+                          </button>
+                          <button
+                            onClick={() => handleConfirmGate3(team)}
+                            className="px-2 py-1 text-[10px] font-mono rounded bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60"
+                            title="Confirm Gate 3 (Validates ODD & 42)"
+                          >
+                            Confirm Gate 3
                           </button>
                           <button
                             onClick={() => handleOpenVerify(team)}

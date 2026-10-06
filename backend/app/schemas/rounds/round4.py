@@ -53,6 +53,9 @@ class UpdateStageInput(BaseModel):
     status: str = Field(..., pattern="^(not_started|in_progress|completed|paused)$")
     actual_duration_seconds: Optional[int] = Field(None, alias="actualDurationSeconds")
     notes: Optional[str] = None
+    timekeeper_name: Optional[str] = Field(None, alias="timekeeperName")
+    time_violations_notes: Optional[str] = Field(None, alias="timeViolationsNotes")
+    penalty_seconds: Optional[int] = Field(0, alias="penaltySeconds")
 
     model_config = {"populate_by_name": True}
 
@@ -63,6 +66,32 @@ class SubmitJudgeScoreInput(BaseModel):
     team_id: Optional[str] = Field(None, alias="teamId")
     scores: Dict[str, float]  # category_id -> score
     comments: Optional[str] = None
+    is_locked: Optional[bool] = Field(False, alias="isLocked")
+
+    model_config = {"populate_by_name": True}
+
+
+class CorrectJudgeScoreInput(BaseModel):
+    scores: Dict[str, float]
+    correction_notes: str = Field(..., alias="correctionNotes")
+    comments: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class AgentGuessItemInput(BaseModel):
+    agent_id: Optional[str] = Field(None, alias="agentId")
+    suspect_name: Optional[str] = Field(None, alias="suspectName")
+    notes: Optional[str] = None
+    outcome: Optional[str] = None  # optional manual override: 'correct' or 'incorrect'
+
+    model_config = {"populate_by_name": True}
+
+
+class SubmitAgentGuessesInput(BaseModel):
+    team_id: Optional[str] = Field(None, alias="teamId")
+    guesses: List[AgentGuessItemInput] = Field(default_factory=list)
+    notes: Optional[str] = None
 
     model_config = {"populate_by_name": True}
 
@@ -79,6 +108,7 @@ class SubmitAgentGuessInput(BaseModel):
 class FinalizeRound4Input(BaseModel):
     override_discrepancy: bool = Field(False, alias="overrideDiscrepancy")
     notes: Optional[str] = None
+    organizer_confirmed: bool = Field(False, alias="organizerConfirmed")
 
     model_config = {"populate_by_name": True}
 
@@ -114,6 +144,29 @@ class StageTimingResponse(BaseModel):
     ended_at: Optional[str] = Field(None, alias="endedAt")
     actual_duration_seconds: Optional[int] = Field(None, alias="actualDurationSeconds")
     notes: Optional[str] = None
+    timekeeper_name: Optional[str] = Field(None, alias="timekeeperName")
+    time_violations_notes: Optional[str] = Field(None, alias="timeViolationsNotes")
+    penalty_seconds: Optional[int] = Field(0, alias="penaltySeconds")
+
+    model_config = {"populate_by_name": True}
+
+
+class Round4JudgeScoreResponse(BaseModel):
+    id: str
+    judge_id: str = Field(..., alias="judgeId")
+    judge_name: str = Field(..., alias="judgeName")
+    team_id: str = Field(..., alias="teamId")
+    scores: Dict[str, float]
+    total_score: float = Field(..., alias="totalScore")
+    is_submitted: bool = Field(True, alias="isSubmitted")
+    submitted_at: Optional[str] = Field(None, alias="submittedAt")
+    comments: Optional[str] = None
+    is_locked: bool = Field(False, alias="isLocked")
+    locked_at: Optional[str] = Field(None, alias="lockedAt")
+    locked_by: Optional[str] = Field(None, alias="lockedBy")
+    correction_notes: Optional[str] = Field(None, alias="correctionNotes")
+    corrected_by: Optional[str] = Field(None, alias="correctedBy")
+    corrected_at: Optional[str] = Field(None, alias="correctedAt")
 
     model_config = {"populate_by_name": True}
 
@@ -148,12 +201,18 @@ class Round4PairResponse(BaseModel):
 
 class FinalScoreBreakdownResponse(BaseModel):
     team_id: str = Field(..., alias="teamId")
+    r1_points: float = Field(0.0, alias="r1Points")
+    r2_cabo: float = Field(0.0, alias="r2Cabo")
+    agent_task_credits: float = Field(0.0, alias="agentTaskCredits")
+    r3_balance: float = Field(0.0, alias="r3Balance")
+    r4_legal_score: Optional[float] = Field(None, alias="r4LegalScore")
+    agent_guess_points: float = Field(0.0, alias="agentGuessPoints")
+    final_score: Optional[float] = Field(None, alias="finalScore")
     raw_panel_score: Optional[float] = Field(None, alias="rawPanelScore")
     weighted_panel_score: Optional[float] = Field(None, alias="weightedPanelScore")
     agent_guessing_points: Optional[float] = Field(None, alias="agentGuessingPoints")
     black_market_balance: float = Field(0.0, alias="blackMarketBalance")
     black_market_contribution: float = Field(0.0, alias="blackMarketContribution")
-    final_score: Optional[float] = Field(None, alias="finalScore")
     is_complete: bool = Field(False, alias="isComplete")
     missing_components: List[str] = Field(default_factory=list, alias="missingComponents")
 

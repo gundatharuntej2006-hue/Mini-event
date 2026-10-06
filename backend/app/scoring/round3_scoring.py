@@ -1,4 +1,4 @@
-﻿from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 
 def compute_team_ledger(
     team_id: str,
@@ -109,22 +109,26 @@ def process_round3_standings(
     ties_affecting_cutoff = False
     tied_teams_at_cutoff = []
 
-    # Cutoff is between Rank #8 (advancing) and Rank #9 (eliminated)
+    from app.core.constants import R3_QUALIFIERS
+    cutoff = config.get("cutoff_rank", R3_QUALIFIERS)
+    spans_cutoff = False
+
+    # Cutoff is between Rank #cutoff (advancing) and Rank #(cutoff + 1) (eliminated)
     for val, group in metric_groups.items():
         if len(group) > 1:
             ranks = [r["rank"] for r in group]
             min_rank = min(ranks)
             max_rank = max(ranks)
-            spans_cutoff = (min_rank <= 8 and max_rank >= 9)
+            spans_cutoff = (min_rank <= cutoff and max_rank >= cutoff + 1)
 
             for r in group:
                 if spans_cutoff:
                     r["tie_requires_review"] = True
-                    r["tie_reason"] = f"Tied on {val} points spanning the 8th-place cutoff (Ranks #{min_rank}-#{max_rank}). Manual review required."
+                    r["tie_reason"] = f"Tied on {val} points spanning the {cutoff}th-place cutoff (Ranks #{min_rank}-#{max_rank}). Manual review required."
                     ties_affecting_cutoff = True
                     tied_teams_at_cutoff.append(r["team_id"])
-                elif max_rank <= 8:
-                    r["tie_reason"] = f"Tied on {val} points with {len(group) - 1} other squad(s) inside Top 8."
+                elif max_rank <= cutoff:
+                    r["tie_reason"] = f"Tied on {val} points with {len(group) - 1} other squad(s) inside Top {cutoff}."
                 else:
                     r["tie_reason"] = f"Tied on {val} points in elimination zone."
 
@@ -133,15 +137,15 @@ def process_round3_standings(
         if not round2_finalized:
             r["qualification_status"] = "Round 2 Pending"
         elif is_finalized:
-            r["qualification_status"] = "Finalized Qualified" if r["rank"] <= 8 else "Finalized Eliminated"
+            r["qualification_status"] = "Finalized Qualified" if r["rank"] <= cutoff else "Finalized Eliminated"
         elif r.get("tie_requires_review"):
             r["qualification_status"] = "Tie Review Needed"
         elif code_required and not code_complete:
             r["qualification_status"] = "Code Incomplete"
         elif not is_scoring_configured:
             r["qualification_status"] = "Standings Provisional"
-        elif r["rank"] <= 8:
-            r["qualification_status"] = "Provisional Top 8"
+        elif r["rank"] <= cutoff:
+            r["qualification_status"] = f"Provisional Top {cutoff}"
         else:
             r["qualification_status"] = "Provisional Cutoff"
 
@@ -154,11 +158,11 @@ def process_round3_standings(
             "code": "PREVIOUS_ROUND_UNFINALIZED",
             "message": "Round 2 (Cabo) results are not yet officially finalized. Finalize Round 2 first."
         })
-    if len(records) != 12:
+    if len(records) not in (8, 12):
         can_finalize = False
         issues.append({
             "code": "INVALID_TEAM_COUNT",
-            "message": f"Expected exactly 12 qualified squads from Round 2, but found {len(records)}."
+            "message": f"Expected exactly 8 qualified squads from Round 2, but found {len(records)}."
         })
     if not is_scoring_configured:
         can_finalize = False
@@ -170,7 +174,7 @@ def process_round3_standings(
         can_finalize = False
         issues.append({
             "code": "CUTOFF_TIE",
-            "message": "An unresolved tie affects the 8th-place qualification cutoff boundary. Manual marshal review required."
+            "message": f"An unresolved tie affects the {cutoff}th-place qualification cutoff boundary. Manual marshal review required."
         })
     if code_required:
         if not code_config.get("isConfigured") or code_config.get("requiredFragmentCount") is None:
@@ -180,17 +184,17 @@ def process_round3_standings(
                 "message": "Hidden code completion is mandatory for qualification, but official fragment requirements have not been configured."
             })
         else:
-            incomplete_top8 = [r for r in sorted_records if r["rank"] <= 8 and not r.get("code_record", {}).get("is_complete")]
-            if incomplete_top8:
+            incomplete_top = [r for r in sorted_records if r["rank"] <= cutoff and not r.get("code_record", {}).get("is_complete")]
+            if incomplete_top:
                 can_finalize = False
                 issues.append({
                     "code": "CODE_INCOMPLETE",
-                    "message": f"{len(incomplete_top8)} squad(s) currently in the Top 8 have not satisfied the mandatory hidden code requirement."
+                    "message": f"{len(incomplete_top)} squad(s) currently in the Top {cutoff} have not satisfied the mandatory hidden code requirement."
                 })
 
     block_reason = issues[0]["message"] if issues else None
-    top8_team_ids = [r["team_id"] for r in sorted_records if r.get("rank") and r["rank"] <= 8]
-    eliminated_team_ids = [r["team_id"] for r in sorted_records if r.get("rank") and r["rank"] > 8]
+    top_team_ids = [r["team_id"] for r in sorted_records if r.get("rank") and r["rank"] <= cutoff]
+    eliminated_team_ids = [r["team_id"] for r in sorted_records if r.get("rank") and r["rank"] > cutoff]
 
     return {
         "records": sorted_records,
@@ -199,6 +203,7 @@ def process_round3_standings(
         "block_reason": block_reason,
         "ties_affecting_cutoff": ties_affecting_cutoff,
         "tied_teams_at_cutoff": list(set(tied_teams_at_cutoff)),
-        "top8_team_ids": top8_team_ids,
+        "top4_team_ids": top_team_ids,
+        "top8_team_ids": top_team_ids,
         "eliminated_team_ids": eliminated_team_ids
     }

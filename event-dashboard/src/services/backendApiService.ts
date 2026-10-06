@@ -1,4 +1,5 @@
 import { apiClient } from './apiClient';
+import { API_CONFIG } from './apiConfig';
 import {
   Team,
   Participant,
@@ -9,6 +10,8 @@ import {
   CreateParticipantInput,
   UpdateParticipantInput,
   RoundInfo,
+  GateCheckinRecord,
+  GateCheckinResult,
 } from '../types';
 import {
   Submission,
@@ -91,6 +94,10 @@ export interface CodeHuntStatusData {
   team_id: string;
   fragment_1_status: string;
   fragment_2_status: string;
+  fragment_3_status?: string;
+  fragment_4_status?: string;
+  gate_3_confirmed?: boolean;
+  gate_3_confirmed_at?: string;
   fragments_recovered_count: number;
   final_code_verified: boolean;
   final_code_input?: string;
@@ -109,6 +116,12 @@ export interface BlackMarketPurchaseData {
   transaction_id?: string;
   details?: Record<string, any>;
   purchased_by?: string;
+  approval_status?: 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED';
+  first_approved_by?: string;
+  first_approved_at?: string;
+  second_approved_by?: string;
+  second_approved_at?: string;
+  notes?: string;
   created_at: string;
 }
 
@@ -216,6 +229,106 @@ export interface BackendRound2Placement {
   recordedBy?: string;
   recordedAt: string;
 }
+
+export interface CaboSummaryData {
+  totalTablesPerGame: number;
+  expectedTotalTables: number;
+  expectedTotalScorecards: number;
+  game1CompletedTables: number;
+  game2CompletedTables: number;
+  game3CompletedTables: number;
+  totalCompletedTables: number;
+  totalScorecards: number;
+  isFinalized: boolean;
+  hasCutoffTie: boolean;
+  canFinalize: boolean;
+  incompleteReasons: string[];
+}
+
+export interface CaboValidationData {
+  isValid: boolean;
+  isConfirmed: boolean;
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
+  totalTeams: number;
+  totalPlayers: number;
+  totalTables: number;
+  constraints: Record<string, boolean>;
+  errors: string[];
+}
+
+export interface CaboPlayerGameDetail {
+  gameNumber: number;
+  tableNumber: number;
+  seatPosition: number;
+  placement?: number | null;
+  placementPoints?: number | null;
+  finalCardHandTotal?: number | null;
+  isVerified: boolean;
+}
+
+export interface CaboPlayerDetailData {
+  participantId: string;
+  participantName: string;
+  participantUsn?: string | null;
+  teamId: string;
+  teamName: string;
+  teamNumber?: number | null;
+  games: CaboPlayerGameDetail[];
+  totalPoints: number;
+  firstPlacesCount: number;
+}
+
+export interface CaboTeamMemberPerformance {
+  participantId: string;
+  participantName: string;
+  participantUsn?: string | null;
+  role: string;
+  game1Table?: number | null;
+  game1Placement?: number | null;
+  game1Points?: number | null;
+  game2Table?: number | null;
+  game2Placement?: number | null;
+  game2Points?: number | null;
+  game3Table?: number | null;
+  game3Placement?: number | null;
+  game3Points?: number | null;
+  totalIndividualPoints: number;
+}
+
+export interface CaboTeamDetailData {
+  teamId: string;
+  teamName: string;
+  teamNumber: number;
+  members: CaboTeamMemberPerformance[];
+  game1Total: number;
+  game2Total: number;
+  game3Total: number;
+  caboSquadTotal: number;
+  rank?: number | null;
+  isQualified: boolean;
+}
+
+export interface CaboPrintableTablePlayer {
+  seatPosition: number;
+  participantName: string;
+  participantUsn?: string | null;
+  teamName: string;
+  teamNumber?: number | null;
+}
+
+export interface CaboPrintableTableSheet {
+  tableNumber: number;
+  gameNumber: number;
+  players: CaboPrintableTablePlayer[];
+}
+
+export interface CaboPrintableSheetData {
+  gameNumber: number;
+  tables: CaboPrintableTableSheet[];
+}
+
+
 
 export interface BackendRound2Standing {
   teamId: string;
@@ -514,6 +627,62 @@ class BackendApiService {
     return apiClient.post<any>('/rounds/2/cabo/finalize', {});
   }
 
+  async getCaboSummary(): Promise<ApiResponse<CaboSummaryData>> {
+    return apiClient.get<CaboSummaryData>('/rounds/2/cabo/summary');
+  }
+
+  async confirmCaboTables(): Promise<ApiResponse<{ isConfirmed: boolean; confirmedAt: string; confirmedBy: string; message: string }>> {
+    return apiClient.post('/rounds/2/cabo/confirm', {});
+  }
+
+  async getCaboValidation(): Promise<ApiResponse<CaboValidationData>> {
+    return apiClient.get<CaboValidationData>('/rounds/2/cabo/validation');
+  }
+
+  async getCaboPlayerDetail(participantId: string): Promise<ApiResponse<CaboPlayerDetailData>> {
+    return apiClient.get<CaboPlayerDetailData>(`/rounds/2/cabo/players/${participantId}/detail`);
+  }
+
+  async getCaboTeamDetail(teamId: string): Promise<ApiResponse<CaboTeamDetailData>> {
+    return apiClient.get<CaboTeamDetailData>(`/rounds/2/cabo/teams/${teamId}/detail`);
+  }
+
+  async getCaboPrintableSheet(gameNumber: number): Promise<ApiResponse<CaboPrintableSheetData>> {
+    return apiClient.get<CaboPrintableSheetData>(`/rounds/2/cabo/printable-sheet?game_number=${gameNumber}`);
+  }
+
+  async exportCaboData(exportType: 'assignments' | 'results' | 'standings'): Promise<Blob> {
+    const token = apiClient.getToken();
+    const url = `${API_CONFIG.baseUrl}${API_CONFIG.apiPrefix}/rounds/2/cabo/export/${exportType}`;
+    const response = await fetch(url, {
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+    });
+    return response.blob();
+  }
+
+  async correctCaboTableScore(gameNumber: number, tableNumber: number, payload: {
+    participantId: string;
+    newPlacement: number;
+    reason: string;
+    newCardTotal?: number;
+  }): Promise<ApiResponse<any>> {
+    return apiClient.put(`/rounds/2/cabo/games/${gameNumber}/tables/${tableNumber}/correct`, payload);
+  }
+
+  async swapCaboSeats(payload: { gameNumber: number; assignmentId1: string; assignmentId2: string }): Promise<ApiResponse<any>> {
+    return apiClient.post<any>('/rounds/2/cabo/swap-seats', payload);
+  }
+
+  async verifyEcho(teamId: string, payload: { game1E: boolean; game2C: boolean; game3Ho: boolean; notes?: string }): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/2/teams/${teamId}/echo-verify`, payload);
+  }
+
+  async verifyPrime(teamId: string, payload: { sequence?: number[]; isVerified?: boolean; notes?: string }): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/2/teams/${teamId}/prime-verify`, payload);
+  }
+
   async getRound2Placements(gameNumber?: number): Promise<ApiResponse<BackendRound2Placement[]>> {
     const q = gameNumber !== undefined ? `?gameNumber=${gameNumber}` : '';
     return apiClient.get<BackendRound2Placement[]>(`/rounds/2/placements${q}`);
@@ -550,6 +719,104 @@ class BackendApiService {
   async recordFragment2(teamId: string, payload: { fragment_value: string; overwrite?: boolean }): Promise<ApiResponse<any>> {
     return apiClient.post<any>(`/code-hunt/${teamId}/fragment/2`, payload);
   }
+
+  async recordFragment3(teamId: string, payload: { fragment_value: string; overwrite?: boolean }): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/code-hunt/${teamId}/fragment/3`, payload);
+  }
+
+  async recordFragment4(teamId: string, payload: { fragment_value: string; overwrite?: boolean }): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/code-hunt/${teamId}/fragment/4`, payload);
+  }
+
+  async confirmGate3Fragments(teamId: string): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/1/teams/${teamId}/gate-3/confirm`, {});
+  }
+
+  async awardRound1GateFragment(teamId: string, gateNumber: number): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/1/teams/${teamId}/gates/${gateNumber}/award-fragment`, {});
+  }
+
+  async updateRound1Penalties(teamId: string, payload: {
+    phone_penalties_count?: number;
+    separation_penalties_count?: number;
+    clue_tampering_deduction?: number;
+    is_disqualified?: boolean;
+    disqualification_reason?: string;
+  }): Promise<ApiResponse<any>> {
+    return apiClient.put<any>(`/rounds/1/teams/${teamId}/penalties`, payload);
+  }
+
+  async startRound1(): Promise<ApiResponse<{ started_at: string; started_by: string; round_number: number; message: string }>> {
+    return apiClient.post<{ started_at: string; started_by: string; round_number: number; message: string }>('/rounds/1/start', {});
+  }
+
+  async getPublicGateInfo(gateNumber: number): Promise<ApiResponse<any>> {
+    return apiClient.get<any>(`/rounds/1/gates/${gateNumber}/public`);
+  }
+
+  async getPublicTeamsForGate(): Promise<ApiResponse<{ id: string; name: string; team_number: number }[]>> {
+    return apiClient.get<{ id: string; name: string; team_number: number }[]>('/rounds/1/teams/public-list');
+  }
+
+  async submitGateCheckin(gateNumber: number, payload: { team_name?: string; team_id?: string; team_identifier?: string }): Promise<ApiResponse<GateCheckinResult>> {
+    return apiClient.post<GateCheckinResult>(`/rounds/1/gates/${gateNumber}/checkin`, payload);
+  }
+
+  async getRound1CheckinsFeed(gate?: number): Promise<ApiResponse<GateCheckinRecord[]>> {
+    const query = gate ? `?gate=${gate}` : '';
+    return apiClient.get<GateCheckinRecord[]>(`/rounds/1/checkins${query}`);
+  }
+
+  // ==========================================
+  // Round 1 Final Spec: Participant & Allocations
+  // ==========================================
+  async createParticipantSession(teamIdentifier: string): Promise<ApiResponse<{
+    session_token: string;
+    team_identifier: string;
+    team_name: string;
+    current_checkpoint: number;
+    is_round_active: boolean;
+    is_complete: boolean;
+  }>> {
+    return apiClient.post('/rounds/1/participant/session', { team_identifier: teamIdentifier });
+  }
+
+  async getParticipantCurrentState(token: string): Promise<ApiResponse<any>> {
+    return apiClient.get(`/rounds/1/participant/current?token=${encodeURIComponent(token)}`);
+  }
+
+  async submitParticipantLocationScan(token: string, location: number): Promise<ApiResponse<any>> {
+    return apiClient.post(`/rounds/1/participant/scan?token=${encodeURIComponent(token)}`, { location });
+  }
+
+  async submitParticipantAnswer(token: string, answer: string): Promise<ApiResponse<any>> {
+    return apiClient.post(`/rounds/1/participant/submit?token=${encodeURIComponent(token)}`, { answer });
+  }
+
+  async getPublicQualifiedTeams(): Promise<ApiResponse<{ is_finalized: boolean; qualified_teams: string[]; message: string }>> {
+    return apiClient.get('/rounds/1/public/qualified');
+  }
+
+  async getRouteAllocationsMatrix(): Promise<ApiResponse<any>> {
+    return apiClient.get('/rounds/1/allocations');
+  }
+
+  async generateRouteAllocations(): Promise<ApiResponse<any>> {
+    return apiClient.post('/rounds/1/allocations/generate', {});
+  }
+
+  async getLocationVolunteerView(checkpoint: number, location: number): Promise<ApiResponse<any>> {
+    return apiClient.get(`/rounds/1/volunteer/view?checkpoint=${checkpoint}&location=${location}`);
+  }
+
+  async getEnvelopePreparationSheet(): Promise<ApiResponse<any[]>> {
+    return apiClient.get('/rounds/1/envelope-sheet');
+  }
+
+  async getTeamAuditDetails(teamIdentifier: string): Promise<ApiResponse<any>> {
+    return apiClient.get(`/rounds/1/teams/${teamIdentifier}/details`);
+  }
+
 
   async getCodeHuntStatus(teamId: string): Promise<ApiResponse<CodeHuntStatusData>> {
     return apiClient.get<CodeHuntStatusData>(`/code-hunt/${teamId}/status`);
@@ -617,6 +884,28 @@ class BackendApiService {
 
   async getTeamMarketPurchases(teamId: string): Promise<ApiResponse<BlackMarketPurchaseData[]>> {
     return apiClient.get<BlackMarketPurchaseData[]>(`/rounds/3/purchases/${teamId}`);
+  }
+
+  async getPendingPurchases(): Promise<ApiResponse<BlackMarketPurchaseData[]>> {
+    return apiClient.get<BlackMarketPurchaseData[]>('/rounds/3/purchases/pending');
+  }
+
+  async approveMarketPurchase(
+    purchaseId: string,
+    payload: { organizer_name: string; notes?: string }
+  ): Promise<ApiResponse<BlackMarketPurchaseData>> {
+    return apiClient.post<BlackMarketPurchaseData>(`/rounds/3/purchases/${purchaseId}/approve`, payload);
+  }
+
+  async rejectMarketPurchase(
+    purchaseId: string,
+    payload: { organizer_name: string; reason: string }
+  ): Promise<ApiResponse<BlackMarketPurchaseData>> {
+    return apiClient.post<BlackMarketPurchaseData>(`/rounds/3/purchases/${purchaseId}/reject`, payload);
+  }
+
+  async syncRound3Balances(): Promise<ApiResponse<any>> {
+    return apiClient.post<any>('/rounds/3/sync-balances', {});
   }
 
   async createMarketAuction(payload: {
@@ -693,9 +982,24 @@ class BackendApiService {
     return apiClient.get<BackendRound3Standing[]>('/rounds/3/standings');
   }
 
+  async checkRound3Code(teamId: string, code: string): Promise<ApiResponse<{ valid: boolean; message: string }>> {
+    return apiClient.post<{ valid: boolean; message: string }>('/rounds/3/code/check', {
+      team_id: teamId,
+      code_input: code,
+    });
+  }
+
+  async getRound3TeamInventory(teamId: string): Promise<ApiResponse<any>> {
+    return apiClient.get<any>(`/rounds/3/teams/${teamId}/inventory`);
+  }
+
   // ==========================================
   // Round 4: The Legal Battle
   // ==========================================
+  async getRound4Overview(): Promise<ApiResponse<any>> {
+    return apiClient.get<any>('/rounds/4');
+  }
+
   async getRound4Pairs(): Promise<ApiResponse<BackendRound4Pair[]>> {
     return apiClient.get<BackendRound4Pair[]>('/rounds/4/pairs');
   }
@@ -727,7 +1031,17 @@ class BackendApiService {
     return apiClient.put<BackendRound4Pair>(`/rounds/4/pairs/${pairNumber}`, payload);
   }
 
-  async updateRound4Stage(pairId: string, stageId: string, payload: { status?: string; actual_duration_seconds?: number }): Promise<ApiResponse<any>> {
+  async updateRound4Stage(
+    pairId: string,
+    stageId: string,
+    payload: {
+      status?: string;
+      actual_duration_seconds?: number;
+      timekeeper_name?: string;
+      time_violations_notes?: string;
+      penalty_seconds?: number;
+    }
+  ): Promise<ApiResponse<any>> {
     return apiClient.put<any>(`/rounds/4/stages/${pairId}/${stageId}`, payload);
   }
 
@@ -744,6 +1058,39 @@ class BackendApiService {
       scores: payload.scores,
       comments: payload.comments,
     });
+  }
+
+  async lockRound4JudgeScore(scoreId: string): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/4/judging/${scoreId}/lock`, {});
+  }
+
+  async unlockRound4JudgeScore(scoreId: string): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/4/judging/${scoreId}/unlock`, {});
+  }
+
+  async correctRound4JudgeScore(
+    scoreId: string,
+    payload: {
+      scores?: Record<string, number>;
+      comments?: string;
+      correction_notes: string;
+    }
+  ): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/4/judging/${scoreId}/correct`, payload);
+  }
+
+  async submitRound4TeamAgentGuesses(
+    teamId: string,
+    payload: {
+      guesses: Array<{
+        suspect_id: string;
+        suspect_name?: string;
+        is_correct?: boolean;
+      }>;
+      notes?: string;
+    }
+  ): Promise<ApiResponse<any>> {
+    return apiClient.post<any>(`/rounds/4/teams/${teamId}/agent-guesses`, payload);
   }
 
   async submitRound4AgentGuess(payload: {

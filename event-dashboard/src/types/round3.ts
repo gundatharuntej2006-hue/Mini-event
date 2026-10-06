@@ -66,12 +66,23 @@ export interface BlackMarketConfig {
 export type Round3QualificationStatus =
   | 'Round 2 Pending'         // Round 2 is not yet officially finalized
   | 'Standings Provisional'   // Scoring rules or field results unconfirmed
-  | 'Provisional Top 8'       // Currently in top 8 (qualifying zone)
-  | 'Provisional Cutoff'      // Outside top 8 (Ranks 9-12 elimination zone)
-  | 'Code Incomplete'         // Top 8 by balance, but missing mandatory code completion
-  | 'Tie Review Needed'       // Unresolved tie spanning across the 8th-place cutoff boundary
+  | 'Provisional Top 6'       // Currently in top 6 (qualifying zone)
+  | 'Provisional Top 4'       // Backward compatibility
+  | 'Provisional Top 8'       // Backward compatibility
+  | 'Provisional Cutoff'      // Outside top 6 (Ranks 7-12 elimination zone)
+  | 'Code Incomplete'         // Top 6 by balance, but missing mandatory code completion
+  | 'Tie Review Needed'       // Unresolved tie spanning across the 6th-place cutoff boundary
   | 'Finalized Qualified'     // Officially advancing to Round 4: The Legal Battle
   | 'Finalized Eliminated';    // Officially eliminated from advancing to Round 4
+
+export interface StartingBalanceBreakdown {
+  base: number;
+  r1_points: number;
+  r2_cabo_score: number;
+  agent_tasks_count: number;
+  agent_task_points: number;
+  total_starting: number;
+}
 
 export interface TeamRound3Record {
   teamId: string;
@@ -81,9 +92,20 @@ export interface TeamRound3Record {
   ledger: TeamLedger;
   codeRecord: TeamCodeRecord;
   rank?: number | null;        // 1 to 12
-  tieRequiresReview?: boolean; // True if tie spans across 8th-place cutoff
+  tieRequiresReview?: boolean; // True if tie spans across 6th-place cutoff
   tieReason?: string;
   qualificationStatus: Round3QualificationStatus;
+  effectiveBalance?: number;
+  startingBalanceBreakdown?: StartingBalanceBreakdown;
+  hasSecretCode1?: boolean;
+  hasSecretCode2?: boolean;
+  hasPowerup1?: boolean;
+  hasPowerup2?: boolean;
+  hasCompleteKey?: boolean;
+  fragmentsStatus?: Record<string, string>;
+  missingFragmentsCount?: number;
+  missingFragmentsPenalty?: number;
+  allFragmentsVerified?: boolean;
 }
 
 export interface Round3SummaryStats {
@@ -94,7 +116,9 @@ export interface Round3SummaryStats {
   totalVolumeTransacted: number;
   codeCompletedCount: number;
   codeConfigured: boolean;
-  provisionalTop8Count: number;
+  provisionalTop6Count: number;
+  provisionalTop4Count?: number;
+  provisionalTop8Count?: number;
   provisionalEliminatedCount: number;
   tiesAffectingCutoffCount: number;
   isScoringConfigured: boolean;
@@ -106,8 +130,40 @@ export interface Round3EngineResult {
   canFinalize: boolean;
   blockReason?: string | null;
   tiesAffectingCutoff: boolean;
-  top8TeamIds: string[];
+  top6TeamIds: string[];
+  top4TeamIds?: string[];
+  top8TeamIds?: string[];
   eliminatedTeamIds: string[];
+}
+
+export interface TeamInventoryStatus {
+  team_id: string;
+  current_balance: number;
+  total_spent: number;
+  total_earned: number;
+  starting_balance_breakdown: StartingBalanceBreakdown;
+  items_owned: {
+    secret_code_item_1: boolean;
+    secret_code_item_2: boolean;
+    powerup_1_r4: boolean;
+    powerup_2_r4: boolean;
+  };
+  has_complete_key: boolean;
+  is_code_verified: boolean;
+  purchases: Array<{
+    id: string;
+    asset_type: string;
+    price: number;
+    quantity: number;
+    status: string;
+    approval_status: string;
+    purchased_at: string | null;
+  }>;
+}
+
+export interface CodeCheckResponse {
+  valid: boolean;
+  message: string;
 }
 
 export interface Round3Data {
@@ -119,4 +175,5 @@ export interface Round3Data {
   engine: Round3EngineResult;
   round2Finalized: boolean;
   round2QualifiedTeamsCount: number;
+  pendingPurchases?: any[];
 }

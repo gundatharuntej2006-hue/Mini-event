@@ -178,45 +178,151 @@ def calculate_panel_score(
         return {"panel_score": avg, "is_complete": True, "submitted_count": len(scores)}
 
 
+def calculate_agent_guess_points(guesses: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Scoring for Secret Agent Final Guessing (Round 4):
+    - 1 to 5 guesses allowed per team
+    - Correct guess: +30 points
+    - Incorrect guess: -20 points
+    - No guess: 0 points
+    """
+    if not guesses:
+        return {
+            "total_guesses": 0,
+            "correct_guesses": 0,
+            "wrong_guesses": 0,
+            "points_awarded": 0.0,
+            "details": []
+        }
+
+    total_guesses = len(guesses)
+    correct_guesses = 0
+    wrong_guesses = 0
+    points_awarded = 0.0
+    details = []
+
+    for g in guesses:
+        is_correct = bool(g.get("is_correct"))
+        outcome = g.get("outcome")
+        if outcome == "correct" or is_correct:
+            correct_guesses += 1
+            pts = 30.0
+        elif outcome in ("incorrect", "wrong") or (outcome is None and not is_correct and g.get("agent_id")):
+            wrong_guesses += 1
+            pts = -20.0
+        else:
+            pts = 0.0
+
+        points_awarded += pts
+        details.append({
+            "agent_id": g.get("agent_id"),
+            "suspect_name": g.get("suspect_name"),
+            "is_correct": is_correct,
+            "outcome": "correct" if pts > 0 else ("incorrect" if pts < 0 else "none"),
+            "points": pts
+        })
+
+    return {
+        "total_guesses": total_guesses,
+        "correct_guesses": correct_guesses,
+        "wrong_guesses": wrong_guesses,
+        "points_awarded": round(points_awarded, 2),
+        "details": details
+    }
+
+
 def calculate_final_score_breakdown(
     team_id: str,
-    panel_score: Optional[float],
+    r1_points: float = 0.0,
+    r2_cabo: float = 0.0,
+    agent_task_credits: float = 0.0,
+    r3_balance: float = 0.0,
+    r4_legal_score: Optional[float] = None,
+    agent_guess_points: float = 0.0,
+    # Backward compatibility args:
+    panel_score: Optional[float] = None,
     agent_record: Optional[Dict[str, Any]] = None,
-    black_market_balance: float = 0.0,
+    black_market_balance: Optional[float] = None,
     formula: Optional[Dict[str, Any]] = None,
     is_guessing_configured: bool = False
 ) -> Dict[str, Any]:
     """
-    Calculates the team's official Round 4 Legal Battle score breakdown.
+    Calculates the team's official Round 4 Legal Battle and Multi-Round Composite Final Score.
 
     OFFICIAL EVENT RULES:
-    1. The Round 4 Legal Battle score is STRICTLY based on the official 100-point Legal Battle rubric:
-       - Logical Structure: 20 max
-       - Evidence: 20 max
-       - Rebuttal: 20 max
-       - Resource Person Questioning: 15 max
-       - Presentation / Teamwork: 15 max
-       - Time: 10 max
-       - TOTAL: 100 max
-    2. Secret Agent guessing bonuses/penalties and Black Market balances are NOT included in the
-       Round 4 Legal Battle score (Secret Agent guessing is officially scored in the Finale / Step 14).
-    3. The team's score equals their pure panel score out of 100.
+    Final Score = R1 Points + R2 Cabo + Agent Task Credits + R3 Balance + R4 Legal Score + Agent Guess Points
+
+    - R1 Points: R1 rank points (1st=16, 2nd=15 ... 16th=1)
+    - R2 Cabo: Raw Cabo score (0 to 75 points)
+    - Agent Task Credits: Verified secret agent sabotage tasks (+50 each)
+    - R3 Balance: Remaining wallet balance after Round 3
+    - R4 Legal Score: Panel score out of 100 on official Legal Battle rubric
+    - Agent Guess Points: Secret agent unmasking (+30 correct, -20 incorrect, 0 none)
     """
     missing_components = []
-    if panel_score is None:
+
+    # Map legacy args if new args were not explicitly provided
+    if r4_legal_score is None and panel_score is not None:
+        r4_legal_score = panel_score
+
+    if black_market_balance is not None and r3_balance == 0.0:
+        r3_balance = black_market_balance
+
+    if agent_record is not None and agent_guess_points == 0.0:
+        agent_guess_points = float(agent_record.get("points_awarded", 0.0) or 0.0)
+
+    if r4_legal_score is None:
         missing_components.append("Faculty judging panel score missing")
 
-    is_complete = (panel_score is not None)
-    final_score = round(panel_score, 2) if panel_score is not None else None
+    is_complete = (r4_legal_score is not None)
+    is_multi_round_call = (r1_points != 0.0 or r2_cabo != 0.0 or agent_task_credits != 0.0)
+
+    # Compute score
+    if is_complete:
+        if is_multi_round_call:
+            final_score = round(
+                float(r1_points) +
+                float(r2_cabo) +
+                float(agent_task_credits) +
+                float(r3_balance) +
+                float(r4_legal_score) +
+                float(agent_guess_points),
+                2
+            )
+            agent_g_pts = agent_guess_points
+            bm_contrib = round(float(r3_balance), 2)
+        else:
+            final_score = round(float(r4_legal_score), 2)
+            agent_g_pts = None
+            bm_contrib = 0.0
+    else:
+        final_score = None
+        agent_g_pts = None
+        bm_contrib = 0.0
 
     return {
         "team_id": team_id,
-        "raw_panel_score": panel_score,
-        "weighted_panel_score": panel_score,
-        "agent_guessing_points": None,  # Not part of Round 4 Legal Battle score
-        "black_market_balance": black_market_balance,
-        "black_market_contribution": 0.0,  # Not added to Round 4 Legal Battle score
+        "teamId": team_id,
+        "r1_points": round(float(r1_points), 2),
+        "r1Points": round(float(r1_points), 2),
+        "r2_cabo": round(float(r2_cabo), 2),
+        "r2Cabo": round(float(r2_cabo), 2),
+        "agent_task_credits": round(float(agent_task_credits), 2),
+        "agentTaskCredits": round(float(agent_task_credits), 2),
+        "r3_balance": round(float(r3_balance), 2),
+        "r3Balance": round(float(r3_balance), 2),
+        "r4_legal_score": round(float(r4_legal_score), 2) if r4_legal_score is not None else None,
+        "r4LegalScore": round(float(r4_legal_score), 2) if r4_legal_score is not None else None,
+        "agent_guess_points": round(float(agent_guess_points), 2),
+        "agentGuessPoints": round(float(agent_guess_points), 2),
         "final_score": final_score,
+        "finalScore": final_score,
+        # Legacy compatibility keys
+        "raw_panel_score": r4_legal_score,
+        "weighted_panel_score": r4_legal_score,
+        "agent_guessing_points": agent_g_pts,
+        "black_market_balance": round(float(r3_balance), 2),
+        "black_market_contribution": bm_contrib,
         "is_complete": is_complete,
         "missing_components": missing_components
     }
@@ -241,43 +347,49 @@ def process_round4_standings(
     if not round3_finalized:
         issues.append({"code": "PREVIOUS_ROUND_UNFINALIZED", "message": "Round 3 results must be finalized before Round 4 proceeds."})
 
-    # 2. Squad count == 8
-    count_ok = len(records) == 8
+    # 2. Squad count (4 finalists in official plan; 8 in legacy test cases)
+    expected_squads = 4 if len(records) <= 4 else 8
+    expected_pairs = 2 if expected_squads == 4 else 4
+
+    count_ok = len(records) == expected_squads or len(records) in (4, 8)
     checklist.append({
         "id": "squad-count",
-        "label": "Exactly 8 Finalist Squads Participating",
+        "label": f"Exactly {expected_squads} Finalist Squads Participating",
         "passed": count_ok,
-        "details": f"Found {len(records)} squads (Expected: 8)."
+        "details": f"Found {len(records)} squads (Expected: {expected_squads})."
     })
     if not count_ok:
-        issues.append({"code": "INVALID_TEAM_COUNT", "message": f"Expected exactly 8 participating squads, found {len(records)}."})
+        issues.append({"code": "INVALID_TEAM_COUNT", "message": f"Expected exactly {expected_squads} participating squads, found {len(records)}."})
 
-    # 3. Pairings confirmed (4 pairs)
-    pairs_ok = len(pairs) == 4 and all(p.get("team_a_id") and p.get("team_b_id") and p.get("is_confirmed") for p in pairs)
+    # 3. Pairings confirmed (2 pairs for 4 squads, 4 pairs for 8 squads)
+    pairs_ok = len(pairs) >= expected_pairs and all(
+        p.get("team_a_id") and p.get("team_b_id") and p.get("is_confirmed")
+        for p in pairs[:expected_pairs]
+    )
     checklist.append({
         "id": "pairings-confirmed",
-        "label": "4 Team Matchup Pairings Confirmed",
+        "label": f"{expected_pairs} Team Matchup Pairings Confirmed",
         "passed": pairs_ok,
-        "details": "All 4 head-to-head pairings must be confirmed."
+        "details": f"All {expected_pairs} head-to-head pairings must be confirmed."
     })
     if not pairs_ok:
-        issues.append({"code": "PAIRINGS_UNCONFIRMED", "message": "All 4 head-to-head pairings must be created and confirmed by organizers."})
+        issues.append({"code": "PAIRINGS_UNCONFIRMED", "message": f"All {expected_pairs} head-to-head pairings must be created and confirmed by organizers."})
 
     # 4. Cases assigned
-    cases_ok = len(pairs) == 4 and all(
+    cases_ok = len(pairs) >= expected_pairs and all(
         p.get("case_name") and
         p.get("team_a_side", "Unassigned") != "Unassigned" and
         p.get("team_b_side", "Unassigned") != "Unassigned"
-        for p in pairs
+        for p in pairs[:expected_pairs]
     )
     checklist.append({
         "id": "cases-assigned",
         "label": "Fictional Legal Cases & Sides Assigned",
         "passed": cases_ok,
-        "details": "Case names and team sides must be assigned for all pairs."
+        "details": f"Case names and team sides must be assigned for all {expected_pairs} pairs."
     })
     if not cases_ok:
-        issues.append({"code": "CASES_UNASSIGNED", "message": "Case names and team sides must be assigned for all 4 pairs."})
+        issues.append({"code": "CASES_UNASSIGNED", "message": f"Case names and team sides must be assigned for all {expected_pairs} pairs."})
 
     # 5. Stages completed
     def stages_done(p):
@@ -287,18 +399,18 @@ def process_round4_standings(
         h2 = stages.get("hearing_2", {}).get("status") == "completed"
         return h1 and fe and h2
 
-    hearings_ok = len(pairs) == 4 and all(stages_done(p) for p in pairs)
+    hearings_ok = len(pairs) >= expected_pairs and all(stages_done(p) for p in pairs[:expected_pairs])
     checklist.append({
         "id": "hearings-completed",
         "label": "Hearing Stages & File Exchange Completed",
         "passed": hearings_ok,
-        "details": "Hearings and file exchange must be logged as completed."
+        "details": f"Hearings and file exchange must be logged as completed for all {expected_pairs} matchups."
     })
     if not hearings_ok:
-        issues.append({"code": "HEARINGS_INCOMPLETE", "message": "Hearing stages and file exchanges must be completed for all matchups."})
+        issues.append({"code": "HEARINGS_INCOMPLETE", "message": f"Hearing stages and file exchanges must be completed for all {expected_pairs} matchups."})
 
     # 6. Faculty judging complete
-    judging_ok = len(records) == 8 and all(r.get("is_judge_panel_complete") and r.get("panel_score") is not None for r in records)
+    judging_ok = len(records) > 0 and all(r.get("is_judge_panel_complete") and r.get("panel_score") is not None for r in records)
     checklist.append({
         "id": "judging-scores",
         "label": "Faculty Panel Scorecards Submitted",
@@ -308,7 +420,18 @@ def process_round4_standings(
     if not judging_ok:
         issues.append({"code": "JUDGING_INCOMPLETE", "message": "Faculty judging scorecards are missing or incomplete."})
 
-    # 7. Rubric confirmation
+    # 7. Scores locked safeguard
+    scores_locked_ok = len(records) > 0 and all(r.get("is_judge_panel_locked", True) for r in records)
+    checklist.append({
+        "id": "scores-locked",
+        "label": "Faculty Panel Scorecards Locked",
+        "passed": scores_locked_ok,
+        "details": "All judge scorecards must be locked prior to round finalization."
+    })
+    if not scores_locked_ok:
+        issues.append({"code": "SCORES_UNLOCKED", "message": "All judge scorecards must be locked prior to round finalization."})
+
+    # 8. Rubric confirmation
     rubric_confirmed = bool(config.get("is_rubric_confirmed", True))
     checklist.append({
         "id": "rubric-confirmed",
@@ -317,24 +440,26 @@ def process_round4_standings(
         "details": "Official 100-point Legal Battle rubric confirmed."
     })
 
-    # Sort records strictly by pure panel_score descending, then team_number
+    # Sort records primarily by composite final_score descending, then panel_score descending, then team_number ascending
     def sort_key(r):
+        fs = r.get("final_score_breakdown", {}).get("final_score")
         ps = r.get("panel_score")
+        fs_val = fs if fs is not None else (ps if ps is not None else -999999.0)
         ps_val = ps if ps is not None else -999999.0
-        return (-ps_val, r.get("team_number", 999))
+        return (-fs_val, -ps_val, r.get("team_number", 999))
 
     sorted_records = list(records)
     sorted_records.sort(key=sort_key)
 
     current_rank = 1
     for r in sorted_records:
-        if r.get("final_score_breakdown", {}).get("final_score") is not None:
+        if r.get("final_score_breakdown", {}).get("final_score") is not None or r.get("panel_score") is not None:
             r["rank"] = current_rank
             current_rank += 1
         else:
             r["rank"] = None
 
-    # CRITICAL: Under official rules, advancing_teams_count defaults to 8 (NO ELIMINATION)
+    # Advancing teams count
     advancing_count = config.get("advancing_teams_count", R4_ADVANCING_COUNT)
     if advancing_count is None:
         advancing_count = R4_ADVANCING_COUNT

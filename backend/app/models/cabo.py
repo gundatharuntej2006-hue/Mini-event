@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy import (
-    String, Integer, Float, DateTime, ForeignKey,
+    String, Integer, Float, Boolean, DateTime, ForeignKey,
     UniqueConstraint, CheckConstraint, Text
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -124,7 +124,9 @@ class CaboPlayerScorecard(Base):
     placement: Mapped[int] = mapped_column(Integer, nullable=False)
     placement_points: Mapped[float] = mapped_column(Float, nullable=False)
     final_card_hand_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verified_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

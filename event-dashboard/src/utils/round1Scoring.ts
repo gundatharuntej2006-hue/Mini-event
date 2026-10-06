@@ -43,9 +43,23 @@ export function computeMiniRound(
 /**
  * Computes raw total, penalties, adjusted total, and fastest mini-round for a squad.
  */
+export interface ScoringEngineResult {
+  records: TeamRound1Record[];
+  canFinalize: boolean;
+  blockReason?: string;
+  tiesCount: number;
+  completedCount: number;
+  incompleteCount: number;
+  top16CutoffTime?: number | null;
+  top24CutoffTime?: number | null; // Backwards-compatible alias
+}
+
+/**
+ * Computes raw total, penalties, adjusted total, and fastest mini-round for a squad.
+ */
 export function computeTeamTotals(
   record: TeamRound1Record,
-  penaltyPerHintSeconds: number
+  penaltyPerHintSeconds: number = 300
 ): TeamRound1Record {
   const updatedMiniRounds = record.miniRounds.map((mr) =>
     computeMiniRound(mr, penaltyPerHintSeconds)
@@ -63,10 +77,17 @@ export function computeTeamTotals(
   let adjustedTotalSeconds: number | null = null;
   let fastestMiniRoundSeconds: number | null = null;
 
-  totalPenaltySeconds = updatedMiniRounds.reduce(
-    (acc, mr) => acc + (mr.hintPenaltySeconds || 0),
-    0
-  );
+  // Sum hints and additional penalties across gates
+  const hintsCount = updatedMiniRounds.reduce((acc, mr) => acc + (mr.hintsUsed || 0), 0);
+  const hintPenaltiesSeconds = hintsCount * penaltyPerHintSeconds;
+  const phonePenaltiesCount = record.phonePenaltiesCount || updatedMiniRounds.reduce((acc, mr) => acc + (mr.phonePenaltiesCount || 0), 0);
+  const phonePenaltySeconds = phonePenaltiesCount * 600;
+  const separationPenaltiesCount = record.separationPenaltiesCount || updatedMiniRounds.reduce((acc, mr) => acc + (mr.separationPenaltiesCount || 0), 0);
+  const separationPenaltySeconds = separationPenaltiesCount * 300;
+  const clueTamperingDeduction = record.clueTamperingDeduction || 0;
+  const isDisqualified = !!record.isDisqualified;
+
+  totalPenaltySeconds = hintPenaltiesSeconds + phonePenaltySeconds + separationPenaltySeconds;
 
   if (allThreeCompleted) {
     rawTotalSeconds = updatedMiniRounds.reduce(
@@ -84,6 +105,14 @@ export function computeTeamTotals(
     ...record,
     miniRounds: updatedMiniRounds,
     rawTotalSeconds,
+    hintsCount,
+    hintPenaltiesSeconds,
+    phonePenaltiesCount,
+    phonePenaltySeconds,
+    separationPenaltiesCount,
+    separationPenaltySeconds,
+    clueTamperingDeduction,
+    isDisqualified,
     totalPenaltySeconds,
     adjustedTotalSeconds,
     fastestMiniRoundSeconds,
@@ -91,34 +120,28 @@ export function computeTeamTotals(
   };
 }
 
-export interface ScoringEngineResult {
-  records: TeamRound1Record[];
-  canFinalize: boolean;
-  blockReason?: string;
-  tiesCount: number;
-  completedCount: number;
-  incompleteCount: number;
-  top24CutoffTime?: number | null;
-}
-
 /**
- * Main Scoring & Qualification Engine for Round 1.
- * - Only completed teams can be ranked.
- * - Sorts by adjustedTotalSeconds ASC.
+ * Main Scoring & Qualification Engine for Round 1: The ODDyssey Protocol.
+ * - Top 16 qualifiers advance to Round 2 (Cabo).
+ * - Sorts completed teams by adjustedTotalSeconds ASC.
  * - Resolves ties by fastestMiniRoundSeconds ASC.
+ * - Awards rank points: 1st=16, 2nd=15 ... 16th=1, 17th+=0.
  * - Flags unresolved ties for manual review.
- * - Prevents finalization if incomplete or if unresolved tie straddles 24th cutoff.
+ * - Prevents finalization if incomplete or if unresolved tie straddles 16th/17th cutoff.
  */
 export function processRound1Standings(
   records: TeamRound1Record[],
-  penaltyPerHintSeconds: number,
-  isFinalized: boolean
+  penaltyPerHintSeconds: number = 300,
+  isFinalized: boolean = false
 ): ScoringEngineResult {
   // 1. Calculate individual team totals
   const processed = records.map((rec) => computeTeamTotals(rec, penaltyPerHintSeconds));
 
-  const completed = processed.filter((r) => r.isComplete);
-  const incomplete = processed.filter((r) => !r.isComplete);
+  const disqualified = processed.filter((r) => r.isDisqualified);
+  const nonDq = processed.filter((r) => !r.isDisqualified);
+
+  const completed = nonDq.filter((r) => r.isComplete);
+  const incomplete = nonDq.filter((r) => !r.isComplete);
 
   // 2. Sort completed teams
   completed.sort((a, b) => {
@@ -129,7 +152,7 @@ export function processRound1Standings(
       return timeA - timeB;
     }
 
-    // Tie-breaker 1: Fastest single mini-round duration
+    // Tie-breaker 1: Fastest single gate duration
     const fastestA = a.fastestMiniRoundSeconds!;
     const fastestB = b.fastestMiniRoundSeconds!;
     if (fastestA !== fastestB) {
@@ -159,12 +182,12 @@ export function processRound1Standings(
         rank = prev.rank!;
         current.tieRequiresReview = true;
         prev.tieRequiresReview = true;
-        current.tieReason = `Tied with ${prev.teamName} (Adj: ${current.adjustedTotalSeconds}s, Fastest Mini: ${current.fastestMiniRoundSeconds}s)`;
-        prev.tieReason = `Tied with ${current.teamName} (Adj: ${prev.adjustedTotalSeconds}s, Fastest Mini: ${prev.fastestMiniRoundSeconds}s)`;
+        current.tieReason = `Tied with ${prev.teamName} (Adj: ${current.adjustedTotalSeconds}s, Fastest Gate: ${current.fastestMiniRoundSeconds}s)`;
+        prev.tieReason = `Tied with ${current.teamName} (Adj: ${prev.adjustedTotalSeconds}s, Fastest Gate: ${prev.fastestMiniRoundSeconds}s)`;
         tiesCount++;
 
-        // Check if tie crosses or lands on cutoff boundary (rank 24 and rank 25)
-        if (i === 23 || i === 24) {
+        // Check if tie crosses or lands on 16th cutoff boundary (rank 16 and rank 17)
+        if (i === 15 || i === 16) {
           cutoffBoundaryTie = true;
         }
       } else {
@@ -177,17 +200,19 @@ export function processRound1Standings(
     }
 
     current.rank = rank;
+    // Rank points: 1st=16, 2nd=15 ... 16th=1, 17th+=0
+    current.rankPoints = rank <= 16 ? 17 - rank : 0;
 
-    // Determine qualification status
+    // Determine qualification status (Top 16)
     if (isFinalized) {
       current.qualificationStatus =
-        rank <= 24 ? 'Finalized Qualified' : 'Finalized Eliminated';
+        rank <= 16 ? 'Finalized Qualified' : 'Finalized Eliminated';
     } else {
-      if (current.tieRequiresReview && (rank === 24 || rank === 25)) {
+      if (current.tieRequiresReview && (rank === 16 || rank === 17)) {
         current.qualificationStatus = 'Tie Review Needed';
       } else {
         current.qualificationStatus =
-          rank <= 24 ? 'Provisional Qualified' : 'Provisional Eliminated';
+          rank <= 16 ? 'Provisional Qualified' : 'Provisional Eliminated';
       }
     }
   }
@@ -195,12 +220,22 @@ export function processRound1Standings(
   // Handle incomplete teams
   for (const inc of incomplete) {
     inc.rank = null;
+    inc.rankPoints = 0;
     inc.tieRequiresReview = false;
     inc.tieReason = undefined;
     inc.qualificationStatus = 'Incomplete';
   }
 
-  const allRecords = [...completed, ...incomplete];
+  // Handle disqualified teams
+  for (const dq of disqualified) {
+    dq.rank = null;
+    dq.rankPoints = 0;
+    dq.tieRequiresReview = false;
+    dq.tieReason = dq.disqualificationReason || 'Disqualified';
+    dq.qualificationStatus = 'Disqualified';
+  }
+
+  const allRecords = [...completed, ...incomplete, ...disqualified];
 
   // Finalization readiness evaluation
   let canFinalize = true;
@@ -211,15 +246,15 @@ export function processRound1Standings(
     blockReason = `Tournament has only ${allRecords.length} registered squads (expected 32).`;
   } else if (incomplete.length > 0) {
     canFinalize = false;
-    blockReason = `Results are incomplete: ${incomplete.length} squad(s) have not completed all three mini-rounds.`;
+    blockReason = `Results are incomplete: ${incomplete.length} squad(s) have not completed all three gates.`;
   } else if (cutoffBoundaryTie) {
     canFinalize = false;
     blockReason =
-      'Unresolved tie exists at the 24th qualification cutoff boundary. Manual review required by event marshals.';
+      'Unresolved tie exists at the 16th qualification cutoff boundary. Manual review required by event marshals.';
   }
 
-  const top24CutoffTime =
-    completed.length >= 24 ? completed[23].adjustedTotalSeconds : null;
+  const top16CutoffTime =
+    completed.length >= 16 ? completed[15].adjustedTotalSeconds : null;
 
   return {
     records: allRecords,
@@ -228,6 +263,7 @@ export function processRound1Standings(
     tiesCount,
     completedCount: completed.length,
     incompleteCount: incomplete.length,
-    top24CutoffTime,
+    top16CutoffTime,
+    top24CutoffTime: top16CutoffTime,
   };
 }

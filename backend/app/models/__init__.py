@@ -15,7 +15,7 @@ from app.models.round_models import (
     FinaleScorecard,
     FinaleAgentVerdict,
 )
-from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel
+from app.models.round1 import Round1ConfigModel, MiniRoundTimingModel, GateCheckinModel
 from app.models.round2 import CaboConfigModel, CaboGameModel, CaboPlacementModel, default_cabo_point_table
 from app.models.round3 import (
     BlackMarketConfigModel,

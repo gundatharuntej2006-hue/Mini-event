@@ -10,106 +10,66 @@ import {
 } from '../utils/round4Scoring';
 
 /**
- * Generates initial demo pairings for the 8 Round 4 finalist teams.
- * Pairs teams 2-by-2 into 4 matchups with official fictional case placeholders.
+ * Generates initial pairings for the 4 Round 4 finalist teams.
+ * Pairs teams into 2 semifinal matchups:
+ * Matchup 1: Semifinal 1 (Seed 1 vs Seed 4)
+ * Matchup 2: Semifinal 2 (Seed 2 vs Seed 3)
  */
 export function generateInitialRound4Pairs(teams: Team[]): TeamPair[] {
-  const top8 = teams.slice(0, 8);
+  const top4 = teams.slice(0, 4);
   const baseTime = new Date('2026-09-19T16:00:00Z').getTime();
 
   const caseTemplates = [
     {
       id: 'CASE-401',
-      name: 'State vs. CyberCorp Protocol Breach (Data Theft Liability)',
+      name: 'Semifinal 1: State vs. CyberCorp Protocol Breach (Data Theft Liability)',
       details: 'Discovery docket Ref: CC-2026-BMSIT. Focus on negligence and encrypted payload attribution.',
     },
     {
       id: 'CASE-402',
-      name: 'Autonomous Systems Labs vs. Department of Transportation',
+      name: 'Semifinal 2: Autonomous Systems Labs vs. Department of Transportation',
       details: 'Algorithmic vehicle collision during closed-course telemetry trials.',
-    },
-    {
-      id: 'CASE-403',
-      name: 'In Re Digital Asset Arbitrage & Market Manipulation',
-      details: 'Offshore token liquidity pool draining via flash-loan exploit contracts.',
-    },
-    {
-      id: 'CASE-404',
-      name: 'Campus Research IP Dispute: Quantum Cipher Key Rights',
-      details: 'Trade secret misappropriation claim by former principal student investigators.',
     },
   ];
 
   const pairs: TeamPair[] = [];
 
-  for (let i = 0; i < 4; i++) {
-    const teamA = top8[i * 2];
-    const teamB = top8[i * 2 + 1];
-    const cTemplate = caseTemplates[i];
+  // Matchup 1: Seed 1 vs Seed 4
+  // Matchup 2: Seed 2 vs Seed 3
+  const seedPairings = [
+    { teamA: top4[0], teamB: top4[3], cTemplate: caseTemplates[0] },
+    { teamA: top4[1], teamB: top4[2], cTemplate: caseTemplates[1] },
+  ];
 
+  for (let i = 0; i < 2; i++) {
+    const { teamA, teamB, cTemplate } = seedPairings[i];
     const stages = createInitialPairStages();
 
-    // Set realistic stage progression:
-    // Pair 1 & Pair 2: All 5 stages complete
-    // Pair 3: prep_1, hearing_1, file_exchange done, prep_2 in progress
-    // Pair 4: prep_1, hearing_1 done, file_exchange in progress
-    if (i < 2) {
-      stages.prep_1.status = 'completed';
-      stages.prep_1.startedAt = new Date(baseTime).toISOString();
-      stages.prep_1.endedAt = new Date(baseTime + 40 * 60000).toISOString();
-      stages.prep_1.actualDurationSeconds = 2400;
+    // Stages progression for demo
+    stages.prep_1.status = 'completed';
+    stages.prep_1.startedAt = new Date(baseTime).toISOString();
+    stages.prep_1.endedAt = new Date(baseTime + 40 * 60000).toISOString();
+    stages.prep_1.actualDurationSeconds = 2400;
 
-      stages.hearing_1.status = 'completed';
-      stages.hearing_1.startedAt = new Date(baseTime + 42 * 60000).toISOString();
-      stages.hearing_1.endedAt = new Date(baseTime + 62 * 60000).toISOString();
-      stages.hearing_1.actualDurationSeconds = 1200;
+    stages.hearing_1.status = 'completed';
+    stages.hearing_1.startedAt = new Date(baseTime + 42 * 60000).toISOString();
+    stages.hearing_1.endedAt = new Date(baseTime + 62 * 60000).toISOString();
+    stages.hearing_1.actualDurationSeconds = 1200;
 
-      stages.file_exchange.status = 'completed';
-      stages.file_exchange.startedAt = new Date(baseTime + 63 * 60000).toISOString();
-      stages.file_exchange.endedAt = new Date(baseTime + 68 * 60000).toISOString();
-      stages.file_exchange.actualDurationSeconds = 300;
+    stages.file_exchange.status = 'completed';
+    stages.file_exchange.startedAt = new Date(baseTime + 63 * 60000).toISOString();
+    stages.file_exchange.endedAt = new Date(baseTime + 68 * 60000).toISOString();
+    stages.file_exchange.actualDurationSeconds = 300;
 
-      stages.prep_2.status = 'completed';
-      stages.prep_2.startedAt = new Date(baseTime + 70 * 60000).toISOString();
-      stages.prep_2.endedAt = new Date(baseTime + 95 * 60000).toISOString();
-      stages.prep_2.actualDurationSeconds = 1500;
+    stages.prep_2.status = 'completed';
+    stages.prep_2.startedAt = new Date(baseTime + 70 * 60000).toISOString();
+    stages.prep_2.endedAt = new Date(baseTime + 95 * 60000).toISOString();
+    stages.prep_2.actualDurationSeconds = 1500;
 
-      stages.hearing_2.status = 'completed';
-      stages.hearing_2.startedAt = new Date(baseTime + 97 * 60000).toISOString();
-      stages.hearing_2.endedAt = new Date(baseTime + 117 * 60000).toISOString();
-      stages.hearing_2.actualDurationSeconds = 1200;
-    } else if (i === 2) {
-      stages.prep_1.status = 'completed';
-      stages.prep_1.startedAt = new Date(baseTime).toISOString();
-      stages.prep_1.endedAt = new Date(baseTime + 40 * 60000).toISOString();
-      stages.prep_1.actualDurationSeconds = 2400;
-
-      stages.hearing_1.status = 'completed';
-      stages.hearing_1.startedAt = new Date(baseTime + 42 * 60000).toISOString();
-      stages.hearing_1.endedAt = new Date(baseTime + 63 * 60000).toISOString();
-      stages.hearing_1.actualDurationSeconds = 1260;
-
-      stages.file_exchange.status = 'completed';
-      stages.file_exchange.startedAt = new Date(baseTime + 64 * 60000).toISOString();
-      stages.file_exchange.endedAt = new Date(baseTime + 69 * 60000).toISOString();
-      stages.file_exchange.actualDurationSeconds = 300;
-
-      stages.prep_2.status = 'in_progress';
-      stages.prep_2.startedAt = new Date(baseTime + 70 * 60000).toISOString();
-    } else {
-      stages.prep_1.status = 'completed';
-      stages.prep_1.startedAt = new Date(baseTime).toISOString();
-      stages.prep_1.endedAt = new Date(baseTime + 40 * 60000).toISOString();
-      stages.prep_1.actualDurationSeconds = 2400;
-
-      stages.hearing_1.status = 'completed';
-      stages.hearing_1.startedAt = new Date(baseTime + 42 * 60000).toISOString();
-      stages.hearing_1.endedAt = new Date(baseTime + 62 * 60000).toISOString();
-      stages.hearing_1.actualDurationSeconds = 1200;
-
-      stages.file_exchange.status = 'in_progress';
-      stages.file_exchange.startedAt = new Date(baseTime + 65 * 60000).toISOString();
-    }
+    stages.hearing_2.status = 'completed';
+    stages.hearing_2.startedAt = new Date(baseTime + 97 * 60000).toISOString();
+    stages.hearing_2.endedAt = new Date(baseTime + 117 * 60000).toISOString();
+    stages.hearing_2.actualDurationSeconds = 1200;
 
     pairs.push({
       pairId: `pair-${i + 1}`,
@@ -127,16 +87,16 @@ export function generateInitialRound4Pairs(teams: Team[]): TeamPair[] {
         side: 'Prosecution / Plaintiff',
         hasReceivedCaseFile: true,
         caseFileReceivedAt: new Date(baseTime - 300000).toISOString(),
-        hasReceivedOpposingFile: i < 3,
-        opposingFileReceivedAt: i < 3 ? new Date(baseTime + 68 * 60000).toISOString() : null,
+        hasReceivedOpposingFile: true,
+        opposingFileReceivedAt: new Date(baseTime + 68 * 60000).toISOString(),
       },
       teamBAssignment: {
         teamId: teamB ? teamB.id : '',
         side: 'Defense / Respondent',
         hasReceivedCaseFile: true,
         caseFileReceivedAt: new Date(baseTime - 300000).toISOString(),
-        hasReceivedOpposingFile: i < 3,
-        opposingFileReceivedAt: i < 3 ? new Date(baseTime + 68 * 60000).toISOString() : null,
+        hasReceivedOpposingFile: true,
+        opposingFileReceivedAt: new Date(baseTime + 68 * 60000).toISOString(),
       },
       stages,
       resourcePersonId: `rp-${i + 1}`,
@@ -157,8 +117,6 @@ export function generateInitialRound4ResourcePersons(
   const rpNames = [
     'Adv. Rajesh Menon (Cyber Law Counsel)',
     'Dr. Aruna Swamy (Autonomous Robotics Expert)',
-    'Prof. K. N. Rao (Cryptographic Financial Systems)',
-    'Adv. Meera Sen (Intellectual Property Specialist)',
   ];
 
   pairs.forEach((p, idx) => {
@@ -166,13 +124,13 @@ export function generateInitialRound4ResourcePersons(
     records[rpId] = {
       id: rpId,
       pairId: p.pairId,
-      nameOrIdentifier: rpNames[idx] || `Resource Person ${idx + 1} [TBD]`,
+      nameOrIdentifier: rpNames[idx] || `Resource Person ${idx + 1}`,
       assignedCaseName: p.caseName,
       questions: [
         {
           id: `q-${idx + 1}-1`,
           teamId: p.teamAId || '',
-          questionText: 'Clarification regarding server logs and server clock drift during file transfer.',
+          questionText: 'Clarification regarding server logs and clock drift during file transfer.',
           stage: 'prep_1',
           askedAt: new Date('2026-09-19T16:15:00Z').toISOString(),
           notes: 'Witness answered confirming 14-second NTP variance.',
@@ -187,7 +145,7 @@ export function generateInitialRound4ResourcePersons(
         },
       ],
       notes: 'Resource person available for preparation cross-examination.',
-      isQuestioningComplete: idx < 2,
+      isQuestioningComplete: true,
     };
   });
 
@@ -195,35 +153,30 @@ export function generateInitialRound4ResourcePersons(
 }
 
 /**
- * Generates initial demo Judge scorecards for the 8 teams.
+ * Generates initial demo Judge scorecards for the 4 teams.
  */
 export function generateInitialRound4JudgeScores(
   teams: Team[]
 ): Record<string, JudgeScoreRecord[]> {
   const scores: Record<string, JudgeScoreRecord[]> = {};
-  const top8 = teams.slice(0, 8);
+  const top4 = teams.slice(0, 4);
 
-  // 2 sample faculty judges
+  // 2 faculty judges
   const judges = [
     { id: 'judge-1', name: 'Prof. K. Venkatesh (Faculty Bench Chair)' },
     { id: 'judge-2', name: 'Adv. Sunita Rao (External Senior Advocate)' },
   ];
 
-  // Base rubric point spreads (suggested 100-pt rubric)
-  // [logical(20), evidence(20), rebuttal(20), resource(15), presentation(15), time(10)]
+  // Official 100-pt rubric spreads:
+  // logical(20), evidence(20), rebuttal(20), resource(15), presentation(15), time(10)
   const sampleRubrics = [
     { l: 19, e: 18, r: 19, q: 14, p: 14, t: 9 }, // Total 93
     { l: 18, e: 18, r: 18, q: 14, p: 14, t: 9 }, // Total 91
     { l: 18, e: 17, r: 18, q: 13, p: 14, t: 9 }, // Total 89
     { l: 17, e: 17, r: 17, q: 13, p: 14, t: 8 }, // Total 86
-    { l: 17, e: 16, r: 17, q: 13, p: 13, t: 8 }, // Total 84
-    { l: 16, e: 16, r: 16, q: 12, p: 13, t: 8 }, // Total 81
-    { l: 15, e: 15, r: 15, q: 12, p: 12, t: 7 }, // Total 76
-    { l: 14, e: 15, r: 14, q: 11, p: 12, t: 7 }, // Total 73
   ];
 
-  top8.forEach((team, idx) => {
-    // Teams 0-5 have complete submitted scores; Teams 6-7 have partial/pending
+  top4.forEach((team, idx) => {
     const s1 = sampleRubrics[idx] || sampleRubrics[0];
     const s2 = {
       l: Math.max(0, s1.l - (idx % 2)),
@@ -254,7 +207,10 @@ export function generateInitialRound4JudgeScores(
       totalScore: total1,
       comments: 'Strong legal precedents cited; articulate rebuttal presentation.',
       submittedAt: new Date('2026-09-19T17:15:00Z').toISOString(),
-      isSubmitted: idx < 6,
+      isSubmitted: true,
+      isLocked: true,
+      lockedAt: new Date('2026-09-19T17:16:00Z').toISOString(),
+      lockedBy: judges[0].name,
     });
 
     // Judge 2 scorecard
@@ -275,7 +231,10 @@ export function generateInitialRound4JudgeScores(
       totalScore: total2,
       comments: 'Sound evidentiary handling. Sharp cross-examination of resource person.',
       submittedAt: new Date('2026-09-19T17:20:00Z').toISOString(),
-      isSubmitted: idx < 5,
+      isSubmitted: true,
+      isLocked: true,
+      lockedAt: new Date('2026-09-19T17:21:00Z').toISOString(),
+      lockedBy: judges[1].name,
     });
 
     scores[team.id] = teamScores;
@@ -285,25 +244,45 @@ export function generateInitialRound4JudgeScores(
 }
 
 /**
- * Generates initial demo Secret Agent guessing entries for the 8 teams.
- * NOTE: Confidential identities and codes are strictly protected and never exposed.
+ * Generates initial demo Secret Agent guessing entries for the 4 teams.
+ * Rules: 1-5 guesses per team. Correct = +30, Incorrect = -20, No guess = 0.
+ * NOTE: Confidential identities are strictly shielded.
  */
 export function generateInitialRound4AgentGuesses(
   teams: Team[]
 ): Record<string, AgentGuessingRecord> {
   const records: Record<string, AgentGuessingRecord> = {};
-  const top8 = teams.slice(0, 8);
+  const top4 = teams.slice(0, 4);
 
-  top8.forEach((team, idx) => {
-    const isCorrect = idx < 5;
+  top4.forEach((team, idx) => {
+    // Team 0: 2 guesses (2 correct) -> +60
+    // Team 1: 1 guess (1 correct) -> +30
+    // Team 2: 2 guesses (1 correct, 1 wrong) -> +10
+    // Team 3: 1 guess (1 wrong) -> -20
+    const guessConfigs = [
+      { total: 2, correct: 2, wrong: 0, pts: 60 },
+      { total: 1, correct: 1, wrong: 0, pts: 30 },
+      { total: 2, correct: 1, wrong: 1, pts: 10 },
+      { total: 1, correct: 0, wrong: 1, pts: -20 },
+    ];
+    const cfg = guessConfigs[idx] || guessConfigs[0];
+
     records[team.id] = {
       teamId: team.id,
-      outcome: isCorrect ? 'correct' : idx === 5 ? 'incorrect' : 'pending',
-      pointsAwarded: isCorrect ? 25 : idx === 5 ? 0 : null,
-      isVerified: idx < 6,
-      verifiedBy: idx < 6 ? 'Chief-Marshal' : null,
-      verifiedAt: idx < 6 ? new Date('2026-09-19T17:00:00Z').toISOString() : null,
-      notes: idx < 6 ? 'Physical suspect accusation envelope opened and audited.' : 'Pending submission verification.',
+      outcome: cfg.wrong === 0 ? 'correct' : cfg.correct > 0 ? 'correct' : 'incorrect',
+      pointsAwarded: cfg.pts,
+      isVerified: true,
+      verifiedBy: 'Chief-Marshal',
+      verifiedAt: new Date('2026-09-19T17:00:00Z').toISOString(),
+      notes: `Audited ${cfg.total} suspect accusation(s): ${cfg.correct} confirmed correct, ${cfg.wrong} confirmed incorrect.`,
+      totalGuesses: cfg.total,
+      correctGuesses: cfg.correct,
+      wrongGuesses: cfg.wrong,
+      guesses: Array.from({ length: cfg.total }, (_, gIdx) => ({
+        suspectId: `suspect-${idx}-${gIdx + 1}`,
+        suspectName: `Suspect Agent ${gIdx + 1}`,
+        isCorrect: gIdx < cfg.correct,
+      })),
     };
   });
 

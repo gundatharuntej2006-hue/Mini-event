@@ -8,7 +8,7 @@ Manages:
 - Sealed-bid auction creation, private bidding, and organizer resolution
 - Mandatory Final Code qualification gate (checked FIRST before ranking)
 - Code-less contingency evaluation (if >4 squads lack verified final code)
-- Top 8 advancement engine based on remaining wallet balances
+- Top 6 advancement engine based on remaining wallet balances
 - Wallet balance preservation for Grand Finale 10% carryover
 - Complete audit logging and tie-break review integration
 """
@@ -29,21 +29,32 @@ from app.models.black_market import (
     BidStatus,
 )
 from app.models.team import Team, TeamStatus
-from app.models.wallet import TeamWallet, TransactionType
+from app.models.wallet import TeamWallet, WalletTransaction, TransactionType
 from app.models.code_hunt import FinalCodeRecord, FragmentStatus
+from app.models.agent import SecretAgentDossier, SecretAgentTask, AgentTaskStatus
+from app.models.cabo import CaboPlayerScorecard
 from app.models.round3 import BlackMarketConfigModel, default_hidden_code_config
 from app.models.round_models import RoundState
 from app.models.progression import RoundQualification, TieReview
 from app.core.constants import (
     BLACK_MARKET_SUGGESTED_PRICES,
+    BLACK_MARKET_SECRET_CODE_1_PRICE_SUGGESTED,
+    BLACK_MARKET_SECRET_CODE_2_PRICE_SUGGESTED,
+    BLACK_MARKET_POWERUP_1_PRICE_SUGGESTED,
+    BLACK_MARKET_POWERUP_2_PRICE_SUGGESTED,
     BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED,
     BLACK_MARKET_PREP_PRICE_SUGGESTED,
     BLACK_MARKET_WITNESS_PRICE_SUGGESTED,
     BLACK_MARKET_AGENT_INTEL_PRICE_SUGGESTED,
     R3_QUALIFIERS,
     R2_QUALIFIERS,
+    R1_RANK_POINTS_MAP,
+    AGENT_TASK_REWARD,
+    STARTING_WALLET_BALANCE,
+    MISSING_FRAGMENT_PENALTY,
 )
 from app.services import wallet as wallet_service
+from app.services.wallet import InsufficientFundsError
 from app.services import code_hunt_service
 from app.services.audit_service import log_audit_event
 from app.services.progression_service import is_round_finalized, get_eligible_team_ids, record_round_finalization
@@ -103,9 +114,42 @@ class RoundFinalizationError(BlackMarketError):
 # ==============================================================================
 DEFAULT_CATALOG = [
     {
+        "asset_type": "SECRET_CODE_ITEM_1",
+        "name": "Secret Code Item 1",
+        "description": "First half of the qualification code. Must be combined with Secret Code Item 2 to form the required key for Round 4 qualification.",
+        "suggested_price": BLACK_MARKET_SECRET_CODE_1_PRICE_SUGGESTED,
+        "category": "GATE_REQUIREMENT",
+        "requires_details": False,
+    },
+    {
+        "asset_type": "SECRET_CODE_ITEM_2",
+        "name": "Secret Code Item 2",
+        "description": "Second half of the qualification code. Must be combined with Secret Code Item 1 to form the required key for Round 4 qualification.",
+        "suggested_price": BLACK_MARKET_SECRET_CODE_2_PRICE_SUGGESTED,
+        "category": "GATE_REQUIREMENT",
+        "requires_details": False,
+    },
+    {
+        "asset_type": "POWERUP_1_R4",
+        "name": "Powerup 1 for Round 4",
+        "description": "Strategic courtroom advantage carried forward into Round 4: The Legal Battle (grants bonus preparation time / priority evidence filing).",
+        "suggested_price": BLACK_MARKET_POWERUP_1_PRICE_SUGGESTED,
+        "category": "TACTICAL_ADVANTAGE",
+        "requires_details": False,
+    },
+    {
+        "asset_type": "POWERUP_2_R4",
+        "name": "Powerup 2 for Round 4",
+        "description": "Tactical courtroom advantage carried forward into Round 4: The Legal Battle (grants additional cross-examination question / rebuttal right).",
+        "suggested_price": BLACK_MARKET_POWERUP_2_PRICE_SUGGESTED,
+        "category": "TACTICAL_ADVANTAGE",
+        "requires_details": False,
+    },
+    # Backward compatibility aliases
+    {
         "asset_type": "MISSING_CODE_FRAGMENT",
         "name": "Missing Code Fragment Recovery",
-        "description": "Recovers 1 missing physical QR code fragment (Fragment 1 or Fragment 2) required for the Final Code gate.",
+        "description": "Recovers 1 missing physical QR code fragment required for the Final Code gate.",
         "suggested_price": BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED,
         "category": "GATE_REQUIREMENT",
         "requires_details": True,
@@ -177,7 +221,167 @@ def get_round3_eligible_teams(db: Session) -> List[Team]:
 
 
 # ==============================================================================
-# ASSET PURCHASES
+# STARTING BALANCE BREAKDOWN & SYNC
+# ==============================================================================
+def calculate_team_starting_balance(db: Session, team_id: str) -> Dict[str, Any]:
+    """
+    Official Round 3 Starting Balance calculation for a qualified squad:
+      Starting Balance = 1000 + R1 rank points + R2 Cabo score + (verified Secret Agent tasks * 50)
+    CRITICAL: R2 Cabo score is used DIRECTLY (0 to 75 points raw). DO NOT multiply by 10.
+    """
+    base_balance = float(STARTING_WALLET_BALANCE)  # 1000.0
+
+    # 1. R1 rank points (1st=16, 2nd=15 ... 16th=1, 17th+=0)
+    r1_qual = (
+        db.query(RoundQualification)
+        .filter(RoundQualification.round_number == 1, RoundQualification.team_id == team_id)
+        .first()
+    )
+    r1_rank = r1_qual.rank if r1_qual else None
+    if r1_rank is None:
+        from app.services.round1_service import get_round1_overview
+        r1_overview = get_round1_overview(db)
+        team_rec = next((r for r in r1_overview.get("records", []) if r.get("team_id") == team_id), None)
+        if team_rec:
+            r1_rank = team_rec.get("rank")
+
+    r1_rank_points = float(R1_RANK_POINTS_MAP.get(r1_rank, 0)) if r1_rank else 0.0
+
+    # 2. R2 Cabo score (0 to 75 points raw, NEVER multiplied by 10)
+    scorecards = (
+        db.query(CaboPlayerScorecard)
+        .filter(CaboPlayerScorecard.team_id == team_id)
+        .all()
+    )
+    r2_cabo_score = float(sum(sc.placement_points for sc in scorecards))
+
+    # 3. Verified Secret Agent tasks (+50 per verified task)
+    dossier = (
+        db.query(SecretAgentDossier)
+        .filter(SecretAgentDossier.team_id == team_id)
+        .first()
+    )
+    verified_agent_tasks = 0
+    if dossier:
+        verified_agent_tasks = (
+            db.query(SecretAgentTask)
+            .filter(
+                SecretAgentTask.dossier_id == dossier.id,
+                SecretAgentTask.status == AgentTaskStatus.VERIFIED
+            )
+            .count()
+        )
+    agent_task_bonus = float(verified_agent_tasks * AGENT_TASK_REWARD)
+
+    total_starting_balance = base_balance + r1_rank_points + r2_cabo_score + agent_task_bonus
+
+    return {
+        "team_id": team_id,
+        "base_balance": base_balance,
+        "r1_rank": r1_rank,
+        "r1_rank_points": r1_rank_points,
+        "r2_cabo_score": r2_cabo_score,
+        "verified_agent_tasks": verified_agent_tasks,
+        "agent_task_bonus": agent_task_bonus,
+        "total_starting_balance": total_starting_balance,
+    }
+
+
+def sync_round3_starting_balances(db: Session, actor: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Synchronizes the official Starting Balance for all Round 3 participating squads.
+    Ensures wallet ledger transactions reflect:
+      - Canonical Base Balance (1000.0)
+      - Round 1 Rank Points
+      - Round 2 Cabo Score (raw score, not multiplied)
+      - Verified Secret Agent tasks (+50 each)
+    """
+    teams = get_round3_eligible_teams(db)
+    synced = []
+
+    for team in teams:
+        breakdown = calculate_team_starting_balance(db, team.id)
+        wallet = wallet_service.get_or_create_wallet(db, team.id)
+
+        # Check existing transaction types
+        txs = db.query(WalletTransaction).filter(WalletTransaction.team_id == team.id).all()
+        has_r1_tx = any(t.transaction_type == TransactionType.ROUND1_REWARD for t in txs)
+        has_r2_tx = any(t.transaction_type == TransactionType.ROUND2_REWARD for t in txs)
+        has_agent_tx = any(t.transaction_type == TransactionType.AGENT_TASK_REWARD for t in txs)
+
+        now = datetime.now(timezone.utc)
+
+        # Add R1 rank reward if not present and > 0
+        if not has_r1_tx and breakdown["r1_rank_points"] > 0:
+            bal_before = float(wallet.current_balance)
+            bal_after = bal_before + breakdown["r1_rank_points"]
+            wallet.current_balance = bal_after
+            wallet.total_earned = float(wallet.total_earned) + breakdown["r1_rank_points"]
+            tx_r1 = WalletTransaction(
+                wallet_id=wallet.id,
+                team_id=team.id,
+                transaction_type=TransactionType.ROUND1_REWARD,
+                amount=breakdown["r1_rank_points"],
+                balance_before=bal_before,
+                balance_after=bal_after,
+                reference_type="ROUND_1",
+                reference_id=f"r1-{team.id}",
+                description=f"Round 1 Rank Points (Rank #{breakdown['r1_rank']}: +{breakdown['r1_rank_points']:.0f} pts)",
+                created_by=actor or "system",
+                created_at=now,
+            )
+            db.add(tx_r1)
+
+        # Add R2 Cabo reward if not present and > 0
+        if not has_r2_tx and breakdown["r2_cabo_score"] > 0:
+            bal_before = float(wallet.current_balance)
+            bal_after = bal_before + breakdown["r2_cabo_score"]
+            wallet.current_balance = bal_after
+            wallet.total_earned = float(wallet.total_earned) + breakdown["r2_cabo_score"]
+            tx_r2 = WalletTransaction(
+                wallet_id=wallet.id,
+                team_id=team.id,
+                transaction_type=TransactionType.ROUND2_REWARD,
+                amount=breakdown["r2_cabo_score"],
+                balance_before=bal_before,
+                balance_after=bal_after,
+                reference_type="ROUND_2",
+                reference_id=f"r2-{team.id}",
+                description=f"Round 2 Cabo Placement Points (+{breakdown['r2_cabo_score']:.0f} pts)",
+                created_by=actor or "system",
+                created_at=now,
+            )
+            db.add(tx_r2)
+
+        # Add Agent task reward if not present and > 0
+        if not has_agent_tx and breakdown["agent_task_bonus"] > 0:
+            bal_before = float(wallet.current_balance)
+            bal_after = bal_before + breakdown["agent_task_bonus"]
+            wallet.current_balance = bal_after
+            wallet.total_earned = float(wallet.total_earned) + breakdown["agent_task_bonus"]
+            tx_ag = WalletTransaction(
+                wallet_id=wallet.id,
+                team_id=team.id,
+                transaction_type=TransactionType.AGENT_TASK_REWARD,
+                amount=breakdown["agent_task_bonus"],
+                balance_before=bal_before,
+                balance_after=bal_after,
+                reference_type="AGENT_TASK",
+                reference_id=f"agent-{team.id}",
+                description=f"Secret Agent Tasks ({breakdown['verified_agent_tasks']} verified: +{breakdown['agent_task_bonus']:.0f} pts)",
+                created_by=actor or "system",
+                created_at=now,
+            )
+            db.add(tx_ag)
+
+        synced.append(breakdown)
+
+    db.commit()
+    return synced
+
+
+# ==============================================================================
+# ASSET PURCHASES & TWO-ORGANIZER APPROVAL
 # ==============================================================================
 def purchase_market_asset(
     db: Session,
@@ -189,9 +393,14 @@ def purchase_market_asset(
     actor: Optional[str] = None,
 ) -> BlackMarketPurchase:
     """
-    Safely executes a Black Market asset purchase for a qualified squad.
-    - If asset_type is MISSING_CODE_FRAGMENT: automatically invokes code_hunt_service.recover_missing_fragment.
-    - For other assets: debits points via wallet_service.debit_black_market_purchase, logs purchase, maintains audit trail.
+    Safely initiates a Black Market asset purchase for a qualified squad.
+    Enforces:
+    - Team must be eligible and market open.
+    - Prevents overdrafts: validates team wallet balance >= total_price.
+    - TWO-ORGANIZER APPROVAL: Deductions require two distinct organizer approvals before
+      the official wallet deduction takes effect.
+    - If details provide dual organizer signatures at submission time, both are recorded
+      and the purchase is approved and debited immediately.
     """
     if quantity < 1:
         raise InvalidAssetError("Purchase quantity must be at least 1.")
@@ -212,34 +421,6 @@ def purchase_market_asset(
 
     clean_asset = asset_type.upper().strip()
 
-    # Route Missing Fragment Recovery to dedicated Code Hunt service
-    if clean_asset in ("MISSING_CODE_FRAGMENT", "CODE_FRAGMENT", "FRAGMENT"):
-        frag_num = 1
-        if details:
-            frag_num = int(details.get("fragment_number") or details.get("fragmentNumber") or 1)
-
-        # Recover fragment (handles wallet debit internally)
-        code_hunt_service.recover_missing_fragment(
-            db=db,
-            team_id=team_id,
-            fragment_number=frag_num,
-            price=price,
-            actor=actor,
-            recovered_value=details.get("recovered_value") if details else None
-        )
-
-        # Retrieve the created purchase record
-        bmp = (
-            db.query(BlackMarketPurchase)
-            .filter(
-                BlackMarketPurchase.team_id == team_id,
-                BlackMarketPurchase.asset_type == BlackMarketAssetType.MISSING_CODE_FRAGMENT
-            )
-            .order_by(BlackMarketPurchase.purchased_at.desc())
-            .first()
-        )
-        return bmp
-
     # Map asset type enum
     try:
         mapped_asset_type = BlackMarketAssetType[clean_asset]
@@ -254,47 +435,290 @@ def purchase_market_asset(
         unit_price = BLACK_MARKET_SUGGESTED_PRICES.get(suggested_key, 200.0)
 
     total_price = unit_price * quantity
+
+    # Verify wallet has sufficient funds to prevent overdraft
+    wallet = wallet_service.get_or_create_wallet(db, team_id)
+    if float(wallet.current_balance) < total_price:
+        raise InsufficientFundsError(
+            float(wallet.current_balance),
+            total_price,
+            f"Insufficient wallet balance ({wallet.current_balance:.1f} pts) for purchase of {total_price:.1f} pts."
+        )
+
     purchase_ref = f"bmp-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
 
-    # Execute atomic wallet debit
-    tx = wallet_service.debit_black_market_purchase(
-        db=db,
-        team_id=team_id,
-        amount=total_price,
-        purchase_id=purchase_ref,
-        asset_description=f"{clean_asset} (x{quantity})",
-        created_by=actor,
-        notes=f"Purchased {quantity}x {clean_asset} at {unit_price:.1f} pts/unit"
-    )
+    # Check for immediate dual approval in details
+    second_org = details.get("second_organizer") or details.get("second_organizer_id") if details else None
+    auto_dual_approved = bool(actor and second_org and actor != second_org)
 
-    # Record purchase ledger
-    bmp = BlackMarketPurchase(
-        id=purchase_ref,
-        team_id=team_id,
-        asset_type=mapped_asset_type,
-        price=total_price,
-        quantity=quantity,
-        transaction_id=tx.id,
-        status=PurchaseStatus.COMPLETED,
-        details=details or {},
-        purchased_by=actor
-    )
+    if auto_dual_approved:
+        # Atomic wallet debit immediately
+        tx = wallet_service.debit_black_market_purchase(
+            db=db,
+            team_id=team_id,
+            amount=total_price,
+            purchase_id=purchase_ref,
+            asset_description=f"{clean_asset} (x{quantity})",
+            created_by=second_org,
+            notes=f"Dual approved by {actor} and {second_org}"
+        )
+        bmp = BlackMarketPurchase(
+            id=purchase_ref,
+            team_id=team_id,
+            asset_type=mapped_asset_type,
+            price=total_price,
+            quantity=quantity,
+            transaction_id=tx.id,
+            status=PurchaseStatus.COMPLETED,
+            approval_status="APPROVED",
+            first_approved_by=actor,
+            first_approved_at=now,
+            second_approved_by=second_org,
+            second_approved_at=now,
+            details=details or {},
+            purchased_by=actor,
+            purchased_at=now,
+            notes=f"Dual-approved purchase executed by {actor} & {second_org}"
+        )
+        # If code fragment or secret code item purchase, update fragment in code hunt record
+        if mapped_asset_type in (BlackMarketAssetType.MISSING_CODE_FRAGMENT, BlackMarketAssetType.SECRET_CODE_ITEM_1, BlackMarketAssetType.SECRET_CODE_ITEM_2):
+            frag_details = dict(details or {})
+            if mapped_asset_type == BlackMarketAssetType.SECRET_CODE_ITEM_1:
+                frag_details["fragment_number"] = 1
+            elif mapped_asset_type == BlackMarketAssetType.SECRET_CODE_ITEM_2:
+                frag_details["fragment_number"] = 2
+            _apply_purchased_fragment(db, team_id, frag_details)
+    else:
+        # Created in PENDING_APPROVAL status: awaits two-organizer approval
+        bmp = BlackMarketPurchase(
+            id=purchase_ref,
+            team_id=team_id,
+            asset_type=mapped_asset_type,
+            price=total_price,
+            quantity=quantity,
+            transaction_id=None,
+            status=PurchaseStatus.PENDING,
+            approval_status="PARTIALLY_APPROVED" if actor else "PENDING_APPROVAL",
+            first_approved_by=actor,
+            first_approved_at=now if actor else None,
+            second_approved_by=None,
+            second_approved_at=None,
+            details=details or {},
+            purchased_by=actor,
+            purchased_at=now,
+            notes="Awaiting second organizer approval signature" if actor else "Awaiting two organizer approval signatures"
+        )
+
     db.add(bmp)
-
     log_audit_event(
         db=db,
-        action="BLACK_MARKET_PURCHASE_COMPLETED",
+        action="BLACK_MARKET_PURCHASE_INITIATED" if not auto_dual_approved else "BLACK_MARKET_PURCHASE_COMPLETED",
         entity_type="BlackMarketPurchase",
         entity_id=bmp.id,
         actor_id=actor or "system",
         actor_role="ORGANIZER",
         round_number=3,
-        details={"team_id": team_id, "asset_type": clean_asset, "total_price": total_price, "quantity": quantity}
+        details={"team_id": team_id, "asset_type": clean_asset, "total_price": total_price, "approval_status": bmp.approval_status}
+    )
+    db.commit()
+    db.refresh(bmp)
+    return bmp
+
+
+def approve_market_purchase(
+    db: Session,
+    purchase_id: str,
+    actor: str,
+    second_organizer_id: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> BlackMarketPurchase:
+    """
+    Two-organizer approval signature handler for Black Market deductions.
+    - If 1st signature: records first_approved_by.
+    - If 2nd signature: enforces distinct organizer from 1st approver.
+    - Once both signatures are recorded: debits squad wallet and finalizes purchase.
+    """
+    bmp = db.query(BlackMarketPurchase).filter(BlackMarketPurchase.id == purchase_id).first()
+    if not bmp:
+        raise BlackMarketError(f"Purchase '{purchase_id}' not found.")
+
+    if bmp.approval_status == "APPROVED":
+        return bmp
+
+    if bmp.approval_status == "REJECTED":
+        raise BlackMarketError("Cannot approve a rejected purchase.")
+
+    now = datetime.now(timezone.utc)
+
+    # If second_organizer_id is supplied alongside actor in one call
+    if second_organizer_id and second_organizer_id != actor:
+        bmp.first_approved_by = actor
+        bmp.first_approved_at = now
+        bmp.second_approved_by = second_organizer_id
+        bmp.second_approved_at = now
+        bmp.approval_status = "APPROVED"
+    elif not bmp.first_approved_by:
+        # First signature
+        bmp.first_approved_by = actor
+        bmp.first_approved_at = now
+        bmp.approval_status = "PARTIALLY_APPROVED"
+        if notes:
+            bmp.notes = (bmp.notes or "") + f" [1st Approval by {actor}: {notes}]"
+        db.commit()
+        db.refresh(bmp)
+        return bmp
+    else:
+        # Second signature
+        if bmp.first_approved_by == actor:
+            raise BlackMarketError(
+                f"Organizer '{actor}' has already approved this deduction. A distinct second organizer signature is required."
+            )
+        bmp.second_approved_by = actor
+        bmp.second_approved_at = now
+        bmp.approval_status = "APPROVED"
+        if notes:
+            bmp.notes = (bmp.notes or "") + f" [2nd Approval by {actor}: {notes}]"
+
+    # Both signatures verified: execute wallet debit
+    wallet = wallet_service.get_or_create_wallet(db, bmp.team_id)
+    if float(wallet.current_balance) < bmp.price:
+        raise InsufficientFundsError(
+            float(wallet.current_balance),
+            bmp.price,
+            f"Insufficient wallet balance ({wallet.current_balance:.1f} pts) for approved purchase of {bmp.price:.1f} pts."
+        )
+
+    tx = wallet_service.debit_black_market_purchase(
+        db=db,
+        team_id=bmp.team_id,
+        amount=bmp.price,
+        purchase_id=bmp.id,
+        asset_description=f"{bmp.asset_type.value} (x{bmp.quantity})",
+        created_by=bmp.second_approved_by or actor,
+        notes=f"Approved by {bmp.first_approved_by} and {bmp.second_approved_by}"
+    )
+    bmp.transaction_id = tx.id
+    bmp.status = PurchaseStatus.COMPLETED
+
+    # If code fragment or secret code item purchase, update fragment in code hunt record
+    if bmp.asset_type in (BlackMarketAssetType.MISSING_CODE_FRAGMENT, BlackMarketAssetType.SECRET_CODE_ITEM_1, BlackMarketAssetType.SECRET_CODE_ITEM_2):
+        frag_details = dict(bmp.details or {})
+        if bmp.asset_type == BlackMarketAssetType.SECRET_CODE_ITEM_1:
+            frag_details["fragment_number"] = 1
+        elif bmp.asset_type == BlackMarketAssetType.SECRET_CODE_ITEM_2:
+            frag_details["fragment_number"] = 2
+        _apply_purchased_fragment(db, bmp.team_id, frag_details)
+
+    log_audit_event(
+        db=db,
+        action="BLACK_MARKET_PURCHASE_APPROVED",
+        entity_type="BlackMarketPurchase",
+        entity_id=bmp.id,
+        actor_id=actor,
+        actor_role="ORGANIZER",
+        round_number=3,
+        details={
+            "team_id": bmp.team_id,
+            "total_price": bmp.price,
+            "first_approved_by": bmp.first_approved_by,
+            "second_approved_by": bmp.second_approved_by,
+        }
     )
 
     db.commit()
     db.refresh(bmp)
     return bmp
+
+
+def reject_market_purchase(
+    db: Session,
+    purchase_id: str,
+    actor: str,
+    rejection_reason: Optional[str] = None
+) -> BlackMarketPurchase:
+    """Rejects a pending Black Market purchase without deducting wallet points."""
+    bmp = db.query(BlackMarketPurchase).filter(BlackMarketPurchase.id == purchase_id).first()
+    if not bmp:
+        raise BlackMarketError(f"Purchase '{purchase_id}' not found.")
+
+    if bmp.approval_status == "APPROVED":
+        raise BlackMarketError("Cannot reject an already approved and completed purchase.")
+
+    bmp.approval_status = "REJECTED"
+    bmp.status = PurchaseStatus.REFUNDED
+    bmp.notes = (bmp.notes or "") + f" [Rejected by {actor}: {rejection_reason or 'No reason provided'}]"
+
+    log_audit_event(
+        db=db,
+        action="BLACK_MARKET_PURCHASE_REJECTED",
+        entity_type="BlackMarketPurchase",
+        entity_id=bmp.id,
+        actor_id=actor,
+        actor_role="ORGANIZER",
+        round_number=3,
+        details={"team_id": bmp.team_id, "reason": rejection_reason}
+    )
+
+    db.commit()
+    db.refresh(bmp)
+    return bmp
+
+
+def list_pending_purchases(db: Session) -> List[BlackMarketPurchase]:
+    """Returns all purchases awaiting organizer approval signatures."""
+    return (
+        db.query(BlackMarketPurchase)
+        .filter(BlackMarketPurchase.approval_status.in_(["PENDING_APPROVAL", "PARTIALLY_APPROVED"]))
+        .order_by(BlackMarketPurchase.purchased_at.asc())
+        .all()
+    )
+
+
+def _apply_purchased_fragment(db: Session, team_id: str, details: Optional[Dict[str, Any]]) -> None:
+    """Marks a purchased code fragment as PURCHASED in the FinalCodeRecord."""
+    frag_num = int(details.get("fragment_number") or details.get("fragmentNumber") or 1) if details else 1
+    rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
+    if not rec:
+        rec = FinalCodeRecord(team_id=team_id)
+        db.add(rec)
+        db.flush()
+
+    now = datetime.now(timezone.utc)
+    rec_val = details.get("recovered_value") if details else None
+    if frag_num == 1:
+        rec.fragment_1_status = FragmentStatus.PURCHASED
+        rec.fragment_1_value = rec_val or "ODD"
+        rec.fragment_1_discovered_at = now
+    elif frag_num == 2:
+        rec.fragment_2_status = FragmentStatus.PURCHASED
+        rec.fragment_2_value = rec_val or "42"
+        rec.fragment_2_discovered_at = now
+    elif frag_num == 3:
+        rec.fragment_3_status = FragmentStatus.PURCHASED
+        rec.fragment_3_value = rec_val or "ECHO"
+        rec.fragment_3_discovered_at = now
+        rec.echo_e_verified = True
+        rec.echo_c_verified = True
+        rec.echo_ho_verified = True
+    elif frag_num == 4:
+        rec.fragment_4_status = FragmentStatus.PURCHASED
+        rec.fragment_4_value = rec_val or "PRIME"
+        rec.fragment_4_discovered_at = now
+        rec.prime_sequence_verified = True
+
+    if rec.fragment_1_value and rec.fragment_2_value:
+        rec.final_code_assembled = f"{rec.fragment_1_value}{rec.fragment_2_value}"
+
+    # Check if all 4 fragments are now verified
+    v1 = rec.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    v2 = rec.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    v3 = rec.fragment_3_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    v4 = rec.fragment_4_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    if v1 and v2 and v3 and v4:
+        rec.final_code_verified = True
+        rec.verified_at = now
+        rec.verification_notes = "All 4 fragments verified (physical hunt + Cabo + Black Market recovery)"
 
 
 def get_team_market_purchases(db: Session, team_id: str) -> List[BlackMarketPurchase]:
@@ -625,21 +1049,28 @@ def resolve_auction(
 # ==============================================================================
 # STANDINGS & FINAL CODE GATE ENGINE
 # ==============================================================================
+# ==============================================================================
+# STANDINGS & FINAL CODE GATE ENGINE (TOP 6 ADVANCEMENT)
+# ==============================================================================
 def calculate_round3_standings(db: Session) -> Dict[str, Any]:
     """
     Official Round 3 Standings Calculation & Qualification Gate Engine.
     Rules:
-    1. Mandatory Final Code Qualification Gate checked FIRST.
-       - Squads without a verified Final Code are marked CODE INVALID and ELIMINATED.
-    2. Code-less Contingency:
-       - If fewer than 8 squads have verified Final Codes (>4 invalid), flags code_contingency = True.
-    3. Ranking:
-       - Code-valid squads ranked descending by remaining wallet balance.
-       - Secondary tie-breakers: fewer penalties (ASC), higher total earned (DESC).
-    4. Top 8 Cutoff Ties:
-       - If squads at 8th and 9th rank are tied on balance, flags cutoff_tie = True.
-    5. Advancement:
-       - Top 8 code-valid squads marked is_advancing = True.
+    1. Input: Exactly 12 qualified squads from Round 2.
+    2. Starting Balance:
+       1000 + R1 rank points + R2 Cabo score (raw, NOT * 10) + (verified Secret Agent tasks * 50).
+    3. 4-Fragment System & Missing Fragment Penalty:
+       Fragments: R1 (ODD, 42) + R2 (ECHO, PRIME).
+       Missing fragment penalty = -350 points each.
+       Effective Balance = wallet balance - missing fragment penalties.
+       ONLY teams with all 4 verified fragments are eligible to advance.
+    4. Top 6 Cutoff & Tie Handling:
+       Code-valid squads ranked descending by effective balance.
+       Top 6 squads qualify for Round 4 (`R3_QUALIFIERS = 6`).
+       If squads at 6th and 7th rank are tied on effective balance, flags cutoff_tie = True.
+    5. Finalization Safeguards:
+       All 12 teams present, market completed, approvals granted, agent tasks verified,
+       4 fragments checked / -350 penalties applied, no 6th/7th cutoff tie.
     """
     teams = get_round3_eligible_teams(db)
     cfg = get_or_create_r3_config(db)
@@ -648,41 +1079,93 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
     squad_data = []
     for team in teams:
         wallet = wallet_service.get_or_create_wallet(db, team.id)
+        breakdown = calculate_team_starting_balance(db, team.id)
         code_rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team.id).first()
 
-        is_verified = bool(code_rec and code_rec.final_code_verified)
-        frag1_status = code_rec.fragment_1_status.value if code_rec else FragmentStatus.PENDING.value
-        frag2_status = code_rec.fragment_2_status.value if code_rec else FragmentStatus.PENDING.value
+        f1_status = code_rec.fragment_1_status.value if code_rec else FragmentStatus.PENDING.value
+        f2_status = code_rec.fragment_2_status.value if code_rec else FragmentStatus.PENDING.value
+        f3_status = code_rec.fragment_3_status.value if code_rec else FragmentStatus.PENDING.value
+        f4_status = code_rec.fragment_4_status.value if code_rec else FragmentStatus.PENDING.value
+
+        v1 = f1_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+        v2 = f2_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+        v3 = f3_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+        v4 = f4_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+
+        verified_frag_count = sum([v1, v2, v3, v4])
+        missing_frag_count = 4 - verified_frag_count
+        missing_penalty = float(missing_frag_count * 350.0)
+        has_all_4 = (missing_frag_count == 0)
+
+        # Track ownership of the 4 Black Market items
+        purchases = (
+            db.query(BlackMarketPurchase)
+            .filter(
+                BlackMarketPurchase.team_id == team.id,
+                BlackMarketPurchase.status == PurchaseStatus.COMPLETED
+            )
+            .all()
+        )
+        owned_asset_types = {p.asset_type.value if hasattr(p.asset_type, "value") else str(p.asset_type) for p in purchases}
+        has_secret_code_1 = (
+            "SECRET_CODE_ITEM_1" in owned_asset_types
+            or f1_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+        )
+        has_secret_code_2 = (
+            "SECRET_CODE_ITEM_2" in owned_asset_types
+            or f2_status in (FragmentStatus.RECOVERED.value, FragmentStatus.PURCHASED.value)
+        )
+        has_powerup_1 = "POWERUP_1_R4" in owned_asset_types or "EXTRA_PREP_TIME" in owned_asset_types
+        has_powerup_2 = "POWERUP_2_R4" in owned_asset_types or "EXTRA_WITNESS_QUESTION" in owned_asset_types
+        # Key is complete if both secret code items are owned, code is verified, or all 4 fragments recovered
+        has_code_items = has_secret_code_1 and has_secret_code_2
+        is_verified = (code_rec.final_code_verified if code_rec else False)
+        has_complete_key = has_all_4 or (has_code_items and missing_frag_count == 0) or (is_verified and missing_frag_count == 0)
+
+        current_balance = float(wallet.current_balance)
+        effective_balance = current_balance - missing_penalty
 
         squad_data.append({
             "team": team,
             "wallet": wallet,
+            "breakdown": breakdown,
             "code_record": code_rec,
-            "is_code_verified": is_verified,
-            "frag1_status": frag1_status,
-            "frag2_status": frag2_status,
-            "current_balance": float(wallet.current_balance),
+            "has_all_4_fragments": has_all_4 or has_complete_key,
+            "has_secret_code_1": has_secret_code_1,
+            "has_secret_code_2": has_secret_code_2,
+            "has_powerup_1": has_powerup_1,
+            "has_powerup_2": has_powerup_2,
+            "has_complete_key": has_complete_key,
+            "frag1_status": f1_status,
+            "frag2_status": f2_status,
+            "frag3_status": f3_status,
+            "frag4_status": f4_status,
+            "verified_fragment_count": verified_frag_count,
+            "missing_fragment_count": missing_frag_count,
+            "missing_fragment_penalty": missing_penalty,
+            "current_balance": current_balance,
+            "effective_balance": effective_balance,
             "total_spent": float(wallet.total_spent),
             "total_earned": float(wallet.total_earned),
             "total_penalties": float(wallet.total_penalties),
         })
 
-    # Separate code-valid vs code-invalid
-    code_valid_squads = [s for s in squad_data if s["is_code_verified"]]
-    code_invalid_squads = [s for s in squad_data if not s["is_code_verified"]]
+    # Separate code-valid (complete key / all fragments) vs code-invalid
+    code_valid_squads = [s for s in squad_data if s["has_complete_key"]]
+    code_invalid_squads = [s for s in squad_data if not s["has_complete_key"]]
 
     # Sort code-valid squads:
-    # 1) current_balance DESC
+    # 1) effective_balance DESC
     # 2) total_penalties ASC
     # 3) total_earned DESC
     code_valid_squads.sort(
-        key=lambda s: (s["current_balance"], -s["total_penalties"], s["total_earned"]),
+        key=lambda s: (s["effective_balance"], -s["total_penalties"], s["total_earned"]),
         reverse=True
     )
 
     # Sort code-invalid squads similarly
     code_invalid_squads.sort(
-        key=lambda s: (s["current_balance"], -s["total_penalties"], s["total_earned"]),
+        key=lambda s: (s["effective_balance"], -s["total_penalties"], s["total_earned"]),
         reverse=True
     )
 
@@ -690,21 +1173,48 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
     code_contingency = False
     cutoff_tie = False
 
-    # Check code-less contingency
+    # Check 1: 12 teams present (or at least R2_QUALIFIERS)
+    if len(teams) < R2_QUALIFIERS:
+        issues.append(f"Field incomplete: Only {len(teams)} of {R2_QUALIFIERS} qualified squads present in Round 3.")
+
+    # Check 2: Open auctions
+    open_auctions = db.query(BlackMarketAuction).filter(BlackMarketAuction.status == AuctionStatus.OPEN).count()
+    if open_auctions > 0:
+        issues.append(f"Market active: {open_auctions} sealed-bid auction(s) are still OPEN.")
+
+    # Check 3: Pending approvals
+    pending_approvals = (
+        db.query(BlackMarketPurchase)
+        .filter(BlackMarketPurchase.approval_status.in_(["PENDING_APPROVAL", "PARTIALLY_APPROVED"]))
+        .count()
+    )
+    if pending_approvals > 0:
+        issues.append(f"Pending approvals: {pending_approvals} purchase(s) require two-organizer approval.")
+
+    # Check 4: Unverified secret agent tasks
+    pending_agent_tasks = (
+        db.query(SecretAgentTask)
+        .filter(SecretAgentTask.status == AgentTaskStatus.SUBMITTED)
+        .count()
+    )
+    if pending_agent_tasks > 0:
+        issues.append(f"Secret Agent tasks pending review: {pending_agent_tasks} submitted task(s) require organizer verification.")
+
+    # Check 5: Code contingency (fewer than R3_QUALIFIERS squads have all verified fragments/complete key)
     if len(code_valid_squads) < R3_QUALIFIERS:
         code_contingency = True
         issues.append(
-            f"Code Contingency: Only {len(code_valid_squads)} squads have verified Final Codes (fewer than {R3_QUALIFIERS} required). Organizer intervention required."
+            f"Code Contingency: Only {len(code_valid_squads)} squads have verified qualification code (minimum {R3_QUALIFIERS} required). Missing fragments/code items must be recovered or purchased."
         )
 
-    # Check cutoff tie at position 8/9 among code-valid squads
-    if len(code_valid_squads) >= 9:
-        s8 = code_valid_squads[7]
-        s9 = code_valid_squads[8]
-        if s8["current_balance"] == s9["current_balance"]:
+    # Check 6: Cutoff tie at position R3_QUALIFIERS / R3_QUALIFIERS + 1 among code-valid squads
+    if len(code_valid_squads) >= R3_QUALIFIERS + 1:
+        s_cut = code_valid_squads[R3_QUALIFIERS - 1]
+        s_next = code_valid_squads[R3_QUALIFIERS]
+        if s_cut["effective_balance"] == s_next["effective_balance"]:
             cutoff_tie = True
             issues.append(
-                f"Cutoff Tie: Teams '{s8['team'].name}' and '{s9['team'].name}' are tied at rank 8/9 with {s8['current_balance']:.1f} pts. Organizer review required."
+                f"Cutoff Tie: Squads '{s_cut['team'].name}' and '{s_next['team'].name}' are tied at rank {R3_QUALIFIERS}/{R3_QUALIFIERS + 1} with {s_cut['effective_balance']:.1f} pts. Organizer tie review required."
             )
 
     standings = []
@@ -717,7 +1227,7 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
         is_adv = (rank <= R3_QUALIFIERS) and not cutoff_tie and not code_contingency
 
         is_tied_at_cutoff = False
-        if cutoff_tie and rank in (8, 9):
+        if cutoff_tie and rank in (R3_QUALIFIERS, R3_QUALIFIERS + 1):
             is_tied_at_cutoff = True
 
         if is_adv:
@@ -729,12 +1239,28 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
             "team_name": s["team"].name,
             "current_balance": s["current_balance"],
             "total_spent": s["total_spent"],
-            "final_code_verified": True,
+            "starting_balance": s["breakdown"]["total_starting_balance"],
+            "base_balance": s["breakdown"]["base_balance"],
+            "r1_rank_points": s["breakdown"]["r1_rank_points"],
+            "r2_cabo_score": s["breakdown"]["r2_cabo_score"],
+            "agent_task_bonus": s["breakdown"]["agent_task_bonus"],
+            "has_secret_code_1": s["has_secret_code_1"],
+            "has_secret_code_2": s["has_secret_code_2"],
+            "has_powerup_1": s["has_powerup_1"],
+            "has_powerup_2": s["has_powerup_2"],
+            "has_complete_key": s["has_complete_key"],
+            "final_code_verified": s["has_complete_key"],
             "fragment_1_status": s["frag1_status"],
             "fragment_2_status": s["frag2_status"],
+            "fragment_3_status": s["frag3_status"],
+            "fragment_4_status": s["frag4_status"],
+            "verified_fragment_count": s["verified_fragment_count"],
+            "missing_fragment_count": s["missing_fragment_count"],
+            "missing_fragment_penalty": s["missing_fragment_penalty"],
+            "effective_balance": s["effective_balance"],
             "rank": rank,
             "is_advancing": is_adv,
-            "elimination_reason": None if is_adv else ("Cutoff by wallet points balance" if rank > R3_QUALIFIERS else None),
+            "elimination_reason": None if is_adv else (f"Below Top {R3_QUALIFIERS} qualifying cutoff" if rank > R3_QUALIFIERS else None),
             "is_tied_cutoff": is_tied_at_cutoff,
         })
         current_rank = rank + 1
@@ -747,17 +1273,41 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
             "team_name": s["team"].name,
             "current_balance": s["current_balance"],
             "total_spent": s["total_spent"],
+            "starting_balance": s["breakdown"]["total_starting_balance"],
+            "base_balance": s["breakdown"]["base_balance"],
+            "r1_rank_points": s["breakdown"]["r1_rank_points"],
+            "r2_cabo_score": s["breakdown"]["r2_cabo_score"],
+            "agent_task_bonus": s["breakdown"]["agent_task_bonus"],
+            "has_secret_code_1": s["has_secret_code_1"],
+            "has_secret_code_2": s["has_secret_code_2"],
+            "has_powerup_1": s["has_powerup_1"],
+            "has_powerup_2": s["has_powerup_2"],
+            "has_complete_key": s["has_complete_key"],
             "final_code_verified": False,
             "fragment_1_status": s["frag1_status"],
             "fragment_2_status": s["frag2_status"],
+            "fragment_3_status": s["frag3_status"],
+            "fragment_4_status": s["frag4_status"],
+            "verified_fragment_count": s["verified_fragment_count"],
+            "missing_fragment_count": s["missing_fragment_count"],
+            "missing_fragment_penalty": s["missing_fragment_penalty"],
+            "effective_balance": s["effective_balance"],
             "rank": current_rank,
             "is_advancing": False,
-            "elimination_reason": "Final Code not verified (mandatory gate)",
+            "elimination_reason": f"Missing qualification key or code fragments. Complete key required to advance.",
             "is_tied_cutoff": False,
         })
         current_rank += 1
 
-    can_finalize = (len(code_valid_squads) >= R3_QUALIFIERS) and not cutoff_tie and (len(advancing_team_ids) == R3_QUALIFIERS)
+    can_finalize = (
+        len(teams) >= R3_QUALIFIERS
+        and open_auctions == 0
+        and pending_approvals == 0
+        and pending_agent_tasks == 0
+        and len(code_valid_squads) >= R3_QUALIFIERS
+        and not cutoff_tie
+        and len(advancing_team_ids) == R3_QUALIFIERS
+    )
 
     return {
         "standings": standings,
@@ -772,7 +1322,7 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
 
 
 # ==============================================================================
-# ROUND 3 FINALIZATION
+# ROUND 3 FINALIZATION (TOP 6 TO ROUND 4)
 # ==============================================================================
 def finalize_round3(
     db: Session,
@@ -781,9 +1331,9 @@ def finalize_round3(
     force_advancing_team_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Officially seals Round 3 and qualifies 8 squads for Round 4.
-    - Validates Final Code gate & top 8 rankings.
-    - Creates RoundQualification records with score_snapshot = current_balance.
+    Officially seals Round 3 and qualifies TOP 6 squads for Round 4: The Legal Battle.
+    - Validates 4-fragment gate & Top 6 rankings.
+    - Creates RoundQualification records with score_snapshot = effective_balance.
     - PRESERVES TeamWallet.current_balance for Grand Finale carryover (NO wallet reset).
     - Sets RoundState(id=3) finalized and RoundState(id=4) active.
     """
@@ -819,7 +1369,6 @@ def finalize_round3(
     elif standings_calc["advancing_team_ids"]:
         advancing_ids = list(standings_calc["advancing_team_ids"])
     else:
-        # Fallback under override: top 8 by balance
         advancing_ids = [s["team_id"] for s in standings_calc["standings"][:R3_QUALIFIERS]]
 
     now = datetime.now(timezone.utc)
@@ -887,4 +1436,116 @@ def finalize_round3(
         "qualified_team_ids": advancing_ids,
         "advancing_team_ids": advancing_ids,
         "message": f"Round 3 successfully finalized. {len(advancing_ids)} squads advance to Round 4: The Legal Battle."
+    }
+
+
+# ==============================================================================
+# BINARY CODE CHECKER & SQUAD INVENTORY (PLAYER VIEW)
+# ==============================================================================
+def check_decoded_key(db: Session, team_id: str, code_input: str) -> Dict[str, Any]:
+    """
+    Binary Code Checker for squads entering decoded keys.
+    Returns strictly:
+      {'valid': True, 'message': 'Valid Key'}
+    or
+      {'valid': False, 'message': 'Invalid Key'}
+    Never leaks expected values, intermediate hints, or error forensics.
+    """
+    if not code_input or not str(code_input).strip():
+        return {"valid": False, "message": "Invalid Key"}
+
+    clean_code = str(code_input).strip().upper()
+
+    # 1. Check if matches assemble_final_code or team code record
+    expected = code_hunt_service.assemble_final_code(db, team_id)
+    if expected and clean_code == expected.upper():
+        # Mark verified if not already verified
+        rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
+        if rec and not rec.final_code_verified:
+            rec.final_code_verified = True
+            rec.verified_at = datetime.now(timezone.utc)
+            rec.verified_by = "Code-Checker-Self"
+            rec.verification_notes = "Verified via decoded key check"
+            db.commit()
+        return {"valid": True, "message": "Valid Key"}
+
+    # 2. Check canonical tournament code fragments (e.g. ODD42, ECHO, PRIME combinations)
+    valid_keys = {"ODD42", "42ODD", "ECHOPRIME", "ODD42ECHOPRIME", "PRIME42"}
+    rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
+    if rec:
+        f1 = (rec.fragment_1_value or "").strip().upper()
+        f2 = (rec.fragment_2_value or "").strip().upper()
+        f3 = (rec.fragment_3_value or "").strip().upper()
+        f4 = (rec.fragment_4_value or "").strip().upper()
+        if f1 and f2:
+            valid_keys.add(f"{f1}{f2}")
+        if f3 and f4:
+            valid_keys.add(f"{f3}{f4}")
+        if f1 and f2 and f3 and f4:
+            valid_keys.add(f"{f1}{f2}{f3}{f4}")
+
+    if clean_code in valid_keys:
+        if rec and not rec.final_code_verified:
+            rec.final_code_verified = True
+            rec.verified_at = datetime.now(timezone.utc)
+            rec.verified_by = "Code-Checker-Self"
+            rec.verification_notes = "Verified via decoded key check"
+            db.commit()
+        return {"valid": True, "message": "Valid Key"}
+
+    return {"valid": False, "message": "Invalid Key"}
+
+
+def get_team_inventory_status(db: Session, team_id: str) -> Dict[str, Any]:
+    """
+    Returns private squad view (Team Status) in Round 3:
+    - Current wallet balance
+    - Starting balance breakdown
+    - Owned Secret Code items (Item 1, Item 2)
+    - Owned Powerups for Round 4 (Powerup 1, Powerup 2)
+    - Complete key status (Yes/No)
+    - Full transaction/purchase history for this squad only
+    """
+    wallet = wallet_service.get_or_create_wallet(db, team_id)
+    breakdown = calculate_team_starting_balance(db, team_id)
+    purchases = get_team_market_purchases(db, team_id)
+    code_rec = db.query(FinalCodeRecord).filter(FinalCodeRecord.team_id == team_id).first()
+
+    owned_types = {p.asset_type.value if hasattr(p.asset_type, "value") else str(p.asset_type) for p in purchases if p.status == PurchaseStatus.COMPLETED}
+
+    f1_rec = code_rec and code_rec.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    f2_rec = code_rec and code_rec.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+
+    has_code_item_1 = "SECRET_CODE_ITEM_1" in owned_types or bool(f1_rec)
+    has_code_item_2 = "SECRET_CODE_ITEM_2" in owned_types or bool(f2_rec)
+    has_powerup_1 = "POWERUP_1_R4" in owned_types or "EXTRA_PREP_TIME" in owned_types
+    has_powerup_2 = "POWERUP_2_R4" in owned_types or "EXTRA_WITNESS_QUESTION" in owned_types
+    is_key_complete = (has_code_item_1 and has_code_item_2) or (code_rec.final_code_verified if code_rec else False)
+
+    return {
+        "team_id": team_id,
+        "current_balance": float(wallet.current_balance),
+        "total_spent": float(wallet.total_spent),
+        "total_earned": float(wallet.total_earned),
+        "starting_balance_breakdown": breakdown,
+        "items_owned": {
+            "secret_code_item_1": has_code_item_1,
+            "secret_code_item_2": has_code_item_2,
+            "powerup_1_r4": has_powerup_1,
+            "powerup_2_r4": has_powerup_2,
+        },
+        "has_complete_key": is_key_complete,
+        "is_code_verified": code_rec.final_code_verified if code_rec else False,
+        "purchases": [
+            {
+                "id": p.id,
+                "asset_type": p.asset_type.value if hasattr(p.asset_type, "value") else str(p.asset_type),
+                "price": float(p.price),
+                "quantity": p.quantity,
+                "status": p.status.value if hasattr(p.status, "value") else str(p.status),
+                "approval_status": p.approval_status,
+                "purchased_at": p.purchased_at.isoformat() if p.purchased_at else None,
+            }
+            for p in purchases
+        ],
     }

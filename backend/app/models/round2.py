@@ -30,6 +30,9 @@ class CaboConfigModel(Base):
     is_finalized = Column(Boolean, default=False, nullable=False)
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(String(100), nullable=True)
+    is_tables_confirmed = Column(Boolean, default=False, nullable=False)
+    tables_confirmed_at = Column(DateTime, nullable=True)
+    tables_confirmed_by = Column(String(100), nullable=True)
 
 class CaboGameModel(Base):
     __tablename__ = "round2_games"

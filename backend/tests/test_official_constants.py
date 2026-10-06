@@ -57,27 +57,27 @@ class TestTournamentStructureConstants:
         assert TEAM_SIZE == 5
 
     def test_progression_advancement_cutoffs(self):
-        """Mandatory: 32 -> 24 (R1) -> 12 (R2) -> 8 (R3) -> 8 (R4 finalists)."""
-        assert R1_QUALIFIERS == 24
+        """Mandatory: 32 -> 16 (R1) -> 12 (R2) -> 6 (R3)."""
+        assert R1_QUALIFIERS == 16
         assert R2_QUALIFIERS == 12
-        assert R3_QUALIFIERS == 8
-        assert R4_FINALISTS == 8
-        assert R4_PAIRS == 4
-        assert R4_ADVANCING_COUNT == 8
+        assert R3_QUALIFIERS == 6
+        assert R4_FINALISTS == 6
+        assert R4_PAIRS == 3
+        assert R4_ADVANCING_COUNT == 1
         assert PODIUM_SIZE == 3
 
 
 class TestRound1ExpeditionConstants:
     def test_default_hint_penalty(self):
-        """Default hint penalty is 120 seconds (2 minutes)."""
-        assert DEFAULT_R1_HINT_PENALTY_SECONDS == 120
+        """Default hint penalty is 300 seconds (5 minutes)."""
+        assert DEFAULT_R1_HINT_PENALTY_SECONDS == 300
 
     def test_checkpoints_list(self):
-        """Default checkpoint configuration has exact 3 mystery stations."""
+        """Default checkpoint configuration has exact 3 gates/stations."""
         assert DEFAULT_R1_CHECKPOINTS == [
-            "Checkpoint Alpha",
-            "Checkpoint Bravo",
-            "Checkpoint Charlie",
+            "GATE 42",
+            "Map Point J",
+            "Lock 48 / Stationary",
         ]
 
     def test_r1_suggested_rank_reward_formula(self):
@@ -127,6 +127,10 @@ class TestRound3BlackMarketAndWalletConstants:
     def test_black_market_suggested_prices(self):
         """Unresolved decision #2: Black Market prices are suggested guidelines."""
         assert BLACK_MARKET_SUGGESTED_PRICES == {
+            "secret_code_item_1": 350.0,
+            "secret_code_item_2": 350.0,
+            "powerup_1_r4": 200.0,
+            "powerup_2_r4": 200.0,
             "missing_code_fragment": 400.0,
             "extra_prep_time": 200.0,
             "extra_witness_question": 150.0,
@@ -140,8 +144,8 @@ class TestRound3BlackMarketAndWalletConstants:
 
 class TestCodeFragmentsAndFinalCodeGateConstants:
     def test_code_fragment_count(self):
-        """Mandatory: Exactly 2 fragments (Fragment 1 in R1, Fragment 2 in R2)."""
-        assert CODE_FRAGMENT_COUNT == 2
+        """Mandatory: 4 fragments (Fragment 1 'ODD', Fragment 2 '42', Fragment 3 'ECHO', Fragment 4 'PRIME')."""
+        assert CODE_FRAGMENT_COUNT == 4
 
     def test_final_code_gate_mandatory_for_r4(self):
         """Mandatory: Final Code gate is required for Round 4 access."""

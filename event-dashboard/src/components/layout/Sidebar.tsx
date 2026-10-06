@@ -10,8 +10,6 @@ import {
   Shield,
   QrCode,
   ArrowLeftRight,
-  Gavel,
-  Award,
   Settings,
   X,
   Radio,
@@ -44,10 +42,15 @@ interface NavGroup {
 }
 
 export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) {
+  const [currentUser, setCurrentUser] = useState(authService.getCurrentUser());
   const [counts, setCounts] = useState<{ teams: number | string; participants: number | string }>({
     teams: isLiveMode() ? '...' : '32',
     participants: isLiveMode() ? '...' : '160',
   });
+
+  const isStaff = Boolean(
+    currentUser && ['ORGANIZER', 'MARSHAL', 'JUDGE', 'ADMIN'].includes(currentUser.role)
+  );
 
   // Close mobile drawer on Escape key
   useEffect(() => {
@@ -81,7 +84,8 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
     const unsubEvent = eventService.subscribe(() => {
       refreshCounts();
     });
-    const unsubAuth = authService.subscribe(() => {
+    const unsubAuth = authService.subscribe((u) => {
+      setCurrentUser(u);
       refreshCounts();
     });
     const unsubMode = onAppModeChange(() => {
@@ -94,42 +98,48 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
     };
   }, []);
 
-  const navGroups: NavGroup[] = [
-    {
-      title: 'OPERATIONS',
-      items: [
-        { label: 'Overview', path: '/', icon: LayoutDashboard },
-        { label: 'Teams', path: '/teams', icon: Users, badge: counts.teams, badgeColor: 'cyan' },
-        { label: 'Participants', path: '/participants', icon: UserCheck, badge: counts.participants, badgeColor: 'cyan' },
-      ],
-    },
-    {
-      title: 'TOURNAMENT',
-      items: [
-        { label: 'Round 1 — Expedition', path: '/round-1', icon: Compass, badge: 'R1', badgeColor: 'emerald' },
-        { label: 'Round 2 — Cabo', path: '/round-2', icon: Layers, badge: 'R2', badgeColor: 'emerald' },
-        { label: 'Round 3 — Black Market', path: '/round-3', icon: ArrowLeftRight, badge: 'R3', badgeColor: 'emerald' },
-        { label: 'Round 4 — Legal Battle', path: '/round-4', icon: Gavel, badge: 'R4', badgeColor: 'emerald' },
-        { label: 'Finale — Championship', path: '/finale', icon: Award, badge: 'R5', badgeColor: 'purple' },
-        { label: 'Progression Matrix', path: '/rounds', icon: Layers },
-      ],
-    },
-    {
-      title: 'INTELLIGENCE',
-      items: [
-        { label: 'Live Scoreboard', path: '/scoreboard', icon: Trophy, badge: 'LIVE', badgeColor: 'amber' },
-        { label: 'Secret Agents', path: '/secret-agents', icon: Shield, isConfidential: true },
-        { label: 'Code Fragments', path: '/code-fragments', icon: QrCode },
-        { label: 'Judges Portal', path: '/judges', icon: Gavel },
-      ],
-    },
-    {
-      title: 'SYSTEM',
-      items: [
-        { label: 'Event Settings', path: '/settings', icon: Settings },
-      ],
-    },
-  ];
+  const navGroups: NavGroup[] = isStaff
+    ? [
+        {
+          title: 'OPERATIONS',
+          items: [
+            { label: 'Overview', path: '/', icon: LayoutDashboard },
+            { label: 'Teams', path: '/teams', icon: Users, badge: counts.teams, badgeColor: 'cyan' },
+            { label: 'Participants', path: '/participants', icon: UserCheck, badge: counts.participants, badgeColor: 'cyan' },
+          ],
+        },
+        {
+          title: 'TOURNAMENT',
+          items: [
+            { label: 'Round 1 — ODDyssey Protocol', path: '/round-1', icon: Compass, badge: 'R1', badgeColor: 'emerald' },
+            { label: 'Round 2 — Cabo', path: '/round-2', icon: Layers, badge: 'R2', badgeColor: 'emerald' },
+            { label: 'Round 3 — Black Market', path: '/round-3', icon: ArrowLeftRight, badge: 'R3', badgeColor: 'emerald' },
+            { label: 'Progression Matrix', path: '/rounds', icon: Layers },
+          ],
+        },
+        {
+          title: 'INTELLIGENCE',
+          items: [
+            { label: 'Live Scoreboard', path: '/scoreboard', icon: Trophy, badge: 'LIVE', badgeColor: 'amber' },
+            { label: 'Secret Agents', path: '/secret-agents', icon: Shield, isConfidential: true },
+            { label: 'Code Fragments', path: '/code-fragments', icon: QrCode },
+          ],
+        },
+        {
+          title: 'SYSTEM',
+          items: [
+            { label: 'Event Settings', path: '/settings', icon: Settings },
+          ],
+        },
+      ]
+    : [
+        {
+          title: 'PUBLIC SPECTATOR',
+          items: [
+            { label: 'Live Scoreboard', path: '/scoreboard', icon: Trophy, badge: 'LIVE', badgeColor: 'amber' },
+          ],
+        },
+      ];
 
   return (
     <>
@@ -160,7 +170,7 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
         >
           <div className={cn('flex items-center gap-3 min-w-0', isCollapsed && 'lg:justify-center')}>
             <Link
-              to="/"
+              to={isStaff ? "/" : "/scoreboard"}
               className="w-9 h-9 rounded-xl bg-slate-900 border border-cyan-500/50 flex items-center justify-center text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.35)] relative overflow-hidden shrink-0 hover:border-cyan-400 transition-colors"
               title="EVENT HQ · BMSIT"
               onClick={() => {
@@ -177,7 +187,9 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
                   BMSIT
                 </span>
               </div>
-              <p className="text-[10px] font-mono text-slate-500 tracking-wider truncate">COMMAND MATRIX</p>
+              <p className="text-[10px] font-mono text-slate-500 tracking-wider truncate">
+                {isStaff ? 'COMMAND MATRIX' : 'PUBLIC SPECTATOR'}
+              </p>
             </div>
           </div>
           <button
@@ -194,20 +206,22 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
           {isCollapsed ? (
             /* Collapsed Phase Icon for Desktop Rail */
             <Link
-              to="/round-1"
+              to={isStaff ? "/round-1" : "/scoreboard"}
               onClick={() => {
                 if (typeof window !== 'undefined' && window.innerWidth < 1024) onClose();
               }}
-              title="Active Tournament Phase: Round 1 (Expedition)"
+              title={isStaff ? "Active Tournament Phase: Round 1 (Expedition)" : "Live Tournament Standings"}
               className="hidden lg:flex w-12 h-12 mx-auto rounded-xl bg-slate-900/90 border border-cyan-500/40 hover:border-cyan-400/80 hover:shadow-[0_0_15px_rgba(6,182,212,0.3)] flex-col items-center justify-center text-center transition-all group relative"
             >
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#22d3ee] mb-1" />
-              <span className="text-[10px] font-mono font-bold text-emerald-300">R1</span>
+              <span className="text-[10px] font-mono font-bold text-emerald-300">
+                {isStaff ? 'R1' : 'LIVE'}
+              </span>
             </Link>
           ) : null}
 
           <Link
-            to="/round-1"
+            to={isStaff ? "/round-1" : "/scoreboard"}
             onClick={() => {
               if (typeof window !== 'undefined' && window.innerWidth < 1024) onClose();
             }}
@@ -221,13 +235,15 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#22d3ee]" />
               <div className="text-[11px] font-medium text-slate-200">
                 <span className="text-slate-500 block text-[9px] font-mono uppercase tracking-widest group-hover:text-cyan-400 transition-colors">
-                  LIVE TOURNAMENT PHASE
+                  {isStaff ? 'LIVE TOURNAMENT PHASE' : 'SPECTATOR TELEMETRY'}
                 </span>
-                <span className="font-orbitron font-semibold text-xs text-white">Round 1: Expedition</span>
+                <span className="font-orbitron font-semibold text-xs text-white">
+                  {isStaff ? 'Round 1: Expedition' : 'Live Scoreboard'}
+                </span>
               </div>
             </div>
             <span className="text-[10px] font-mono bg-emerald-950/80 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)]">
-              ACTIVE
+              {isStaff ? 'ACTIVE' : 'LIVE'}
             </span>
           </Link>
         </div>

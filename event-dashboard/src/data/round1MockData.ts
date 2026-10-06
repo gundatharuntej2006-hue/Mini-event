@@ -3,20 +3,23 @@ import { TeamRound1Record, Round1Config, MiniRoundTiming, CheckpointRecord } fro
 import { computeTeamTotals } from '../utils/round1Scoring';
 
 export const DEFAULT_ROUND1_CONFIG: Round1Config = {
-  // DEMO DEFAULT: 120 seconds (2 mins) per hint.
-  // NOTE: Official penalty duration is not confirmed by organizers and is subject to change.
-  penaltyPerHintSeconds: 120,
+  // Official ODDyssey Protocol values
+  penaltyPerHintSeconds: 300,
+  penaltyPerPhoneSeconds: 600,
+  penaltyPerSeparationSeconds: 300,
+  clueTamperingDeductionPoints: 20,
+  qualifiersCount: 16,
   checkpointNames: [
-    'Checkpoint 1 [Location TBD]',
-    'Checkpoint 2 [Location TBD]',
-    'Checkpoint 3 [Location TBD]',
+    'GATE 42',
+    'Map Point J',
+    'Lock 48 / Stationary',
   ],
   isFinalized: false,
   finalizedAt: null,
   hiddenCodeRecovered: false,
   hiddenCodeRecoveredByTeamId: null,
   hiddenCodeRecoveredAt: null,
-  hiddenCodeNotes: 'Code Fragment #01 concealment location pending official organizer assignment. Physical tag recovery.',
+  hiddenCodeNotes: 'Gate 1 awards ODD; Gate 2 awards 42; Gate 3 confirms both fragments.',
 };
 
 function createMiniRound(
@@ -27,7 +30,7 @@ function createMiniRound(
   startMinute: number,
   durationMinutes: number,
   hints: number,
-  penaltyPerHintSeconds: number = 120
+  penaltyPerHintSeconds: number = 300
 ): MiniRoundTiming {
   const today = new Date();
   const baseDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());

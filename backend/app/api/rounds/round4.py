@@ -9,7 +9,8 @@ from app.schemas.rounds.round4 import (
     Round4OverviewResponse, Round4ConfigSchema, UpdateRound4ConfigInput,
     CreatePairInput, AutoAssignPairsInput, UpdatePairCaseInput, UpdateStageInput,
     SubmitJudgeScoreInput, SubmitAgentGuessInput, ResourcePersonQuestionInput,
-    FinalizeRound4Input, Round4PairResponse, TeamRound4RecordResponse
+    FinalizeRound4Input, Round4PairResponse, TeamRound4RecordResponse,
+    CorrectJudgeScoreInput, SubmitAgentGuessesInput, Round4JudgeScoreResponse
 )
 from app.services import round4_service
 
@@ -33,7 +34,7 @@ def get_config(db: Session = Depends(get_db)):
         judge_aggregation=cfg.judge_aggregation,
         judges_list=cfg.judges_list or [],
         final_score_formula=cfg.final_score_formula or {},
-        advancing_teams_count=cfg.advancing_teams_count or 8,
+        advancing_teams_count=cfg.advancing_teams_count or 1,
         is_finalized=cfg.is_finalized,
         finalized_at=cfg.finalized_at.isoformat() if cfg.finalized_at else None,
         finalized_by=cfg.finalized_by
@@ -55,7 +56,7 @@ def update_config(
         judge_aggregation=cfg.judge_aggregation,
         judges_list=cfg.judges_list or [],
         final_score_formula=cfg.final_score_formula or {},
-        advancing_teams_count=cfg.advancing_teams_count or 8,
+        advancing_teams_count=cfg.advancing_teams_count or 1,
         is_finalized=cfg.is_finalized,
         finalized_at=cfg.finalized_at.isoformat() if cfg.finalized_at else None,
         finalized_by=cfg.finalized_by
@@ -65,7 +66,7 @@ def update_config(
 
 @router.get("/pairs", response_model=ApiResponse[List[Round4PairResponse]])
 def get_pairs(db: Session = Depends(get_db)):
-    """Get all 4 moot court matchups with stage timings and legal file status."""
+    """Get all moot court matchups with stage timings and legal file status."""
     overview = round4_service.get_round4_overview(db)
     return ApiResponse(data=overview["pairs"])
 
@@ -76,7 +77,7 @@ def update_pair_api(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "admin"]))
 ):
-    """Assign squads to a head-to-head matchup pairing (1 to 4)."""
+    """Assign squads to a head-to-head matchup pairing."""
     p = round4_service.update_pair(
         db=db,
         pair_number=payload.pair_number,
@@ -96,12 +97,12 @@ def auto_pair_api(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "admin"]))
 ):
-    """Automatically pair the 8 finalist squads into 4 head-to-head courtroom matchups."""
+    """Automatically pair the finalist squads into head-to-head courtroom matchups."""
     seed = payload.seed if payload else None
     confirm = payload.confirm if payload else True
     round4_service.auto_pair_round4_teams(db, actor=actor, seed=seed, confirm=confirm)
     overview = round4_service.get_round4_overview(db)
-    return ApiResponse(data=overview["pairs"], message="4 head-to-head matchups generated for Round 4")
+    return ApiResponse(data=overview["pairs"], message="Head-to-head matchups generated for Round 4")
 
 
 @router.post("/pairs/confirm", response_model=ApiResponse[Dict[str, Any]])
@@ -109,9 +110,9 @@ def confirm_pairs(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "admin"]))
 ):
-    """Lock and confirm all 4 matchup pairings for trial arguments."""
+    """Lock and confirm matchup pairings for trial arguments."""
     round4_service.confirm_pairings(db, actor)
-    return ApiResponse(data={"confirmed": True}, message="All 4 pairings officially confirmed and locked")
+    return ApiResponse(data={"confirmed": True}, message="All pairings officially confirmed and locked")
 
 
 @router.post("/pairs/unlock", response_model=ApiResponse[Dict[str, Any]])
@@ -176,7 +177,7 @@ def update_stage_api(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "marshal", "scorekeeper", "admin"]))
 ):
-    """Log courtroom stage status (prep_1, hearing_1, file_exchange, prep_2, hearing_2)."""
+    """Log courtroom stage status and timekeeper recording."""
     round4_service.update_stage_timing(
         db=db,
         pair_id=pair_id,
@@ -184,6 +185,9 @@ def update_stage_api(
         status_val=payload.status,
         duration=payload.actual_duration_seconds,
         notes=payload.notes,
+        timekeeper_name=payload.timekeeper_name,
+        time_violations_notes=payload.time_violations_notes,
+        penalty_seconds=payload.penalty_seconds,
         actor=actor
     )
     return ApiResponse(data={"pair_id": pair_id, "stage_id": stage_id, "status": payload.status}, message="Stage logged")
@@ -224,8 +228,88 @@ def submit_judge_scores(
             "total_score": sc.total_score,
             "totalScore": sc.total_score,
             "isSubmitted": sc.is_submitted,
+            "isLocked": sc.is_locked,
+            "lockedAt": sc.locked_at.isoformat() if sc.locked_at else None,
         },
         message="Judge scorecard submitted successfully"
+    )
+
+
+@router.post("/judging/{score_id}/lock", response_model=ApiResponse[Dict[str, Any]])
+def lock_judge_score_api(
+    score_id: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["lead_judge", "organizer", "admin"]))
+):
+    """Officially lock a judge scorecard to prevent modifications."""
+    sc = round4_service.lock_judge_score(db, score_id, actor)
+    return ApiResponse(
+        data={"id": sc.id, "isLocked": sc.is_locked, "lockedAt": sc.locked_at.isoformat() if sc.locked_at else None},
+        message="Judge scorecard locked"
+    )
+
+
+@router.post("/judging/{score_id}/unlock", response_model=ApiResponse[Dict[str, Any]])
+def unlock_judge_score_api(
+    score_id: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """Unlock a judge scorecard for organizer corrections."""
+    sc = round4_service.unlock_judge_score(db, score_id, actor)
+    return ApiResponse(
+        data={"id": sc.id, "isLocked": sc.is_locked},
+        message="Judge scorecard unlocked"
+    )
+
+
+@router.put("/judging/{score_id}/correct", response_model=ApiResponse[Dict[str, Any]])
+def correct_judge_score_api(
+    score_id: str,
+    payload: CorrectJudgeScoreInput,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """Organizer override and audited correction for a judge scorecard."""
+    sc = round4_service.correct_judge_score(db, score_id, payload, actor)
+    return ApiResponse(
+        data={
+            "id": sc.id,
+            "totalScore": sc.total_score,
+            "correctionNotes": sc.correction_notes,
+            "correctedBy": sc.corrected_by,
+            "correctedAt": sc.corrected_at.isoformat() if sc.corrected_at else None
+        },
+        message="Judge scorecard corrected and audited"
+    )
+
+
+@router.post("/teams/{team_id}/agent-guesses", response_model=ApiResponse[Dict[str, Any]])
+@router.post("/agent-guesses", response_model=ApiResponse[Dict[str, Any]])
+def submit_team_agent_guesses_api(
+    payload: SubmitAgentGuessesInput,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "judge", "admin"]))
+):
+    """Submit 1 to 5 secret agent unmasking guesses for a squad (+30 correct, -20 incorrect)."""
+    target_team = team_id or payload.team_id
+    if not target_team:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required.")
+
+    ag = round4_service.submit_team_agent_guesses(db, target_team, payload, actor)
+    return ApiResponse(
+        data={
+            "id": ag.id,
+            "team_id": target_team,
+            "teamId": target_team,
+            "totalGuesses": ag.total_guesses,
+            "correctGuesses": ag.correct_guesses,
+            "wrongGuesses": ag.wrong_guesses,
+            "pointsAwarded": ag.points_awarded,
+            "outcome": ag.outcome
+        },
+        message="Agent unmasking guesses recorded and scored"
     )
 
 
@@ -237,7 +321,7 @@ def submit_agent_guess_api(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "marshal", "judge", "admin"]))
 ):
-    """Record secret agent deduction outcome and verification."""
+    """Record secret agent deduction outcome (legacy compatibility)."""
     target_team = team_id or payload.team_id
     if not target_team:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required.")
@@ -262,14 +346,13 @@ def submit_agent_guess_api(
 def get_leaderboard(db: Session = Depends(get_db)):
     """Get server-side calculated moot court final standings."""
     overview = round4_service.get_round4_overview(db)
-    # Add legacy-friendly fields for standings endpoint
     records = overview["records"]
     for r in records:
         r["teamId"] = r.get("team_id")
         r["teamName"] = r.get("team_name")
         jury_sc = r.get("panel_score") or 0.0
         r["juryScore"] = jury_sc
-        r["agentGuessPoints"] = None  # Agent guessing scored in Finale (Step 14)
+        r["agentGuessPoints"] = r.get("final_score_breakdown", {}).get("agent_guess_points", 0.0)
         fs = r.get("final_score_breakdown", {}).get("final_score")
         r["totalScore"] = fs if fs is not None else jury_sc
     return ApiResponse(data=records)
@@ -293,9 +376,10 @@ def finalize_round4(
     db: Session = Depends(get_db),
     actor: User = Depends(require_role(["organizer", "admin"]))
 ):
-    """Officially seal Round 4 results and advance all 8 finalist squads to the Grand Finale."""
+    """Officially seal Round 4 results."""
     override = payload.override_discrepancy if payload else False
-    res = round4_service.finalize_round4(db, actor, override_discrepancy=override)
+    org_confirmed = payload.organizer_confirmed if payload else False
+    res = round4_service.finalize_round4(db, actor, override_discrepancy=override, organizer_confirmed=org_confirmed)
     return ApiResponse(data=res, message=res.get("message"))
 
 

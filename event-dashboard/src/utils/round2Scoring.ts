@@ -11,6 +11,8 @@ import {
   CABO_TABLE_SIZE,
   CABO_MAX_TEAM_SCORE,
   DEPRECATED_CABO_24_POINT_SCALE,
+  R1_QUALIFIERS,
+  R2_QUALIFIERS,
 } from '../constants/tournamentConstants';
 
 export {
@@ -120,12 +122,16 @@ export function processRound2Standings(
   round1Finalized: boolean
 ): Round2EngineResult {
   const isHigherBetter = config.scoringDirection === 'higher_is_better';
+  const cutoff = R2_QUALIFIERS; // 8
 
   // Separate complete vs incomplete records
   const completeRecords = records.filter((r) => r.isComplete && r.totalPoints !== null);
   const incompleteRecords = records.filter((r) => !r.isComplete || r.totalPoints === null);
 
-  // Sort complete records strictly by total points based on scoring direction
+  // Sort complete records using official Cabo tie-breakers:
+  // 1. Placement points (descending)
+  // 2. Combined card total (ascending - lower is better)
+  // 3. More 1st-place finishes (descending)
   completeRecords.sort((a, b) => {
     const ptsA = a.totalPoints!;
     const ptsB = b.totalPoints!;
@@ -134,12 +140,19 @@ export function processRound2Standings(
     } else {
       if (ptsA !== ptsB) return ptsA - ptsB;
     }
-    // Stable secondary sort by team number without treating as an official competitive tie-breaker
+
+    const cardA = a.combinedCardTotal ?? 0;
+    const cardB = b.combinedCardTotal ?? 0;
+    if (cardA !== cardB) return cardA - cardB;
+
+    const firstA = a.firstPlaceCount ?? 0;
+    const firstB = b.firstPlaceCount ?? 0;
+    if (firstB !== firstA) return firstB - firstA;
+
     return a.teamNumber - b.teamNumber;
   });
 
   // Assign ranks and detect ties
-  // Groups of identical total points
   const pointGroups = new Map<number, TeamRound2Record[]>();
   completeRecords.forEach((rec) => {
     const pts = rec.totalPoints!;
@@ -156,24 +169,23 @@ export function processRound2Standings(
     rec.rank = currentRank++;
   });
 
-  // Check for ties and specifically check if any tie spans across the 12th-place qualification cutoff!
-  // The cutoff is between Rank 12 (qualifies for Round 3) and Rank 13 (eliminated).
+  // Check for ties spanning the 8th-place cutoff
   pointGroups.forEach((group, pts) => {
     if (group.length > 1) {
       const ranks = group.map((r) => r.rank!);
       const minRank = Math.min(...ranks);
       const maxRank = Math.max(...ranks);
 
-      // A tie affects the cutoff if the group contains rank <= 12 AND rank > 12!
-      const spansCutoff = minRank <= 12 && maxRank >= 13;
+      // A tie affects the cutoff if the group contains rank <= 8 AND rank > 8!
+      const spansCutoff = minRank <= cutoff && maxRank > cutoff;
 
       group.forEach((rec) => {
         if (spansCutoff) {
           rec.tieRequiresReview = true;
-          rec.tieReason = `Tied on ${pts} total points spanning the 12th-place cutoff (Ranks #${minRank}–#${maxRank}). Official tournament rules require manual marshal review.`;
+          rec.tieReason = `Tied on ${pts} total points spanning the ${cutoff}th-place cutoff (Ranks #${minRank}–#${maxRank}). Sudden-death Cabo game or organizer draw required.`;
           tiesAffectingCutoff = true;
-        } else if (maxRank <= 12) {
-          rec.tieReason = `Tied on ${pts} total points with ${group.length - 1} other team(s) inside the Top 12.`;
+        } else if (maxRank <= cutoff) {
+          rec.tieReason = `Tied on ${pts} total points with ${group.length - 1} other team(s) inside the Top ${cutoff}.`;
         } else {
           rec.tieReason = `Tied on ${pts} total points with ${group.length - 1} other team(s) in the elimination zone.`;
         }
@@ -186,11 +198,11 @@ export function processRound2Standings(
     if (!round1Finalized) {
       rec.qualificationStatus = 'Round 1 Pending';
     } else if (config.isFinalized) {
-      rec.qualificationStatus = rec.rank! <= 12 ? 'Finalized Qualified' : 'Finalized Eliminated';
+      rec.qualificationStatus = rec.rank! <= cutoff ? 'Finalized Qualified' : 'Finalized Eliminated';
     } else if (rec.tieRequiresReview) {
       rec.qualificationStatus = 'Tie Review Needed';
-    } else if (rec.rank! <= 12) {
-      rec.qualificationStatus = 'Provisional Top 12';
+    } else if (rec.rank! <= cutoff) {
+      rec.qualificationStatus = 'Provisional Top 8';
     } else {
       rec.qualificationStatus = 'Provisional Cutoff';
     }
@@ -211,26 +223,26 @@ export function processRound2Standings(
   if (!round1Finalized) {
     canFinalize = false;
     blockReason = 'Round 1 results are not yet officially finalized. Finalize Round 1 first.';
-  } else if (records.length !== 24) {
+  } else if (records.length !== R1_QUALIFIERS && records.length !== 24) {
     canFinalize = false;
-    blockReason = `Expected exactly 24 qualified teams from Round 1, but found ${records.length}.`;
+    blockReason = `Expected exactly ${R1_QUALIFIERS} qualified teams from Round 1, but found ${records.length}.`;
   } else if (incompleteRecords.length > 0) {
     canFinalize = false;
-    blockReason = `${incompleteRecords.length} squad(s) have incomplete Cabo game results. All 3 games must be recorded for all 24 squads.`;
+    blockReason = `${incompleteRecords.length} squad(s) have incomplete Cabo game results. All 3 games must be recorded for all squads.`;
   } else if (!isPointTableValid(config.pointTable)) {
     canFinalize = false;
-    blockReason = 'Placement points table is incomplete or invalid. All 24 placements must have valid non-negative points.';
+    blockReason = 'Placement points table is incomplete or invalid.';
   } else if (tiesAffectingCutoff) {
     canFinalize = false;
-    blockReason = 'An unresolved tie affects the 12th-place qualification cutoff boundary. Manual marshal review is required before finalization.';
+    blockReason = `An unresolved tie affects the ${cutoff}th-place qualification cutoff boundary. Manual marshal review is required before finalization.`;
   }
 
-  const top12TeamIds = completeRecords
-    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 12)
+  const top8TeamIds = completeRecords
+    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= cutoff)
     .map((r) => r.teamId);
 
   const eliminatedTeamIds = completeRecords
-    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank > 12)
+    .filter((r) => r.rank !== null && r.rank !== undefined && r.rank > cutoff)
     .map((r) => r.teamId);
 
   return {
@@ -238,7 +250,8 @@ export function processRound2Standings(
     canFinalize,
     blockReason,
     tiesAffectingCutoff,
-    top12TeamIds,
+    top8TeamIds,
+    top12TeamIds: top8TeamIds, // compatibility alias
     eliminatedTeamIds,
   };
 }
@@ -253,15 +266,17 @@ export function computeRound2SummaryStats(
   round1Finalized: boolean,
   round1QualifiedCount: number
 ): Round2SummaryStats {
-  const g1Count = Object.keys(games[0].placements).length;
-  const g2Count = Object.keys(games[1].placements).length;
-  const g3Count = Object.keys(games[2].placements).length;
+  const g1Count = Math.min(Object.keys(games[0].placements).length, R1_QUALIFIERS);
+  const g2Count = Math.min(Object.keys(games[1].placements).length, R1_QUALIFIERS);
+  const g3Count = Math.min(Object.keys(games[2].placements).length, R1_QUALIFIERS);
 
   const completeTeams = records.filter((r) => r.isComplete && r.totalPoints !== null);
   const tiesAffectingCutoffCount = records.filter((r) => r.tieRequiresReview).length;
-  const provisionalTop12 = completeRecordsTop12Count(records);
+  const provisionalTop8 = records.filter(
+    (r) => r.isComplete && r.rank !== null && r.rank !== undefined && r.rank <= R2_QUALIFIERS
+  ).length;
   const provisionalEliminated = records.filter(
-    (r) => r.isComplete && r.rank !== null && r.rank !== undefined && r.rank > 12
+    (r) => r.isComplete && r.rank !== null && r.rank !== undefined && r.rank > R2_QUALIFIERS
   ).length;
 
   return {
@@ -272,14 +287,11 @@ export function computeRound2SummaryStats(
     game2CompletionCount: g2Count,
     game3CompletionCount: g3Count,
     completeTeamsCount: completeTeams.length,
-    provisionalTop12Count: provisionalTop12,
+    provisionalTop8Count: provisionalTop8,
+    provisionalTop12Count: provisionalTop8,
     provisionalEliminatedCount: provisionalEliminated,
     tiesAffectingCutoffCount,
     isConfigComplete: isPointTableValid(config.pointTable),
     isFinalized: config.isFinalized,
   };
-}
-
-function completeRecordsTop12Count(records: TeamRound2Record[]): number {
-  return records.filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 12).length;
 }

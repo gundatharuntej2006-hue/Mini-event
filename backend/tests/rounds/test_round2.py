@@ -35,11 +35,11 @@ def test_cabo_complete_points_calculation():
 
 def test_cabo_cutoff_tie_blocks_finalization():
     records = []
-    for i in range(24):
+    for i in range(16):
         pts = 60 - i * 2
-        # Introduce a tie straddling 12th cutoff (rank 12 and 13 share 38 pts)
-        if i == 11 or i == 12:
-            pts = 38
+        # Introduce a tie straddling 8th cutoff (rank 8 and 9 share points)
+        if i == 7 or i == 8:
+            pts = 44
         records.append({
             "team_id": f"team-{i + 1}",
             "team_number": i + 1,
@@ -65,3 +65,18 @@ def test_cabo_api_blocks_unfinalized_round1(client, marshal_headers):
     res = client.post("/api/rounds/2/games?game_number=1", json=payload, headers=marshal_headers)
     assert res.status_code == 400
     assert "Round 1 is not yet finalized" in (res.json().get("detail") or res.json().get("message", ""))
+
+
+def test_get_cabo_summary_endpoint(client):
+    res = client.get("/api/v1/rounds/2/cabo/summary")
+    assert res.status_code == 200
+    data = res.json()["data"]
+    assert data["totalTablesPerGame"] == 16
+    assert data["expectedTotalTables"] == 48
+    assert data["expectedTotalScorecards"] == 240
+    assert 0 <= data["game1CompletedTables"] <= 16
+    assert 0 <= data["game2CompletedTables"] <= 16
+    assert 0 <= data["game3CompletedTables"] <= 16
+    assert data["canFinalize"] is False
+    assert len(data["incompleteReasons"]) > 0
+

@@ -88,3 +88,10 @@ Thumbs.db
 llm_integration_output.txt
 sutra/
 sutra_new/
+
+# Tournament backups, dry-run dumps & temporary files
+*.bak
+*.bak_*
+dryrun_report_output.json
+ODDYSSEY*.csv
+event-dashboard/public/qrcodes/

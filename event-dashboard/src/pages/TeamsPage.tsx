@@ -151,27 +151,28 @@ export function TeamsPage() {
   const getTeamCheckInMetrics = (team: Team) => {
     const total = team.members.length;
     const checkedIn = team.members.filter((m) => m.checkedIn).length;
-    const isCompleteRoster = total === 5;
-    const isFullyCheckedIn = isCompleteRoster && checkedIn === 5;
+    const targetCount = team.name.trim() === 'Team Mirage' ? 4 : 5;
+    const isCompleteRoster = total >= targetCount;
+    const isFullyCheckedIn = isCompleteRoster && checkedIn >= targetCount;
 
     let label = 'Unchecked';
     let variant: BadgeVariant = 'neutral';
 
     if (!isCompleteRoster) {
-      label = `Incomplete Roster (${total}/5)`;
+      label = `Incomplete Roster (${total}/${targetCount})`;
       variant = 'warning';
     } else if (isFullyCheckedIn) {
-      label = 'Ready · 5/5 Checked In';
+      label = `Ready · ${targetCount}/${targetCount} Checked In`;
       variant = 'success';
     } else if (checkedIn > 0) {
-      label = `Partial · ${checkedIn}/5 Checked In`;
+      label = `Partial · ${checkedIn}/${targetCount} Checked In`;
       variant = 'primary';
     } else {
-      label = '0/5 Checked In';
+      label = `0/${targetCount} Checked In`;
       variant = 'neutral';
     }
 
-    return { total, checkedIn, isCompleteRoster, isFullyCheckedIn, label, variant };
+    return { total, checkedIn, targetCount, isCompleteRoster, isFullyCheckedIn, label, variant };
   };
 
   // Filter & Sort
@@ -659,11 +660,11 @@ export function TeamsPage() {
                                   : 'bg-amber-950/50 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              {metrics.total} / 5
+                              {metrics.total} / {metrics.targetCount}
                             </span>
                             {!metrics.isCompleteRoster && (
                               <span className="text-[10px] text-amber-400 font-mono">
-                                Needs {5 - metrics.total}
+                                Needs {metrics.targetCount - metrics.total}
                               </span>
                             )}
                           </div>
@@ -1137,16 +1138,16 @@ export function TeamsPage() {
                     </div>
                     <p className="text-[11px] opacity-80 mt-0.5">
                       {metrics.isFullyCheckedIn
-                        ? 'All 5 members are present and verified. Squad is ready to compete in Round 1.'
+                        ? `All ${metrics.targetCount} members are present and verified. Squad is ready to compete in Round 1.`
                         : !metrics.isCompleteRoster
-                        ? `Incomplete squad: Only ${metrics.total} of 5 members assigned. Squad cannot compete until full.`
-                        : `${metrics.checkedIn} of 5 members checked in at the desk.`}
+                        ? `Incomplete squad: Only ${metrics.total} of ${metrics.targetCount} members assigned. Squad cannot compete until full.`
+                        : `${metrics.checkedIn} of ${metrics.targetCount} members checked in at the desk.`}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="font-mono font-bold text-lg">
-                      {metrics.checkedIn} / 5
+                      {metrics.checkedIn} / {metrics.targetCount}
                     </span>
                   </div>
                 </div>

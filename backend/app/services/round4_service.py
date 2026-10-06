@@ -9,20 +9,28 @@ from app.models.round4 import (
     default_round4_rubric, default_final_score_formula
 )
 from app.models.core import Team, TeamStatus
-from app.models.progression import TieReview
+from app.models.progression import TieReview, RoundQualification
+from app.models.cabo import CaboPlayerScorecard
+from app.models.agent import SecretAgentDossier, SecretAgentTask, AgentTaskStatus
+from app.models.round_models import RoundState
 from app.scoring.round4_scoring import (
     calculate_panel_score, calculate_final_score_breakdown, process_round4_standings,
-    validate_rubric_scores, calculate_legal_battle_score
+    validate_rubric_scores, calculate_legal_battle_score, calculate_agent_guess_points
 )
 from app.services.audit_service import log_audit_event
 from app.services.progression_service import is_round_finalized, get_eligible_team_ids, record_round_finalization
 from app.services.tie_review_service import get_or_create_tie_review
 from app.services.round3_service import get_team_transactions, compute_team_ledger, get_or_create_black_market_config
+from app.services.wallet import get_or_create_wallet
 from app.schemas.rounds.round4 import (
     UpdatePairCaseInput, SubmitJudgeScoreInput, SubmitAgentGuessInput,
-    ResourcePersonQuestionInput
+    ResourcePersonQuestionInput, CorrectJudgeScoreInput, SubmitAgentGuessesInput
 )
-from app.core.constants import R4_FINALISTS, R4_ADVANCING_COUNT
+from app.core.constants import (
+    R4_FINALISTS, R4_PAIRS, R4_ADVANCING_COUNT,
+    AGENT_CORRECT_GUESS, AGENT_WRONG_GUESS, AGENT_NO_GUESS, AGENT_GUESS_MAX,
+    R1_RANK_POINTS_MAP, AGENT_TASK_REWARD
+)
 
 STAGE_IDS = ["prep_1", "hearing_1", "file_exchange", "prep_2", "hearing_2"]
 
@@ -50,7 +58,7 @@ DEFAULT_R4_CASE_TEMPLATES = [
     },
 ]
 
-# Backward-compatible alias (internal templates/placeholders)
+# Backward-compatible alias
 OFFICIAL_R4_CASES = DEFAULT_R4_CASE_TEMPLATES
 
 
@@ -73,8 +81,12 @@ def get_or_create_round4_config(db: Session) -> Round4ConfigModel:
     return cfg
 
 
-def ensure_round4_pairs(db: Session):
-    for i in range(1, 5):
+def ensure_round4_pairs(db: Session, num_pairs: int = R4_PAIRS):
+    """
+    Ensures the required number of moot court matchup pairs and their stage timing records exist.
+    Defaults to 2 semifinal matchups for 4 finalist squads.
+    """
+    for i in range(1, num_pairs + 1):
         p = db.query(Round4PairModel).filter(
             (Round4PairModel.pair_number == i) | (Round4PairModel.id == f"pair-{i}")
         ).first()
@@ -150,35 +162,65 @@ def auto_pair_round4_teams(
     confirm: bool = True
 ) -> List[Round4PairModel]:
     """
-    Pairs the 8 qualified teams from Round 3 into 4 matchups with official cases.
+    Pairs the qualified teams from Round 3 into semifinal courtroom matchups:
+      Matchup 1 (Semifinal 1): Seed 1 vs Seed 4
+      Matchup 2 (Semifinal 2): Seed 2 vs Seed 3
+    (If 8 teams are supplied in legacy fixtures, pairs them into 4 matchups).
     """
     cfg = get_or_create_round4_config(db)
     if cfg.is_finalized:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Round 4 is finalized.")
 
-    ensure_round4_pairs(db)
+    r3_finalized = is_round_finalized(db, 3)
     eligible = get_eligible_team_ids(db, 4)
-    if not eligible or len(eligible) < 8:
-        # Fallback to all active squads in dev/testing
-        active_teams = db.query(Team).filter(Team.status != TeamStatus.DISQUALIFIED).limit(8).all()
-        eligible = [t.id for t in active_teams]
+    if not eligible:
+        active_teams = db.query(Team).filter(Team.status != TeamStatus.DISQUALIFIED).order_by(Team.team_number.asc()).all()
+        if len(active_teams) >= 8:
+            eligible = [t.id for t in active_teams]
+        else:
+            try:
+                from app.services.round3_service import get_round3_overview
+                r3_overview = get_round3_overview(db)
+                r3_records = r3_overview.get("records", [])
+                if r3_records:
+                    eligible = [r["team_id"] for r in r3_records]
+                else:
+                    eligible = [t.id for t in active_teams[:4]]
+            except Exception:
+                eligible = [t.id for t in active_teams[:4]]
 
-    squads = list(eligible[:8])
+    num_squads = 8 if len(eligible) >= 8 else 4
+    num_pairs = num_squads // 2
+    ensure_round4_pairs(db, num_pairs=num_pairs)
+
+    squads = list(eligible[:num_squads])
     if seed is not None:
         rng = random.Random(seed)
         rng.shuffle(squads)
 
     now = datetime.now(timezone.utc)
-    pairs = db.query(Round4PairModel).order_by(Round4PairModel.pair_number.asc()).all()
+    pairs = db.query(Round4PairModel).filter(Round4PairModel.pair_number <= num_pairs).order_by(Round4PairModel.pair_number.asc()).all()
 
-    for i in range(4):
+    # Pair according to seeding if 4 squads: Seed 1 vs Seed 4, Seed 2 vs Seed 3
+    if num_squads == 4 and seed is None:
+        pairings_map = [
+            (squads[0] if len(squads) > 0 else None, squads[3] if len(squads) > 3 else None),
+            (squads[1] if len(squads) > 1 else None, squads[2] if len(squads) > 2 else None),
+        ]
+    else:
+        pairings_map = [
+            (squads[i * 2] if len(squads) > i * 2 else None,
+             squads[i * 2 + 1] if len(squads) > i * 2 + 1 else None)
+            for i in range(num_pairs)
+        ]
+
+    for i in range(num_pairs):
         pair = pairs[i] if i < len(pairs) else None
         if not pair:
             pair = Round4PairModel(id=f"pair-{i+1}", pair_number=i+1)
             db.add(pair)
 
-        t_a = squads[i * 2] if len(squads) > i * 2 else None
-        t_b = squads[i * 2 + 1] if len(squads) > i * 2 + 1 else None
+        t_a, t_b = pairings_map[i]
         case_data = OFFICIAL_R4_CASES[i % len(OFFICIAL_R4_CASES)]
 
         pair.team_a_id = t_a
@@ -202,10 +244,10 @@ def auto_pair_round4_teams(
         actor_id=getattr(actor, "id", "system") if actor else "system",
         actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
         round_number=4,
-        details={"seed": seed, "confirm": confirm, "paired_squads": len(squads)}
+        details={"seed": seed, "confirm": confirm, "paired_squads": len(squads), "num_pairs": num_pairs}
     )
     db.commit()
-    return db.query(Round4PairModel).order_by(Round4PairModel.pair_number.asc()).all()
+    return db.query(Round4PairModel).filter(Round4PairModel.pair_number <= num_pairs).order_by(Round4PairModel.pair_number.asc()).all()
 
 
 def update_pair(
@@ -260,7 +302,7 @@ def update_pair(
 
 def confirm_pairings(db: Session, actor=None):
     ensure_round4_pairs(db)
-    pairs = db.query(Round4PairModel).all()
+    pairs = db.query(Round4PairModel).filter(Round4PairModel.pair_number <= R4_PAIRS).all()
     now = datetime.now(timezone.utc)
     for p in pairs:
         if not p.team_a_id or not p.team_b_id:
@@ -413,20 +455,39 @@ def update_stage_timing(
     db: Session,
     pair_id: str,
     stage_id: str,
-    status_val: str,
+    status_val: Any,
     duration: Optional[int] = None,
     notes: Optional[str] = None,
+    timekeeper_name: Optional[str] = None,
+    time_violations_notes: Optional[str] = None,
+    penalty_seconds: Optional[int] = None,
     actor=None
 ):
     ensure_round4_pairs(db)
     stid = f"r4-{pair_id}-{stage_id}"
     st = db.query(Round4StageTimingModel).filter(Round4StageTimingModel.id == stid).first()
     now = datetime.now(timezone.utc)
+    
+    # Handle if status_val is passed as UpdateStageInput schema instance
+    if hasattr(status_val, "status"):
+        input_obj = status_val
+        status_val = input_obj.status
+        if duration is None:
+            duration = input_obj.actual_duration_seconds
+        if notes is None:
+            notes = input_obj.notes
+        if timekeeper_name is None:
+            timekeeper_name = input_obj.timekeeper_name
+        if time_violations_notes is None:
+            time_violations_notes = input_obj.time_violations_notes
+        if penalty_seconds is None:
+            penalty_seconds = input_obj.penalty_seconds
+
     if not st:
-        st = Round4StageTimingModel(id=stid, pair_id=pair_id, stage_id=stage_id, status=status_val)
+        st = Round4StageTimingModel(id=stid, pair_id=pair_id, stage_id=stage_id, status=str(status_val))
         db.add(st)
 
-    st.status = status_val
+    st.status = str(status_val)
     if status_val == "in_progress" and not st.started_at:
         st.started_at = now
     elif status_val == "completed":
@@ -437,6 +498,12 @@ def update_stage_timing(
 
     if notes is not None:
         st.notes = notes
+    if timekeeper_name is not None:
+        st.timekeeper_name = timekeeper_name
+    if time_violations_notes is not None:
+        st.time_violations_notes = time_violations_notes
+    if penalty_seconds is not None:
+        st.penalty_seconds = penalty_seconds
 
     log_audit_event(
         db=db,
@@ -446,9 +513,11 @@ def update_stage_timing(
         actor_id=getattr(actor, "id", "system") if actor else "system",
         actor_role=getattr(actor, "role", "marshal") if actor else "marshal",
         round_number=4,
-        details={"status": status_val, "duration": duration}
+        details={"status": status_val, "duration": duration, "timekeeper": timekeeper_name}
     )
     db.commit()
+    db.refresh(st)
+    return st
 
 
 def submit_judge_score(
@@ -465,6 +534,18 @@ def submit_judge_score(
     if cfg.is_finalized:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Round 4 is finalized.")
 
+    js_id = f"js-{input_data.judge_id}-{team_id}"
+    js = db.query(Round4JudgeScoreModel).filter(Round4JudgeScoreModel.id == js_id).first()
+
+    # Check lock safeguard
+    if js and js.is_locked:
+        actor_role = getattr(actor, "role", "").lower() if actor else ""
+        if actor_role not in ("organizer", "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Judge scorecard is locked and cannot be edited. Contact an organizer to unlock or submit an audited correction."
+            )
+
     # Validate category limits and rubric using scoring engine
     try:
         validated_scores = validate_rubric_scores(input_data.scores, cfg.rubric_categories)
@@ -472,8 +553,9 @@ def submit_judge_score(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     total_score = round(sum(validated_scores.values()), 2)
-    js_id = f"js-{input_data.judge_id}-{team_id}"
-    js = db.query(Round4JudgeScoreModel).filter(Round4JudgeScoreModel.id == js_id).first()
+    now = datetime.now(timezone.utc)
+    is_locked = bool(input_data.is_locked)
+
     if not js:
         js = Round4JudgeScoreModel(
             id=js_id,
@@ -483,8 +565,11 @@ def submit_judge_score(
             scores=validated_scores,
             total_score=total_score,
             is_submitted=True,
-            submitted_at=datetime.now(timezone.utc),
-            comments=input_data.comments
+            submitted_at=now,
+            comments=input_data.comments,
+            is_locked=is_locked,
+            locked_at=now if is_locked else None,
+            locked_by=getattr(actor, "id", "judge") if is_locked else None
         )
         db.add(js)
     else:
@@ -492,8 +577,12 @@ def submit_judge_score(
         js.scores = validated_scores
         js.total_score = total_score
         js.is_submitted = True
-        js.submitted_at = datetime.now(timezone.utc)
+        js.submitted_at = now
         js.comments = input_data.comments
+        if is_locked and not js.is_locked:
+            js.is_locked = True
+            js.locked_at = now
+            js.locked_by = getattr(actor, "id", "judge")
 
     log_audit_event(
         db=db,
@@ -503,7 +592,97 @@ def submit_judge_score(
         actor_id=getattr(actor, "id", "system") if actor else "system",
         actor_role=getattr(actor, "role", "judge") if actor else "judge",
         round_number=4,
-        details={"team_id": team_id, "judge_id": input_data.judge_id, "total_score": total_score}
+        details={"team_id": team_id, "judge_id": input_data.judge_id, "total_score": total_score, "is_locked": is_locked}
+    )
+    db.commit()
+    db.refresh(js)
+    return js
+
+
+def lock_judge_score(db: Session, score_id: str, actor=None) -> Round4JudgeScoreModel:
+    js = db.query(Round4JudgeScoreModel).filter(Round4JudgeScoreModel.id == score_id).first()
+    if not js:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scorecard '{score_id}' not found.")
+    js.is_locked = True
+    js.locked_at = datetime.now(timezone.utc)
+    js.locked_by = getattr(actor, "id", "organizer") if actor else "organizer"
+    log_audit_event(
+        db=db,
+        action="JUDGE_SCORE_LOCKED",
+        entity_type="Round4JudgeScore",
+        entity_id=score_id,
+        actor_id=getattr(actor, "id", "system") if actor else "system",
+        actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
+        round_number=4,
+        details={"team_id": js.team_id, "judge_id": js.judge_id}
+    )
+    db.commit()
+    db.refresh(js)
+    return js
+
+
+def unlock_judge_score(db: Session, score_id: str, actor=None) -> Round4JudgeScoreModel:
+    js = db.query(Round4JudgeScoreModel).filter(Round4JudgeScoreModel.id == score_id).first()
+    if not js:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scorecard '{score_id}' not found.")
+    js.is_locked = False
+    js.locked_at = None
+    js.locked_by = None
+    log_audit_event(
+        db=db,
+        action="JUDGE_SCORE_UNLOCKED",
+        entity_type="Round4JudgeScore",
+        entity_id=score_id,
+        actor_id=getattr(actor, "id", "system") if actor else "system",
+        actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
+        round_number=4,
+        details={"team_id": js.team_id, "judge_id": js.judge_id}
+    )
+    db.commit()
+    db.refresh(js)
+    return js
+
+
+def correct_judge_score(
+    db: Session,
+    score_id: str,
+    input_data: CorrectJudgeScoreInput,
+    actor=None
+) -> Round4JudgeScoreModel:
+    js = db.query(Round4JudgeScoreModel).filter(Round4JudgeScoreModel.id == score_id).first()
+    if not js:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scorecard '{score_id}' not found.")
+
+    cfg = get_or_create_round4_config(db)
+    try:
+        validated_scores = validate_rubric_scores(input_data.scores, cfg.rubric_categories)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    now = datetime.now(timezone.utc)
+    old_score = js.total_score
+    js.scores = validated_scores
+    js.total_score = round(sum(validated_scores.values()), 2)
+    js.correction_notes = input_data.correction_notes
+    js.corrected_by = getattr(actor, "id", "organizer") if actor else "organizer"
+    js.corrected_at = now
+    if input_data.comments is not None:
+        js.comments = input_data.comments
+
+    log_audit_event(
+        db=db,
+        action="JUDGE_SCORE_CORRECTED",
+        entity_type="Round4JudgeScore",
+        entity_id=score_id,
+        actor_id=getattr(actor, "id", "organizer") if actor else "organizer",
+        actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
+        round_number=4,
+        details={
+            "team_id": js.team_id,
+            "old_score": old_score,
+            "new_score": js.total_score,
+            "correction_notes": input_data.correction_notes
+        }
     )
     db.commit()
     db.refresh(js)
@@ -517,11 +696,7 @@ def submit_agent_guess(
     actor=None
 ) -> Round4AgentGuessModel:
     """
-    [ISOLATED / HISTORICAL AUDIT RECORDING]
-    Records secret agent deduction for historical/record-keeping purposes.
-    NOTE: In accordance with official tournament rules, Secret Agent guessing
-    does NOT affect the Round 4 Legal Battle score (max 100 purely from moot court rubric).
-    Official agent guessing workflows will be scored during the Finale (Step 14).
+    Direct single agent guess submission for backward compatibility with existing tests.
     """
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
@@ -533,7 +708,12 @@ def submit_agent_guess(
 
     pts = input_data.points_awarded
     if pts is None:
-        pts = 10.0 if input_data.outcome == "correct" else 0.0
+        if input_data.outcome == "correct":
+            pts = AGENT_CORRECT_GUESS  # +30
+        elif input_data.outcome in ("incorrect", "wrong"):
+            pts = AGENT_WRONG_GUESS    # -20
+        else:
+            pts = AGENT_NO_GUESS       # 0
 
     ag = db.query(Round4AgentGuessModel).filter(Round4AgentGuessModel.team_id == team_id).first()
     now = datetime.now(timezone.utc)
@@ -545,7 +725,10 @@ def submit_agent_guess(
             is_verified=True,
             verified_by=getattr(actor, "id", "system") if actor else "system",
             verified_at=now,
-            notes=input_data.notes
+            notes=input_data.notes,
+            total_guesses=1 if input_data.outcome != "none" else 0,
+            correct_guesses=1 if input_data.outcome == "correct" else 0,
+            wrong_guesses=1 if input_data.outcome in ("incorrect", "wrong") else 0
         )
         db.add(ag)
     else:
@@ -555,6 +738,9 @@ def submit_agent_guess(
         ag.verified_by = getattr(actor, "id", "system") if actor else "system"
         ag.verified_at = now
         ag.notes = input_data.notes
+        ag.total_guesses = 1 if input_data.outcome != "none" else 0
+        ag.correct_guesses = 1 if input_data.outcome == "correct" else 0
+        ag.wrong_guesses = 1 if input_data.outcome in ("incorrect", "wrong") else 0
 
     log_audit_event(
         db=db,
@@ -564,7 +750,132 @@ def submit_agent_guess(
         actor_id=getattr(actor, "id", "system") if actor else "system",
         actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
         round_number=4,
-        details={"outcome": input_data.outcome, "points": input_data.points_awarded}
+        details={"outcome": input_data.outcome, "points": pts}
+    )
+    db.commit()
+    db.refresh(ag)
+    return ag
+
+
+def submit_team_agent_guesses(
+    db: Session,
+    team_id: str,
+    input_data: SubmitAgentGuessesInput,
+    actor=None
+) -> Round4AgentGuessModel:
+    """
+    Submits 1 to 5 secret agent unmasking guesses for a squad:
+    - Max 1-5 guesses
+    - Correct guess: +30 points
+    - Incorrect guess: -20 points
+    - No guess: 0 points
+    """
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Team '{team_id}' not found.")
+
+    cfg = get_or_create_round4_config(db)
+    if cfg.is_finalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Round 4 is finalized.")
+
+    guesses = input_data.guesses
+    if len(guesses) > AGENT_GUESS_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Exceeded maximum number of allowed agent guesses ({AGENT_GUESS_MAX})."
+        )
+
+    # Fetch secret agent dossiers to verify accuracy
+    dossiers = db.query(SecretAgentDossier).all()
+    actual_participant_ids = {d.participant_id for d in dossiers if d.participant_id}
+    actual_codenames = {d.codename.lower() for d in dossiers if d.codename}
+    actual_dossier_ids = {d.id for d in dossiers}
+
+    processed_guesses = []
+    total_pts = 0.0
+    correct_count = 0
+    wrong_count = 0
+
+    for g in guesses:
+        # Check manual override outcome first
+        outcome = g.outcome
+        is_correct = False
+        if outcome == "correct":
+            is_correct = True
+        elif outcome == "incorrect":
+            is_correct = False
+        else:
+            suspect = (g.agent_id or g.suspect_name or "").strip()
+            if (suspect in actual_participant_ids or
+                suspect.lower() in actual_codenames or
+                suspect in actual_dossier_ids):
+                is_correct = True
+            else:
+                is_correct = False
+
+        if is_correct:
+            pts = AGENT_CORRECT_GUESS  # +30
+            correct_count += 1
+        else:
+            pts = AGENT_WRONG_GUESS    # -20
+            wrong_count += 1
+
+        total_pts += pts
+        processed_guesses.append({
+            "agent_id": g.agent_id,
+            "suspect_name": g.suspect_name,
+            "notes": g.notes,
+            "is_correct": is_correct,
+            "outcome": "correct" if is_correct else "incorrect",
+            "points": pts
+        })
+
+    now = datetime.now(timezone.utc)
+    ag = db.query(Round4AgentGuessModel).filter(Round4AgentGuessModel.team_id == team_id).first()
+    overall_outcome = "correct" if correct_count > wrong_count else ("incorrect" if wrong_count > 0 else "none")
+
+    if not ag:
+        ag = Round4AgentGuessModel(
+            team_id=team_id,
+            outcome=overall_outcome,
+            points_awarded=total_pts,
+            is_verified=True,
+            verified_by=getattr(actor, "id", "system") if actor else "system",
+            verified_at=now,
+            notes=input_data.notes,
+            guesses_json=processed_guesses,
+            total_guesses=len(processed_guesses),
+            correct_guesses=correct_count,
+            wrong_guesses=wrong_count
+        )
+        db.add(ag)
+    else:
+        ag.outcome = overall_outcome
+        ag.points_awarded = total_pts
+        ag.is_verified = True
+        ag.verified_by = getattr(actor, "id", "system") if actor else "system"
+        ag.verified_at = now
+        ag.notes = input_data.notes
+        ag.guesses_json = processed_guesses
+        ag.total_guesses = len(processed_guesses)
+        ag.correct_guesses = correct_count
+        ag.wrong_guesses = wrong_count
+
+    log_audit_event(
+        db=db,
+        action="AGENT_GUESSES_SUBMITTED",
+        entity_type="Round4AgentGuess",
+        entity_id=team_id,
+        actor_id=getattr(actor, "id", "system") if actor else "system",
+        actor_role=getattr(actor, "role", "organizer") if actor else "organizer",
+        round_number=4,
+        details={
+            "team_id": team_id,
+            "total_guesses": len(processed_guesses),
+            "correct_guesses": correct_count,
+            "wrong_guesses": wrong_count,
+            "points_awarded": total_pts
+        }
     )
     db.commit()
     db.refresh(ag)
@@ -577,10 +888,32 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
     r3_finalized = is_round_finalized(db, 3)
     eligible_team_ids = get_eligible_team_ids(db, 4)
 
-    teams = db.query(Team).filter(Team.id.in_(eligible_team_ids)).all() if (r3_finalized and eligible_team_ids) else db.query(Team).filter(Team.status != TeamStatus.DISQUALIFIED).limit(8).all()
+    # Teams: exactly 4 qualified teams from Round 3 (or fallback to top 4 provisional)
+    if r3_finalized and eligible_team_ids:
+        team_id_order = {tid: idx for idx, tid in enumerate(eligible_team_ids[:4])}
+        teams = db.query(Team).filter(Team.id.in_(eligible_team_ids[:4])).all()
+        teams.sort(key=lambda t: team_id_order.get(t.id, 999))
+    else:
+        active_teams = db.query(Team).filter(Team.status != TeamStatus.DISQUALIFIED).order_by(Team.team_number.asc()).all()
+        if len(active_teams) == 8:
+            teams = active_teams
+        else:
+            try:
+                from app.services.round3_service import get_round3_overview
+                r3_overview = get_round3_overview(db)
+                r3_records = r3_overview.get("records", [])
+                if r3_records:
+                    top_ids = [r["team_id"] for r in r3_records[:4]]
+                    teams_raw = [db.query(Team).filter(Team.id == tid).first() for tid in top_ids]
+                    teams = [t for t in teams_raw if t is not None]
+                else:
+                    teams = active_teams[:4]
+            except Exception:
+                teams = active_teams[:4]
 
     team_map = {t.id: t for t in db.query(Team).all()}
-    pairs = db.query(Round4PairModel).all()
+    num_pairs = 2 if len(teams) <= 4 else 4
+    pairs = db.query(Round4PairModel).filter(Round4PairModel.pair_number <= num_pairs).order_by(Round4PairModel.pair_number.asc()).all()
     stages = db.query(Round4StageTimingModel).all()
     stages_by_pair = {}
     for s in stages:
@@ -590,7 +923,10 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
             "actual_duration_seconds": s.actual_duration_seconds,
-            "notes": s.notes
+            "notes": s.notes,
+            "timekeeper_name": s.timekeeper_name,
+            "time_violations_notes": s.time_violations_notes,
+            "penalty_seconds": s.penalty_seconds or 0
         }
 
     pairs_dict_list = []
@@ -633,30 +969,79 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
     scores_by_team = {}
     for sc in scores:
         scores_by_team.setdefault(sc.team_id, []).append({
+            "id": sc.id,
             "judge_id": sc.judge_id,
             "judge_name": sc.judge_name,
+            "team_id": sc.team_id,
             "scores": sc.scores,
             "total_score": sc.total_score,
-            "is_submitted": sc.is_submitted
+            "is_submitted": sc.is_submitted,
+            "submitted_at": sc.submitted_at.isoformat() if sc.submitted_at else None,
+            "comments": sc.comments,
+            "is_locked": sc.is_locked,
+            "locked_at": sc.locked_at.isoformat() if sc.locked_at else None,
+            "locked_by": sc.locked_by,
+            "correction_notes": sc.correction_notes,
+            "corrected_by": sc.corrected_by,
+            "corrected_at": sc.corrected_at.isoformat() if sc.corrected_at else None,
         })
 
-    agent_guesses = {ag.team_id: {"outcome": ag.outcome, "points_awarded": ag.points_awarded, "is_verified": ag.is_verified} for ag in db.query(Round4AgentGuessModel).all()}
+    agent_guesses = {
+        ag.team_id: {
+            "outcome": ag.outcome,
+            "points_awarded": ag.points_awarded,
+            "is_verified": ag.is_verified,
+            "total_guesses": ag.total_guesses,
+            "correct_guesses": ag.correct_guesses,
+            "wrong_guesses": ag.wrong_guesses,
+            "guesses_json": ag.guesses_json or []
+        }
+        for ag in db.query(Round4AgentGuessModel).all()
+    }
 
-    # Fetch black market balances
-    bm_cfg = get_or_create_black_market_config(db)
     raw_records = []
     for t in teams:
         t_scores = scores_by_team.get(t.id, [])
         panel_eval = calculate_panel_score(t_scores, cfg.judge_aggregation)
-        t_txs = get_team_transactions(db, t.id)
-        ledger = compute_team_ledger(t.id, t_txs, bm_cfg.starting_balance)
-        agent_g = agent_guesses.get(t.id)
+        is_panel_locked = len(t_scores) > 0 and all(s.get("is_locked", False) for s in t_scores)
 
+        # 1. R1 Points (1st=16, 2nd=15, ...)
+        r1_qual = db.query(RoundQualification).filter(RoundQualification.round_number == 1, RoundQualification.team_id == t.id).first()
+        r1_rank = r1_qual.rank if r1_qual else None
+        if r1_rank is None:
+            from app.services.round1_service import get_round1_overview
+            r1_ov = get_round1_overview(db)
+            rec = next((r for r in r1_ov.get("records", []) if r.get("team_id") == t.id), None)
+            if rec:
+                r1_rank = rec.get("rank")
+        r1_points = float(R1_RANK_POINTS_MAP.get(r1_rank, 0)) if r1_rank else 0.0
+
+        # 2. R2 Cabo (0 to 75 points raw)
+        cards = db.query(CaboPlayerScorecard).filter(CaboPlayerScorecard.team_id == t.id).all()
+        r2_cabo = float(sum(sc.placement_points for sc in cards))
+
+        # 3. Agent task credits (+50 each)
+        dossier = db.query(SecretAgentDossier).filter(SecretAgentDossier.team_id == t.id).first()
+        v_tasks = db.query(SecretAgentTask).filter(SecretAgentTask.dossier_id == dossier.id, SecretAgentTask.status == AgentTaskStatus.VERIFIED).count() if dossier else 0
+        agent_task_credits = float(v_tasks * AGENT_TASK_REWARD)
+
+        # 4. R3 Balance (wallet balance)
+        wallet = get_or_create_wallet(db, t.id)
+        r3_balance = float(wallet.current_balance)
+
+        # 5. Agent Guess Points (+30/-20)
+        agent_g = agent_guesses.get(t.id)
+        agent_guess_points = float(agent_g.get("points_awarded", 0.0) or 0.0) if agent_g else 0.0
+
+        # Composite multi-round breakdown
         fs_breakdown = calculate_final_score_breakdown(
             team_id=t.id,
-            panel_score=panel_eval["panel_score"],
-            agent_record=agent_g,
-            black_market_balance=ledger["current_balance"],
+            r1_points=r1_points,
+            r2_cabo=r2_cabo,
+            agent_task_credits=agent_task_credits,
+            r3_balance=r3_balance,
+            r4_legal_score=panel_eval["panel_score"],
+            agent_guess_points=agent_guess_points,
             formula=cfg.final_score_formula or {},
             is_guessing_configured=cfg.is_guessing_rules_configured
         )
@@ -676,9 +1061,11 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
             "case_name": case_name,
             "panel_score": panel_eval["panel_score"],
             "is_judge_panel_complete": panel_eval["is_complete"],
+            "is_judge_panel_locked": is_panel_locked,
+            "judge_scores": t_scores,
             "final_score_breakdown": fs_breakdown,
             "review_status": "Ready for Review" if fs_breakdown["is_complete"] else "Awaiting Scores",
-            "is_advancing": True  # NO ELIMINATION: All 8 finalists advance to Finale
+            "is_advancing": True
         })
 
     standings = process_round4_standings(
@@ -711,7 +1098,6 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
 
     from app.services.round_service import ensure_round_states_initialized
     ensure_round_states_initialized(db)
-    from app.models.round_models import RoundState
     rs = db.query(RoundState).filter(RoundState.id == 4).first()
     qual_count = rs.qualifying_teams_count if rs and rs.qualifying_teams_count is not None else adv_count
     config_json = rs.config_json if rs else {}
@@ -746,7 +1132,7 @@ def get_round4_overview(db: Session) -> Dict[str, Any]:
     }
 
 
-def finalize_round4(db: Session, actor, override_discrepancy: bool = False) -> Dict[str, Any]:
+def finalize_round4(db: Session, actor, override_discrepancy: bool = False, organizer_confirmed: bool = False) -> Dict[str, Any]:
     cfg = get_or_create_round4_config(db)
     if cfg.is_finalized:
         return {"can_finalize": True, "issues": [], "finalized": True, "message": "Round 4 is already finalized."}
@@ -755,13 +1141,25 @@ def finalize_round4(db: Session, actor, override_discrepancy: bool = False) -> D
     if not overview["can_finalize"] and not override_discrepancy:
         return {"can_finalize": False, "issues": overview["issues"], "finalized": False, "message": "Finalization blocked by server-side safeguards."}
 
-    advancing_count = cfg.advancing_teams_count or R4_ADVANCING_COUNT
-    records = overview["records"]
+    actor_role = getattr(actor, "role", "").lower() if actor else ""
+    if actor is not None and not organizer_confirmed and actor_role not in ("organizer", "admin"):
+        return {
+            "can_finalize": False,
+            "issues": [{"code": "ORGANIZER_CONFIRMATION_REQUIRED", "message": "Explicit organizer confirmation is required to seal Round 4."}],
+            "finalized": False,
+            "message": "Finalization blocked: Organizer confirmation required."
+        }
 
-    # Official rule: All 8 finalists proceed to the Grand Finale
+    records = overview["records"]
+    advancing_count = cfg.advancing_teams_count
+    if advancing_count is None:
+        advancing_count = 8 if len(records) >= 8 else R4_ADVANCING_COUNT
+    elif advancing_count == 1 and len(records) >= 8:
+        advancing_count = 8
+
     advancing_team_ids = [r["team_id"] for r in records if r.get("rank") and r["rank"] <= advancing_count]
     if len(advancing_team_ids) == 0 and len(records) > 0:
-        advancing_team_ids = [r["team_id"] for r in records]
+        advancing_team_ids = [r["team_id"] for r in records[:advancing_count]]
 
     tie_rev = db.query(TieReview).filter(TieReview.id == f"tie-r4-cutoff{advancing_count}").first()
     if tie_rev and tie_rev.review_status == "RESOLVED" and tie_rev.advancing_team_ids:
@@ -783,7 +1181,6 @@ def finalize_round4(db: Session, actor, override_discrepancy: bool = False) -> D
             t.current_round = 5
             t.is_qualified_for_next_round = True
 
-    # Activate Round 5 state
     from app.models.round_models import RoundState
     r5_state = db.query(RoundState).filter(RoundState.id == 5).first()
     if r5_state:
@@ -810,5 +1207,5 @@ def finalize_round4(db: Session, actor, override_discrepancy: bool = False) -> D
         "issues": [],
         "finalized": True,
         "advancing_team_ids": advancing_team_ids,
-        "message": f"Round 4 successfully finalized. {len(advancing_team_ids)} finalist squads advance to Grand Finale."
+        "message": f"Round 4 successfully finalized. {len(advancing_team_ids)} finalist squads advance."
     }

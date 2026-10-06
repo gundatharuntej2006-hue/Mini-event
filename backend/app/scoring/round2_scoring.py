@@ -1,12 +1,11 @@
-﻿from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
+from app.core.constants import R1_QUALIFIERS, R2_QUALIFIERS
 
 def is_point_table_valid(point_table: Dict[Any, Any]) -> bool:
     if not isinstance(point_table, dict):
         return False
-    for i in range(1, 25):
-        val = point_table.get(i)
-        if val is None:
-            val = point_table.get(str(i))
+    # Validate whatever placements are in the table, must be non-negative
+    for k, val in point_table.items():
         if val is None or not isinstance(val, (int, float)) or val < 0:
             return False
     return True
@@ -73,6 +72,8 @@ def process_round2_standings(
     point_table = config.get("point_table", {})
     is_finalized = config.get("is_finalized", False)
 
+    cutoff = R2_QUALIFIERS  # 8 qualifiers to Round 3
+
     complete_records = [r for r in records if r.get("is_complete") and r.get("total_points") is not None]
     incomplete_records = [r for r in records if not (r.get("is_complete") and r.get("total_points") is not None)]
 
@@ -96,22 +97,22 @@ def process_round2_standings(
     ties_affecting_cutoff = False
     tied_teams_at_cutoff = []
 
-    # Cutoff is between Rank 12 (qualifying) and Rank 13 (eliminated)
+    # Cutoff is between Rank cutoff (qualifying) and Rank cutoff + 1 (eliminated)
     for pts, group in score_groups.items():
         if len(group) > 1:
             ranks = [r["rank"] for r in group]
             min_rank = min(ranks)
             max_rank = max(ranks)
-            spans_cutoff = (min_rank <= 12 and max_rank >= 13)
+            spans_cutoff = (min_rank <= cutoff and max_rank > cutoff)
 
             for r in group:
                 if spans_cutoff:
                     r["tie_requires_review"] = True
-                    r["tie_reason"] = f"Tied on {pts} total points spanning the 12th-place cutoff (Ranks #{min_rank}-#{max_rank}). Manual review required."
+                    r["tie_reason"] = f"Tied on {pts} total points spanning the {cutoff}th-place cutoff (Ranks #{min_rank}-#{max_rank}). Manual review required."
                     ties_affecting_cutoff = True
                     tied_teams_at_cutoff.append(r["team_id"])
-                elif max_rank <= 12:
-                    r["tie_reason"] = f"Tied on {pts} total points inside Top 12."
+                elif max_rank <= cutoff:
+                    r["tie_reason"] = f"Tied on {pts} total points inside Top {cutoff}."
                 else:
                     r["tie_reason"] = f"Tied on {pts} total points in elimination zone."
 
@@ -119,11 +120,11 @@ def process_round2_standings(
         if not round1_finalized:
             r["qualification_status"] = "Round 1 Pending"
         elif is_finalized:
-            r["qualification_status"] = "Finalized Qualified" if r["rank"] <= 12 else "Finalized Eliminated"
+            r["qualification_status"] = f"Finalized Qualified" if r["rank"] <= cutoff else "Finalized Eliminated"
         elif r.get("tie_requires_review"):
             r["qualification_status"] = "Tie Review Needed"
-        elif r["rank"] <= 12:
-            r["qualification_status"] = "Provisional Top 12"
+        elif r["rank"] <= cutoff:
+            r["qualification_status"] = f"Provisional Top {cutoff}"
         else:
             r["qualification_status"] = "Provisional Cutoff"
 
@@ -144,11 +145,11 @@ def process_round2_standings(
             "code": "PREVIOUS_ROUND_UNFINALIZED",
             "message": "Round 1 results are not yet officially finalized. Finalize Round 1 first."
         })
-    if len(records) != 24:
+    if len(records) != R1_QUALIFIERS and len(records) != 24:
         can_finalize = False
         issues.append({
             "code": "INVALID_TEAM_COUNT",
-            "message": f"Expected exactly 24 qualified teams from Round 1, but found {len(records)}."
+            "message": f"Expected exactly {R1_QUALIFIERS} qualified teams from Round 1, but found {len(records)}."
         })
     if len(incomplete_records) > 0:
         can_finalize = False
@@ -160,19 +161,19 @@ def process_round2_standings(
         can_finalize = False
         issues.append({
             "code": "INVALID_CONFIG",
-            "message": "Placement points table is incomplete or invalid. All 24 placements must have valid non-negative points."
+            "message": "Placement points table is incomplete or invalid."
         })
     if ties_affecting_cutoff:
         can_finalize = False
         issues.append({
             "code": "CUTOFF_TIE",
-            "message": "An unresolved tie affects the 12th-place qualification cutoff boundary. Manual marshal review required."
+            "message": f"An unresolved tie affects the {cutoff}th-place qualification cutoff boundary. Manual marshal review required."
         })
 
     block_reason = issues[0]["message"] if issues else None
 
-    top12_team_ids = [r["team_id"] for r in complete_records if r.get("rank") and r["rank"] <= 12]
-    eliminated_team_ids = [r["team_id"] for r in complete_records if r.get("rank") and r["rank"] > 12]
+    top8_team_ids = [r["team_id"] for r in complete_records if r.get("rank") and r["rank"] <= cutoff]
+    eliminated_team_ids = [r["team_id"] for r in complete_records if r.get("rank") and r["rank"] > cutoff]
 
     return {
         "records": all_records,
@@ -181,7 +182,8 @@ def process_round2_standings(
         "block_reason": block_reason,
         "ties_affecting_cutoff": ties_affecting_cutoff,
         "tied_teams_at_cutoff": list(set(tied_teams_at_cutoff)),
-        "top12_team_ids": top12_team_ids,
+        "top8_team_ids": top8_team_ids,
+        "top12_team_ids": top8_team_ids,  # backward compatibility alias
         "eliminated_team_ids": eliminated_team_ids,
         "complete_count": len(complete_records),
         "incomplete_count": len(incomplete_records)

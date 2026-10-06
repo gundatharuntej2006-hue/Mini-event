@@ -122,11 +122,15 @@ class CaboTablePlayerInfo(BaseModel):
     seat_position: int = Field(..., serialization_alias="seatPosition")
     participant_id: str = Field(..., serialization_alias="participantId")
     participant_name: str = Field(..., serialization_alias="participantName")
+    participant_usn: Optional[str] = Field(default=None, serialization_alias="participantUsn")
     team_id: str = Field(..., serialization_alias="teamId")
     team_name: str = Field(..., serialization_alias="teamName")
     placement: Optional[int] = None
     placement_points: Optional[float] = Field(default=None, serialization_alias="placementPoints")
     final_card_hand_total: Optional[int] = Field(default=None, serialization_alias="finalCardHandTotal")
+    is_verified: bool = Field(default=False, serialization_alias="isVerified")
+    verified_by: Optional[str] = Field(default=None, serialization_alias="verifiedBy")
+    verified_at: Optional[str] = Field(default=None, serialization_alias="verifiedAt")
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -135,6 +139,7 @@ class CaboTableDetailResponse(BaseModel):
     game_number: int = Field(..., serialization_alias="gameNumber")
     table_number: int = Field(..., serialization_alias="tableNumber")
     is_completed: bool = Field(default=False, serialization_alias="isCompleted")
+    is_verified: bool = Field(default=False, serialization_alias="isVerified")
     players: List[CaboTablePlayerInfo]
 
     model_config = {"populate_by_name": True, "from_attributes": True}
@@ -150,8 +155,17 @@ class CaboTeamStandingResponse(BaseModel):
     team_name: str = Field(..., serialization_alias="teamName")
     team_number: int = Field(..., serialization_alias="teamNumber")
     cabo_score: float = Field(..., serialization_alias="caboScore")
+    game1_score: Optional[float] = Field(default=None, serialization_alias="game1Score")
+    game2_score: Optional[float] = Field(default=None, serialization_alias="game2Score")
+    game3_score: Optional[float] = Field(default=None, serialization_alias="game3Score")
     combined_card_total: int = Field(..., serialization_alias="combinedCardTotal")
     first_place_count: int = Field(..., serialization_alias="firstPlaceCount")
+    echo_status: str = Field(default="PENDING", serialization_alias="echoStatus")
+    echo_e_verified: bool = Field(default=False, serialization_alias="echoEVerified")
+    echo_c_verified: bool = Field(default=False, serialization_alias="echoCVerified")
+    echo_ho_verified: bool = Field(default=False, serialization_alias="echoHoVerified")
+    prime_status: str = Field(default="PENDING", serialization_alias="primeStatus")
+    prime_sequence_verified: bool = Field(default=False, serialization_alias="primeSequenceVerified")
     rank: int
     is_qualified: bool = Field(..., serialization_alias="isQualified")
     is_tied_unresolved: bool = Field(default=False, serialization_alias="isTiedUnresolved")
@@ -169,6 +183,168 @@ class CaboFinalizationResponse(BaseModel):
     standings: List[CaboTeamStandingResponse]
 
     model_config = {"populate_by_name": True, "from_attributes": True}
+
+
+class CaboEchoVerifyRequest(BaseModel):
+    game_1_e: bool = Field(default=False, alias="game1E")
+    game_2_c: bool = Field(default=False, alias="game2C")
+    game_3_ho: bool = Field(default=False, alias="game3Ho")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPrimeVerifyRequest(BaseModel):
+    sequence: Optional[List[int]] = None
+    is_verified: bool = Field(default=True, alias="isVerified")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboSwapSeatsRequest(BaseModel):
+    game_number: int = Field(..., ge=1, le=3, alias="gameNumber")
+    assignment_id_1: str = Field(..., alias="assignmentId1")
+    assignment_id_2: str = Field(..., alias="assignmentId2")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboSummaryResponse(BaseModel):
+    total_tables_per_game: int = Field(default=16, serialization_alias="totalTablesPerGame")
+    expected_total_tables: int = Field(default=48, serialization_alias="expectedTotalTables")
+    expected_total_scorecards: int = Field(default=240, serialization_alias="expectedTotalScorecards")
+    game1_completed_tables: int = Field(default=0, serialization_alias="game1CompletedTables")
+    game2_completed_tables: int = Field(default=0, serialization_alias="game2CompletedTables")
+    game3_completed_tables: int = Field(default=0, serialization_alias="game3CompletedTables")
+    total_completed_tables: int = Field(default=0, serialization_alias="totalCompletedTables")
+    total_scorecards: int = Field(default=0, serialization_alias="totalScorecards")
+    is_finalized: bool = Field(default=False, serialization_alias="isFinalized")
+    is_tables_confirmed: bool = Field(default=False, serialization_alias="isTablesConfirmed")
+    tables_confirmed_at: Optional[str] = Field(default=None, serialization_alias="tablesConfirmedAt")
+    tables_confirmed_by: Optional[str] = Field(default=None, serialization_alias="tablesConfirmedBy")
+    has_cutoff_tie: bool = Field(default=False, serialization_alias="hasCutoffTie")
+    can_finalize: bool = Field(default=False, serialization_alias="canFinalize")
+    incomplete_reasons: List[str] = Field(default_factory=list, serialization_alias="incompleteReasons")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboTableValidationResponse(BaseModel):
+    is_valid: bool = Field(..., serialization_alias="isValid")
+    is_confirmed: bool = Field(default=False, serialization_alias="isConfirmed")
+    confirmed_at: Optional[str] = Field(default=None, serialization_alias="confirmedAt")
+    confirmed_by: Optional[str] = Field(default=None, serialization_alias="confirmedBy")
+    total_teams: int = Field(..., serialization_alias="totalTeams")
+    total_players: int = Field(..., serialization_alias="totalPlayers")
+    total_tables: int = Field(..., serialization_alias="totalTables")
+    constraints: Dict[str, bool]
+    errors: List[str]
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboConfirmTablesResponse(BaseModel):
+    is_confirmed: bool = Field(..., serialization_alias="isConfirmed")
+    confirmed_at: str = Field(..., serialization_alias="confirmedAt")
+    confirmed_by: str = Field(..., serialization_alias="confirmedBy")
+    message: str
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPlayerGameDetail(BaseModel):
+    game_number: int = Field(..., serialization_alias="gameNumber")
+    table_number: int = Field(..., serialization_alias="tableNumber")
+    seat_position: int = Field(..., serialization_alias="seatPosition")
+    placement: Optional[int] = None
+    placement_points: Optional[float] = Field(default=None, serialization_alias="placementPoints")
+    final_card_hand_total: Optional[int] = Field(default=None, serialization_alias="finalCardHandTotal")
+    is_verified: bool = Field(default=False, serialization_alias="isVerified")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPlayerDetailResponse(BaseModel):
+    participant_id: str = Field(..., serialization_alias="participantId")
+    participant_name: str = Field(..., serialization_alias="participantName")
+    participant_usn: Optional[str] = Field(default=None, serialization_alias="participantUsn")
+    team_id: str = Field(..., serialization_alias="teamId")
+    team_name: str = Field(..., serialization_alias="teamName")
+    team_number: Optional[int] = Field(default=None, serialization_alias="teamNumber")
+    games: List[CaboPlayerGameDetail]
+    total_points: float = Field(default=0.0, serialization_alias="totalPoints")
+    first_places_count: int = Field(default=0, serialization_alias="firstPlacesCount")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboTeamMemberPerformance(BaseModel):
+    participant_id: str = Field(..., serialization_alias="participantId")
+    participant_name: str = Field(..., serialization_alias="participantName")
+    participant_usn: Optional[str] = Field(default=None, serialization_alias="participantUsn")
+    role: str
+    game1_table: Optional[int] = Field(default=None, serialization_alias="game1Table")
+    game1_placement: Optional[int] = Field(default=None, serialization_alias="game1Placement")
+    game1_points: Optional[float] = Field(default=None, serialization_alias="game1Points")
+    game2_table: Optional[int] = Field(default=None, serialization_alias="game2Table")
+    game2_placement: Optional[int] = Field(default=None, serialization_alias="game2Placement")
+    game2_points: Optional[float] = Field(default=None, serialization_alias="game2Points")
+    game3_table: Optional[int] = Field(default=None, serialization_alias="game3Table")
+    game3_placement: Optional[int] = Field(default=None, serialization_alias="game3Placement")
+    game3_points: Optional[float] = Field(default=None, serialization_alias="game3Points")
+    total_individual_points: float = Field(default=0.0, serialization_alias="totalIndividualPoints")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboTeamDetailResponse(BaseModel):
+    team_id: str = Field(..., serialization_alias="teamId")
+    team_name: str = Field(..., serialization_alias="teamName")
+    team_number: int = Field(..., serialization_alias="teamNumber")
+    members: List[CaboTeamMemberPerformance]
+    game1_total: float = Field(default=0.0, serialization_alias="game1Total")
+    game2_total: float = Field(default=0.0, serialization_alias="game2Total")
+    game3_total: float = Field(default=0.0, serialization_alias="game3Total")
+    cabo_squad_total: float = Field(default=0.0, serialization_alias="caboSquadTotal")
+    rank: Optional[int] = None
+    is_qualified: bool = Field(default=False, serialization_alias="isQualified")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboScoreCorrectionRequest(BaseModel):
+    participant_id: str = Field(..., serialization_alias="participantId", alias="participantId")
+    new_placement: int = Field(..., ge=1, le=5, serialization_alias="newPlacement", alias="newPlacement")
+    reason: str = Field(..., min_length=3, max_length=500, description="Mandatory audit reason for organizer correction")
+    new_card_total: Optional[int] = Field(default=None, alias="newCardTotal")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPrintableTablePlayer(BaseModel):
+    seat_position: int = Field(..., serialization_alias="seatPosition")
+    participant_name: str = Field(..., serialization_alias="participantName")
+    participant_usn: Optional[str] = Field(default=None, serialization_alias="participantUsn")
+    team_name: str = Field(..., serialization_alias="teamName")
+    team_number: Optional[int] = Field(default=None, serialization_alias="teamNumber")
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPrintableTableSheet(BaseModel):
+    table_number: int = Field(..., serialization_alias="tableNumber")
+    game_number: int = Field(..., serialization_alias="gameNumber")
+    players: List[CaboPrintableTablePlayer]
+
+    model_config = {"populate_by_name": True}
+
+
+class CaboPrintableSheetResponse(BaseModel):
+    game_number: int = Field(..., serialization_alias="gameNumber")
+    tables: List[CaboPrintableTableSheet]
+
+    model_config = {"populate_by_name": True}
 
 
 # ==============================================================================
@@ -220,6 +396,13 @@ class FinalCodeRecordResponse(BaseModel):
     fragment_1_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment1DiscoveredAt")
     fragment_2_status: FragmentStatus = Field(..., serialization_alias="fragment2Status")
     fragment_2_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment2DiscoveredAt")
+    fragment_3_status: FragmentStatus = Field(default=FragmentStatus.PENDING, serialization_alias="fragment3Status")
+    fragment_3_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment3DiscoveredAt")
+    fragment_4_status: FragmentStatus = Field(default=FragmentStatus.PENDING, serialization_alias="fragment4Status")
+    fragment_4_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment4DiscoveredAt")
+    gate_3_confirmed: bool = Field(default=False, serialization_alias="gate3Confirmed")
+    gate_3_confirmed_at: Optional[datetime] = Field(default=None, serialization_alias="gate3ConfirmedAt")
+    gate_3_confirmed_by: Optional[str] = Field(default=None, serialization_alias="gate3ConfirmedBy")
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     verified_at: Optional[datetime] = Field(default=None, serialization_alias="verifiedAt")
     verified_by: Optional[str] = Field(default=None, serialization_alias="verifiedBy")
@@ -270,6 +453,13 @@ class BlackMarketPurchaseCreate(BaseModel):
     model_config = {"populate_by_name": True, "from_attributes": True}
 
 
+class BlackMarketApproveRequest(BaseModel):
+    second_organizer_id: Optional[str] = Field(default=None, alias="secondOrganizerId", serialization_alias="secondOrganizerId")
+    notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
 class BlackMarketPurchaseResponse(BaseModel):
     id: str
     team_id: str = Field(..., serialization_alias="teamId")
@@ -278,9 +468,15 @@ class BlackMarketPurchaseResponse(BaseModel):
     quantity: int
     transaction_id: Optional[str] = Field(default=None, serialization_alias="transactionId")
     status: PurchaseStatus
+    approval_status: str = Field(default="APPROVED", serialization_alias="approvalStatus")
+    first_approved_by: Optional[str] = Field(default=None, serialization_alias="firstApprovedBy")
+    first_approved_at: Optional[datetime] = Field(default=None, serialization_alias="firstApprovedAt")
+    second_approved_by: Optional[str] = Field(default=None, serialization_alias="secondApprovedBy")
+    second_approved_at: Optional[datetime] = Field(default=None, serialization_alias="secondApprovedAt")
     details: Optional[Dict[str, Any]] = None
     purchased_at: datetime = Field(..., serialization_alias="purchasedAt")
     purchased_by: Optional[str] = Field(default=None, serialization_alias="purchasedBy")
+    notes: Optional[str] = None
 
     model_config = {"populate_by_name": True, "from_attributes": True}
 
@@ -344,9 +540,20 @@ class Round3TeamStanding(BaseModel):
     team_name: str = Field(..., serialization_alias="teamName")
     current_balance: float = Field(..., serialization_alias="currentBalance")
     total_spent: float = Field(default=0.0, serialization_alias="totalSpent")
+    starting_balance: float = Field(default=1000.0, serialization_alias="startingBalance")
+    base_balance: float = Field(default=1000.0, serialization_alias="baseBalance")
+    r1_rank_points: float = Field(default=0.0, serialization_alias="r1RankPoints")
+    r2_cabo_score: float = Field(default=0.0, serialization_alias="r2CaboScore")
+    agent_task_bonus: float = Field(default=0.0, serialization_alias="agentTaskBonus")
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     fragment_1_status: str = Field(..., serialization_alias="fragment1Status")
     fragment_2_status: str = Field(..., serialization_alias="fragment2Status")
+    fragment_3_status: str = Field(default="PENDING", serialization_alias="fragment3Status")
+    fragment_4_status: str = Field(default="PENDING", serialization_alias="fragment4Status")
+    verified_fragment_count: int = Field(default=0, serialization_alias="verifiedFragmentCount")
+    missing_fragment_count: int = Field(default=0, serialization_alias="missingFragmentCount")
+    missing_fragment_penalty: float = Field(default=0.0, serialization_alias="missingFragmentPenalty")
+    effective_balance: float = Field(..., serialization_alias="effectiveBalance")
     rank: int
     is_advancing: bool = Field(..., serialization_alias="isAdvancing")
     elimination_reason: Optional[str] = Field(default=None, serialization_alias="eliminationReason")
@@ -418,12 +625,21 @@ class CodeHuntStatusResponse(BaseModel):
     fragment_1_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment1DiscoveredAt")
     fragment_2_status: FragmentStatus = Field(..., serialization_alias="fragment2Status")
     fragment_2_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment2DiscoveredAt")
+    fragment_3_status: FragmentStatus = Field(default=FragmentStatus.PENDING, serialization_alias="fragment3Status")
+    fragment_3_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment3DiscoveredAt")
+    fragment_4_status: FragmentStatus = Field(default=FragmentStatus.PENDING, serialization_alias="fragment4Status")
+    fragment_4_discovered_at: Optional[datetime] = Field(default=None, serialization_alias="fragment4DiscoveredAt")
+    gate_3_confirmed: bool = Field(default=False, serialization_alias="gate3Confirmed")
+    gate_3_confirmed_at: Optional[datetime] = Field(default=None, serialization_alias="gate3ConfirmedAt")
+    gate_3_confirmed_by: Optional[str] = Field(default=None, serialization_alias="gate3ConfirmedBy")
     final_code_verified: bool = Field(..., serialization_alias="finalCodeVerified")
     is_complete: bool = Field(..., serialization_alias="isComplete")
     verified_at: Optional[datetime] = Field(default=None, serialization_alias="verifiedAt")
     verified_by: Optional[str] = Field(default=None, serialization_alias="verifiedBy")
     fragment_1_value: Optional[str] = Field(default=None, serialization_alias="fragment1Value")
     fragment_2_value: Optional[str] = Field(default=None, serialization_alias="fragment2Value")
+    fragment_3_value: Optional[str] = Field(default=None, serialization_alias="fragment3Value")
+    fragment_4_value: Optional[str] = Field(default=None, serialization_alias="fragment4Value")
     final_code_assembled: Optional[str] = Field(default=None, serialization_alias="finalCodeAssembled")
 
     model_config = {"populate_by_name": True, "from_attributes": True}

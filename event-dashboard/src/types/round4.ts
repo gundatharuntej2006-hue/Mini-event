@@ -19,6 +19,9 @@ export interface StageTimingRecord {
   actualDurationSeconds?: number | null;
   notes?: string;
   incidentFlags?: string;
+  timekeeperName?: string | null;
+  timeViolationsNotes?: string | null;
+  penaltySeconds?: number | null;
 }
 
 export interface TeamCaseAssignment {
@@ -32,8 +35,8 @@ export interface TeamCaseAssignment {
 }
 
 export interface TeamPair {
-  pairId: string;               // e.g. "pair-1", "pair-2", "pair-3", "pair-4"
-  pairNumber: number;           // 1 to 4
+  pairId: string;               // e.g. "pair-1", "pair-2"
+  pairNumber: number;           // 1 to 2
   teamAId: string | null;       // Team ID
   teamBId: string | null;       // Team ID
   isConfirmed: boolean;         // Has organizer reviewed and confirmed this pairing?
@@ -85,6 +88,22 @@ export interface JudgeScoreRecord {
   comments?: string;
   submittedAt?: string | null;
   isSubmitted: boolean;
+  isLocked?: boolean;
+  lockedAt?: string | null;
+  lockedBy?: string | null;
+  correctionNotes?: string | null;
+  correctedBy?: string | null;
+  correctedAt?: string | null;
+}
+
+export interface AgentGuessItem {
+  suspectId?: string;
+  agentId?: string;
+  suspectName?: string;
+  notes?: string;
+  isCorrect?: boolean;
+  outcome?: 'correct' | 'incorrect' | 'none';
+  points?: number;
 }
 
 export interface AgentGuessingRecord {
@@ -95,6 +114,10 @@ export interface AgentGuessingRecord {
   verifiedBy?: string | null;
   verifiedAt?: string | null;
   notes?: string;
+  guesses?: AgentGuessItem[];
+  totalGuesses?: number;
+  correctGuesses?: number;
+  wrongGuesses?: number;
 }
 
 export interface FinalScoreFormulaConfig {
@@ -108,12 +131,18 @@ export interface FinalScoreFormulaConfig {
 
 export interface TeamFinalScoreBreakdown {
   teamId: string;
+  r1Points?: number;
+  r2Cabo?: number;
+  agentTaskCredits?: number;
+  r3Balance?: number;
+  r4LegalScore?: number | null;
+  agentGuessPoints?: number;
+  finalScore: number | null;
   rawPanelScore: number | null;
   weightedPanelScore: number | null;
   agentGuessingPoints: number | null;
   blackMarketBalance: number;
   blackMarketContribution: number;
-  finalScore: number | null;
   isComplete: boolean;
   missingComponents: string[];
 }

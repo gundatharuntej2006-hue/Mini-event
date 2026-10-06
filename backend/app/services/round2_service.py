@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
+from app.core.constants import R1_QUALIFIERS, R2_QUALIFIERS
 from app.models.round2 import CaboConfigModel, CaboGameModel, CaboPlacementModel, default_cabo_point_table
 from app.models.core import Team
 from app.models.progression import TieReview
@@ -137,9 +138,9 @@ def get_round2_overview(db: Session) -> Dict[str, Any]:
 
     # Fetch teams
     teams = db.query(Team).filter(Team.id.in_(eligible_team_ids)).all() if eligible_team_ids else []
-    # If R1 not finalized, display all 24 placeholder teams
+    # If R1 not finalized, display placeholder teams up to R1_QUALIFIERS
     if not r1_finalized:
-        teams = db.query(Team).limit(24).all()
+        teams = db.query(Team).limit(R1_QUALIFIERS).all()
 
     games = db.query(CaboGameModel).order_by(CaboGameModel.game_number.asc()).all()
     all_placements = db.query(CaboPlacementModel).all()
@@ -185,11 +186,13 @@ def get_round2_overview(db: Session) -> Dict[str, Any]:
             round_number=2,
             teams_involved=tied_teams,
             ranking_metric="total_points",
-            cutoff_position=12,
-            notes="Points tie straddles 12th and 13th place qualification cutoff for Round 3."
+            cutoff_position=R2_QUALIFIERS,
+            notes=f"Points tie straddles {R2_QUALIFIERS}th place qualification cutoff for Round 3."
         )
 
-    tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r2-cutoff12").first()
+    tie_rev = db.query(TieReview).filter(TieReview.id == f"tie-r2-cutoff{R2_QUALIFIERS}").first()
+    if not tie_rev:
+        tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r2-cutoff12").first()
     if tie_rev and tie_rev.review_status == "RESOLVED" and standings.get("ties_affecting_cutoff"):
         standings["can_finalize"] = len([i for i in standings["issues"] if i["code"] != "CUTOFF_TIE"]) == 0
         standings["issues"] = [i for i in standings["issues"] if i["code"] != "CUTOFF_TIE"]
@@ -266,15 +269,17 @@ def finalize_round2(db: Session, actor, payload: Optional[Dict[str, Any]] = None
         }
 
     records = overview["records"]
-    advancing_team_ids = [r["team_id"] for r in records if r.get("rank") and r["rank"] <= 12]
+    advancing_team_ids = [r["team_id"] for r in records if r.get("rank") and r["rank"] <= R2_QUALIFIERS]
 
-    tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r2-cutoff12").first()
+    tie_rev = db.query(TieReview).filter(TieReview.id == f"tie-r2-cutoff{R2_QUALIFIERS}").first()
+    if not tie_rev:
+        tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r2-cutoff12").first()
     if tie_rev and tie_rev.review_status == "RESOLVED" and tie_rev.advancing_team_ids:
         resolved_adv = set(tie_rev.advancing_team_ids)
-        advancing_team_ids = [r["team_id"] for r in records if (r.get("rank") and r["rank"] < 12) or (r["team_id"] in resolved_adv)]
+        advancing_team_ids = [r["team_id"] for r in records if (r.get("rank") and r["rank"] < R2_QUALIFIERS) or (r["team_id"] in resolved_adv)]
 
     if not advancing_team_ids and override:
-        all_teams = db.query(Team).order_by(Team.team_number.asc()).limit(12).all()
+        all_teams = db.query(Team).order_by(Team.team_number.asc()).limit(R2_QUALIFIERS).all()
         advancing_team_ids = [t.id for t in all_teams]
 
     record_round_finalization(
@@ -316,7 +321,7 @@ def finalize_round2(db: Session, actor, payload: Optional[Dict[str, Any]] = None
         "issues": [],
         "finalized": True,
         "advancing_team_ids": advancing_team_ids,
-        "message": "Round 2 successfully finalized. 12 squads advance to Round 3: The Black Market.",
+        "message": f"Round 2 successfully finalized. {len(advancing_team_ids)} squads advance to Round 3: The Black Market.",
         "success": True,
         "round_number": 2,
         "roundNumber": 2,

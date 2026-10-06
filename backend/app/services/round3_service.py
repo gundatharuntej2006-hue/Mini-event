@@ -332,6 +332,8 @@ def get_round3_overview(db: Session) -> Dict[str, Any]:
         round2_finalized=r2_finalized
     )
 
+    from app.core.constants import R3_QUALIFIERS
+    cutoff_pos = R3_QUALIFIERS
     if standings.get("ties_affecting_cutoff"):
         tied_teams = [r for r in standings["records"] if r["team_id"] in standings["tied_teams_at_cutoff"]]
         get_or_create_tie_review(
@@ -339,11 +341,11 @@ def get_round3_overview(db: Session) -> Dict[str, Any]:
             round_number=3,
             teams_involved=tied_teams,
             ranking_metric=cfg.ranking_metric,
-            cutoff_position=8,
-            notes="Metric balance tie straddles 8th and 9th place cutoff for Round 4: The Legal Battle."
+            cutoff_position=cutoff_pos,
+            notes=f"Metric balance tie straddles {cutoff_pos}th and {cutoff_pos + 1}th place cutoff for Round 4: The Legal Battle."
         )
 
-    tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r3-cutoff8").first()
+    tie_rev = db.query(TieReview).filter(TieReview.id.in_([f"tie-r3-cutoff{cutoff_pos}", "tie-r3-cutoff6", "tie-r3-cutoff4"])).first()
     if tie_rev and tie_rev.review_status == "RESOLVED" and standings.get("ties_affecting_cutoff"):
         standings["can_finalize"] = len([i for i in standings["issues"] if i["code"] != "CUTOFF_TIE"]) == 0
         standings["issues"] = [i for i in standings["issues"] if i["code"] != "CUTOFF_TIE"]
@@ -410,16 +412,18 @@ def finalize_round3(db: Session, actor, payload: Optional[Dict[str, Any]] = None
             "totalEligible": 0,
         }
 
-    records = overview["records"]
-    advancing_team_ids = [r["team_id"] for r in records if r.get("rank") and r["rank"] <= 8]
+    from app.core.constants import R3_QUALIFIERS
+    cutoff_pos = R3_QUALIFIERS
+    records = overview.get("records", [])
+    advancing_team_ids = [r["team_id"] for r in records if r.get("rank") and r["rank"] <= cutoff_pos]
 
-    tie_rev = db.query(TieReview).filter(TieReview.id == "tie-r3-cutoff8").first()
+    tie_rev = db.query(TieReview).filter(TieReview.id.in_([f"tie-r3-cutoff{cutoff_pos}", "tie-r3-cutoff6", "tie-r3-cutoff4"])).first()
     if tie_rev and tie_rev.review_status == "RESOLVED" and tie_rev.advancing_team_ids:
         resolved_adv = set(tie_rev.advancing_team_ids)
-        advancing_team_ids = [r["team_id"] for r in records if (r.get("rank") and r["rank"] < 8) or (r["team_id"] in resolved_adv)]
+        advancing_team_ids = [r["team_id"] for r in records if (r.get("rank") and r["rank"] < cutoff_pos) or (r["team_id"] in resolved_adv)]
 
     if not advancing_team_ids and override:
-        all_teams = db.query(Team).order_by(Team.team_number.asc()).limit(8).all()
+        all_teams = db.query(Team).order_by(Team.team_number.asc()).limit(cutoff_pos).all()
         advancing_team_ids = [t.id for t in all_teams]
 
     record_round_finalization(

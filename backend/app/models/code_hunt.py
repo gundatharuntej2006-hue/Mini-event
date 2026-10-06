@@ -70,6 +70,83 @@ class FinalCodeRecord(Base):
         DateTime(timezone=True),
         nullable=True
     )
+    fragment_3_status: Mapped[FragmentStatus] = mapped_column(
+        Enum(FragmentStatus, name="fragment_status_enum", create_constraint=False),
+        default=FragmentStatus.PENDING,
+        nullable=False
+    )
+    fragment_3_value: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    fragment_3_discovered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    fragment_4_status: Mapped[FragmentStatus] = mapped_column(
+        Enum(FragmentStatus, name="fragment_status_enum", create_constraint=False),
+        default=FragmentStatus.PENDING,
+        nullable=False
+    )
+    fragment_4_value: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    fragment_4_discovered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    gate_3_confirmed: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+    gate_3_confirmed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    gate_3_confirmed_by: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    # Round 2: ECHO sub-verifications across Cabo Games 1, 2, 3
+    echo_e_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+    echo_e_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    echo_c_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+    echo_c_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    echo_ho_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+    echo_ho_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    # Round 2: PRIME sequence verification (2, 3, 5, 7, 11)
+    prime_sequence_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+    prime_sequence_verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
     final_code_assembled: Mapped[Optional[str]] = mapped_column(
         String(255),
         nullable=True

@@ -16,6 +16,16 @@ from app.schemas.tournament_extensions import (
     CaboTeamStandingResponse,
     CaboFinalizationResponse,
     CaboPlayerScorecardResponse,
+    CaboEchoVerifyRequest,
+    CaboPrimeVerifyRequest,
+    CaboSwapSeatsRequest,
+    CaboSummaryResponse,
+    CaboTableValidationResponse,
+    CaboConfirmTablesResponse,
+    CaboPlayerDetailResponse,
+    CaboTeamDetailResponse,
+    CaboScoreCorrectionRequest,
+    CaboPrintableSheetResponse,
 )
 from app.services import round2_service, cabo_service
 from app.services.cabo_service import (
@@ -222,6 +232,86 @@ def get_cabo_standings(
     )
 
 
+@router.get("/cabo/summary", response_model=ApiResponse[CaboSummaryResponse])
+def get_cabo_summary(db: Session = Depends(get_db)):
+    """Retrieves high-level summary of Round 2 Cabo tables progress and finalization readiness."""
+    summary = cabo_service.get_cabo_summary(db)
+    return ApiResponse(data=summary, message="Retrieved Round 2 Cabo summary")
+
+
+
+@router.post("/cabo/swap-seats", response_model=ApiResponse[Dict[str, Any]])
+def swap_cabo_seats(
+    payload: CaboSwapSeatsRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "admin"])),
+):
+    """
+    Swaps two player seats in a Cabo game.
+    Validates that no table contains teammates after the swap.
+    """
+    try:
+        res = cabo_service.swap_cabo_seats(
+            db=db,
+            game_number=payload.game_number,
+            assignment_id_1=payload.assignment_id_1,
+            assignment_id_2=payload.assignment_id_2,
+            actor_id=actor.id,
+        )
+        return ApiResponse(data=res, message="Cabo seats swapped successfully")
+    except CaboAssignmentError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/teams/{team_id}/echo-verify", response_model=ApiResponse[Dict[str, Any]])
+def verify_echo_fragment(
+    team_id: str,
+    payload: CaboEchoVerifyRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "volunteer", "admin"])),
+):
+    """
+    Verifies marked cards (Game 1=E, Game 2=C, Game 3=HO) and awards ECHO fragment.
+    """
+    try:
+        res = cabo_service.verify_echo_fragment(
+            db=db,
+            team_id=team_id,
+            game_1_e=payload.game_1_e,
+            game_2_c=payload.game_2_c,
+            game_3_ho=payload.game_3_ho,
+            notes=payload.notes,
+            verified_by=actor.email,
+        )
+        return ApiResponse(data=res, message="ECHO card verification updated")
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/teams/{team_id}/prime-verify", response_model=ApiResponse[Dict[str, Any]])
+def verify_prime_fragment(
+    team_id: str,
+    payload: CaboPrimeVerifyRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "volunteer", "admin"])),
+):
+    """
+    Verifies the prime number challenge sequence [2, 3, 5, 7, 11] and awards PRIME fragment.
+    """
+    try:
+        res = cabo_service.verify_prime_fragment(
+            db=db,
+            team_id=team_id,
+            sequence=payload.sequence,
+            is_verified=payload.is_verified,
+            notes=payload.notes,
+            verified_by=actor.email,
+        )
+        return ApiResponse(data=res, message="PRIME challenge verification recorded")
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.post("/cabo/finalize", response_model=ApiResponse[CaboFinalizationResponse])
 def finalize_cabo_round(
     db: Session = Depends(get_db),
@@ -229,16 +319,133 @@ def finalize_cabo_round(
 ):
     """
     Officially finalizes Round 2 Cabo Tournament:
-    - Verifies complete scoring for all 72 tables (360 scorecards)
-    - Computes final rankings and top 12 qualifiers
+    - Verifies complete scoring for all 48 tables (240 scorecards)
+    - Computes final rankings and top 8 qualifiers
     - Awards R2 tournament wallet points (score * 10, max 750 pts)
+    - Automatically advances exact 8 team IDs to Round 3 without re-registration
     - Locks Round 2 results
     """
     try:
         final_res = cabo_service.finalize_round2(db, actor=actor.email)
         return ApiResponse(
             data=final_res,
-            message="Round 2 Cabo tournament finalized and wallet rewards awarded"
+            message="Round 2 Cabo tournament finalized, Top 8 advanced to Round 3"
         )
     except CaboFinalizationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/cabo/confirm", response_model=ApiResponse[CaboConfirmTablesResponse])
+def confirm_cabo_tables(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"])),
+):
+    """
+    Organizer confirms and freezes the generated Cabo tables.
+    Validates all 8 structural constraints before freezing.
+    """
+    try:
+        res = cabo_service.confirm_cabo_tables(db, actor_id=actor.email)
+        return ApiResponse(data=res, message="Cabo table seating confirmed and frozen.")
+    except (CaboAssignmentError, CaboValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/cabo/validation", response_model=ApiResponse[CaboTableValidationResponse])
+def get_cabo_table_validation(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Validates Cabo seating allocation against all 8 structural rules."""
+    res = cabo_service.validate_cabo_table_allocations(db)
+    return ApiResponse(data=res, message="Cabo table allocation validation report generated.")
+
+
+@router.get("/cabo/players/{participant_id}/detail", response_model=ApiResponse[CaboPlayerDetailResponse])
+def get_cabo_player_detail(
+    participant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieves 3-game performance and table history for a specific participant."""
+    try:
+        res = cabo_service.get_player_cabo_detail(db, participant_id=participant_id)
+        return ApiResponse(data=res, message=f"Retrieved player details for participant {participant_id}")
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get("/cabo/teams/{team_id}/detail", response_model=ApiResponse[CaboTeamDetailResponse])
+def get_cabo_team_detail(
+    team_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieves 5-member 3-game performance drill-down for a team."""
+    try:
+        res = cabo_service.get_team_cabo_detail(db, team_id=team_id)
+        return ApiResponse(data=res, message=f"Retrieved team details for {team_id}")
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get("/cabo/printable-sheet", response_model=ApiResponse[CaboPrintableSheetResponse])
+def get_cabo_printable_sheet(
+    game_number: int = 1,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "admin"])),
+):
+    """Retrieves printable table sheets for all 16 tables in a game."""
+    try:
+        res = cabo_service.get_cabo_printable_sheet(db, game_number=game_number)
+        return ApiResponse(data=res, message=f"Retrieved printable table sheets for Game {game_number}")
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/cabo/export/{export_type}")
+def export_cabo_data(
+    export_type: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "marshal", "admin"])),
+):
+    """Exports Cabo tournament data (assignments, results, standings) as CSV."""
+    from fastapi.responses import Response
+    try:
+        csv_data = cabo_service.export_cabo_data(db, export_type=export_type)
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=cabo_{export_type}.csv"},
+        )
+    except CaboValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/cabo/games/{game_number}/tables/{table_number}/correct", response_model=ApiResponse[Dict[str, Any]])
+def correct_cabo_table_score(
+    game_number: int,
+    table_number: int,
+    payload: CaboScoreCorrectionRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"])),
+):
+    """
+    Organizer correction for an individual player's placement at a table.
+    Enforces mandatory reason and logs audit trail.
+    """
+    try:
+        res = cabo_service.correct_cabo_table_score(
+            db=db,
+            game_number=game_number,
+            table_number=table_number,
+            participant_id=payload.participant_id,
+            new_placement=payload.new_placement,
+            reason=payload.reason,
+            new_card_total=payload.new_card_total,
+            actor_id=actor.email,
+        )
+        return ApiResponse(data=res, message="Cabo score corrected successfully")
+    except (CaboScorecardError, CaboValidationError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+

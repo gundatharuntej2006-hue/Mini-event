@@ -198,8 +198,9 @@ def validate_members_roster(db: Session, team_name: str, members: List[Dict[str,
     if not team_name or not team_name.strip():
         return "Team name is required."
 
-    if len(members) != 5:
-        return f"A squad must have exactly 5 participants (found {len(members)})."
+    expected_count = 4 if team_name.strip() == "Team Mirage" else 5
+    if len(members) != expected_count:
+        return f"A squad must have exactly {expected_count} participants (found {len(members)})."
 
     leaders = [m for m in members if m.get("role") == ParticipantRole.LEADER]
     if len(leaders) != 1:

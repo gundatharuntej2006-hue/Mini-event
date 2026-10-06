@@ -12,16 +12,17 @@
 export const MAX_TEAMS = 32;
 export const TEAM_SIZE = 5;
 
-export const R1_QUALIFIERS = 24;       // Top 24 squads advance from Round 1 to Round 2
-export const R2_QUALIFIERS = 12;       // Top 12 squads advance from Round 2 to Round 3
-export const R3_QUALIFIERS = 8;        // Top 8 squads advance from Round 3 to Round 4
-export const R4_FINALISTS = 8;         // All 8 finalist squads proceed to Grand Finale assembly
+export const R1_QUALIFIERS = 16;       // Top 16 squads advance from Round 1 to Round 2 (The ODDyssey Protocol)
+export const R2_QUALIFIERS = 12;       // Top 12 squads advance from Round 2 to Round 3 (The Black Market)
+export const R3_QUALIFIERS = 6;        // Top 6 squads advance from Round 3 to Round 4
+export const R4_FINALISTS = 6;         // 6 finalist squads participate in Round 4 (3 courtroom matchups)
+export const R4_PAIRS = 3;             // Exactly 3 courtroom matchups in Round 4
 export const PODIUM_SIZE = 3;          // Champion, 1st Runner Up, 2nd Runner Up
 
 // ==============================================================================
 // 2. ROUND 1 — THE GREAT EXPEDITION
 // ==============================================================================
-export const DEFAULT_R1_HINT_PENALTY_SECONDS = 120; // 2 minutes penalty per hint (configurable)
+export const DEFAULT_R1_HINT_PENALTY_SECONDS = 300; // 5 minutes penalty per hint (official rule)
 export const DEFAULT_R1_CHECKPOINTS = [
   'Checkpoint Alpha',
   'Checkpoint Bravo',
@@ -61,14 +62,26 @@ export const DEPRECATED_CABO_24_POINT_SCALE: Record<number, number> = Object.fro
 export const STARTING_WALLET_BALANCE = 1000;
 export const DEPRECATED_R3_STARTING_BALANCE = 100;
 
-// ORGANIZER DECISION #2: Black Market suggested item prices
-// Suggested guidelines; organizers may adjust live.
+// The 4 official Black Market items:
+// 1. Secret Code Item 1
+// 2. Secret Code Item 2 (Item 1 + Item 2 form the required key for qualification)
+// 3. Powerup 1 for Round 4
+// 4. Powerup 2 for Round 4 (carried forward into Round 4)
 export const BLACK_MARKET_SUGGESTED_PRICES = {
+  secret_code_item_1: 350,
+  secret_code_item_2: 350,
+  powerup_1_r4: 200,
+  powerup_2_r4: 200,
   missing_code_fragment: 400,
   extra_prep_time: 200,
   extra_witness_question: 150,
   agent_intel: 250,
 } as const;
+
+export const BLACK_MARKET_SECRET_CODE_1_PRICE_SUGGESTED = 350;
+export const BLACK_MARKET_SECRET_CODE_2_PRICE_SUGGESTED = 350;
+export const BLACK_MARKET_POWERUP_1_PRICE_SUGGESTED = 200;
+export const BLACK_MARKET_POWERUP_2_PRICE_SUGGESTED = 200;
 
 export const BLACK_MARKET_FRAGMENT_PRICE_SUGGESTED = 400;
 export const BLACK_MARKET_PREP_PRICE_SUGGESTED = 200;

@@ -20,18 +20,20 @@ import {
   X,
   Info,
   Shield,
-  Sliders,
   History,
   Ban,
   Filter,
+  Eye,
 } from 'lucide-react';
 import { eventService } from '../services/eventService';
+import { backendApiService } from '../services/backendApiService';
 import {
   Round3Data,
   BlackMarketTransaction,
   BlackMarketRankingMetric,
   BlackMarketScoringDirection,
   Round3QualificationStatus,
+  TeamInventoryStatus,
 } from '../types/round3';
 import { formatTeamNumber } from '../utils/formatters';
 import { Button } from '../components/ui/Button';
@@ -42,7 +44,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 
-type TabView = 'leaderboard' | 'economy' | 'hidden_code';
+type TabView = 'leaderboard' | 'economy' | 'hidden_code' | 'approvals';
 type SortField = 'rank' | 'teamNumber' | 'name' | 'currentBalance' | 'totalEarned' | 'totalSpent' | 'fragments';
 
 export const Round3BlackMarketPage: React.FC = () => {
@@ -133,6 +135,28 @@ export const Round3BlackMarketPage: React.FC = () => {
     organizerRef: 'Checkpoint-Marshal',
   });
 
+  // Two-Organizer Approvals
+  const [approvalModalPurchase, setApprovalModalPurchase] = useState<any | null>(null);
+  const [approvalOrganizerName, setApprovalOrganizerName] = useState('Chief-Organizer');
+  const [approvalNotes, setApprovalNotes] = useState('');
+  const [rejectionModalPurchase, setRejectionModalPurchase] = useState<any | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+
+  // Code Checker State
+  const [checkerTeamId, setCheckerTeamId] = useState('');
+  const [checkerCodeInput, setCheckerCodeInput] = useState('');
+  const [checkerResult, setCheckerResult] = useState<{ valid: boolean; message: string } | null>(null);
+  const [isCheckingCode, setIsCheckingCode] = useState(false);
+
+  // Player View (Team Status) Modal
+  const [isPlayerViewOpen, setIsPlayerViewOpen] = useState(false);
+  const [playerViewTeamId, setPlayerViewTeamId] = useState('');
+  const [playerViewInventory, setPlayerViewInventory] = useState<TeamInventoryStatus | null>(null);
+  const [isLoadingPlayerView, setIsLoadingPlayerView] = useState(false);
+
+  // Organizer Detailed Team Inspection Modal
+  const [inspectTeamRecord, setInspectTeamRecord] = useState<any | null>(null);
+
   // Operational feedback states
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -164,6 +188,12 @@ export const Round3BlackMarketPage: React.FC = () => {
       }
       if (!fragmentForm.teamId && res.records.length > 0) {
         setFragmentForm((prev) => ({ ...prev, teamId: res.records[0].teamId }));
+      }
+      if (!checkerTeamId && res.records.length > 0) {
+        setCheckerTeamId(res.records[0].teamId);
+      }
+      if (!playerViewTeamId && res.records.length > 0) {
+        setPlayerViewTeamId(res.records[0].teamId);
       }
     } catch (err: any) {
       console.error('Failed to load Round 3 data:', err);
@@ -452,6 +482,129 @@ export const Round3BlackMarketPage: React.FC = () => {
     }
   };
 
+  const handleCheckCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkerCodeInput.trim() || !checkerTeamId) return;
+    setIsCheckingCode(true);
+    setCheckerResult(null);
+    try {
+      const res = await backendApiService.checkRound3Code(checkerTeamId, checkerCodeInput.trim());
+      if (res.success && res.data) {
+        setCheckerResult(res.data);
+      } else {
+        setCheckerResult({ valid: false, message: 'Invalid Key' });
+      }
+      await loadData();
+    } catch (err: any) {
+      setCheckerResult({ valid: false, message: 'Invalid Key' });
+    } finally {
+      setIsCheckingCode(false);
+    }
+  };
+
+  const handleOpenPlayerView = async (teamId: string) => {
+    setPlayerViewTeamId(teamId);
+    setIsLoadingPlayerView(true);
+    setIsPlayerViewOpen(true);
+    try {
+      const res = await backendApiService.getRound3TeamInventory(teamId);
+      if (res.success && res.data) {
+        setPlayerViewInventory(res.data);
+      } else {
+        // Fallback from existing data record if backend inventory endpoint returns error
+        const rec = data?.records.find((r) => r.teamId === teamId);
+        if (rec) {
+          setPlayerViewInventory({
+            team_id: rec.teamId,
+            current_balance: rec.ledger.currentBalance,
+            total_spent: rec.ledger.totalSpent,
+            total_earned: rec.ledger.totalEarned,
+            starting_balance_breakdown: rec.startingBalanceBreakdown || {
+              base: 1000,
+              r1_points: 0,
+              r2_cabo_score: 0,
+              agent_tasks_count: 0,
+              agent_task_points: 0,
+              total_starting: rec.ledger.openingBalance,
+            },
+            items_owned: {
+              secret_code_item_1: rec.hasSecretCode1 ?? false,
+              secret_code_item_2: rec.hasSecretCode2 ?? false,
+              powerup_1_r4: rec.hasPowerup1 ?? false,
+              powerup_2_r4: rec.hasPowerup2 ?? false,
+            },
+            has_complete_key: rec.hasCompleteKey ?? false,
+            is_code_verified: rec.codeRecord.isComplete,
+            purchases: [],
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load squad inventory, falling back to cached state:', err);
+    } finally {
+      setIsLoadingPlayerView(false);
+    }
+  };
+
+  const handleApprovePurchase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!approvalModalPurchase) return;
+    setActionError(null);
+    setIsSubmitting(true);
+    try {
+      await eventService.approveMarketPurchase(
+        approvalModalPurchase.id,
+        approvalOrganizerName,
+        approvalNotes
+      );
+      setActionSuccess(`Purchase ${approvalModalPurchase.id} signed & approved by ${approvalOrganizerName}.`);
+      setApprovalModalPurchase(null);
+      await loadData();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to approve purchase.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRejectPurchase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectionModalPurchase) return;
+    setActionError(null);
+    setIsSubmitting(true);
+    try {
+      await eventService.rejectMarketPurchase(
+        rejectionModalPurchase.id,
+        approvalOrganizerName,
+        rejectionReason
+      );
+      setActionSuccess(`Purchase ${rejectionModalPurchase.id} rejected.`);
+      setRejectionModalPurchase(null);
+      await loadData();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to reject purchase.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSyncBalances = async () => {
+    setActionError(null);
+    setIsSubmitting(true);
+    try {
+      await eventService.syncRound3Balances();
+      setActionSuccess('Round 3 starting balances synchronized based on official formula: 1000 + R1 rank pts + R2 Cabo pts + Agent tasks × 50.');
+      await loadData();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to sync balances.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // Helper for rendering status badge
   const renderStatusBadge = (status: Round3QualificationStatus) => {
     switch (status) {
@@ -459,10 +612,12 @@ export const Round3BlackMarketPage: React.FC = () => {
         return <Badge variant="success" size="sm" dot>Round 4 Finalist</Badge>;
       case 'Finalized Eliminated':
         return <Badge variant="danger" size="sm">Eliminated (R3)</Badge>;
+      case 'Provisional Top 6':
+      case 'Provisional Top 4':
       case 'Provisional Top 8':
-        return <Badge variant="primary" size="sm" dot>Provisional Top 8</Badge>;
+        return <Badge variant="primary" size="sm" dot>Provisional Top 6</Badge>;
       case 'Provisional Cutoff':
-        return <Badge variant="neutral" size="sm">Provisional Cutoff</Badge>;
+        return <Badge variant="neutral" size="sm">Elimination Zone (7-12)</Badge>;
       case 'Tie Review Needed':
         return <Badge variant="danger" size="sm" dot>Tie Review Needed</Badge>;
       case 'Code Incomplete':
@@ -509,7 +664,7 @@ export const Round3BlackMarketPage: React.FC = () => {
         </div>
       );
     }
-    if (rank <= 8) {
+    if (rank <= 6) {
       return (
         <span className="w-5 h-5 rounded-md bg-cyan-950/60 text-cyan-300 font-mono font-bold text-xs flex items-center justify-center border border-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.2)]">
           #{rank}
@@ -547,15 +702,15 @@ export const Round3BlackMarketPage: React.FC = () => {
 
   const { config, stats, engine, round2Finalized, round2QualifiedTeamsCount } = data;
   const isCutoffTie = engine.tiesAffectingCutoff;
-  const rank8Team = data.records.find((r) => r.rank === 8);
-  const cutoffThresholdScore = rank8Team ? rank8Team.ledger.currentBalance : null;
+  const rank6Team = data.records.find((r) => r.rank === 6);
+  const cutoffThresholdScore = rank6Team ? (rank6Team.effectiveBalance ?? rank6Team.ledger.currentBalance) : null;
 
   return (
     <div className="space-y-6">
       {/* 1. Header & Live Operations Bar */}
       <PageHeader
         title="Round 3: The Black Market"
-        subtitle="Points-based economy, transaction audit ledgers & hidden code verification · 12 Cabo qualifiers compete · Top 8 advance to Legal Battle"
+        subtitle="4 Official Market Items (Secret Code 1 & 2, Powerups 1 & 2) · Binary Code Checker · 12 Cabo Qualifiers Compete · Top 6 Advance to Legal Battle"
         badge={
           config.isFinalized ? (
             <Badge variant="success" size="sm" dot>
@@ -587,6 +742,16 @@ export const Round3BlackMarketPage: React.FC = () => {
               Economy &amp; Rules
             </Button>
 
+            <Button
+              size="sm"
+              variant="outline"
+              leftIcon={<RotateCcw className="w-3.5 h-3.5 text-cyan-400" />}
+              onClick={handleSyncBalances}
+              title="Synchronize starting balances using official formula (1000 + R1 rank pts + R2 Cabo pts + Agent tasks × 50)"
+            >
+              Sync Balances
+            </Button>
+
             {!config.isFinalized && (
               <>
                 <Button
@@ -604,7 +769,7 @@ export const Round3BlackMarketPage: React.FC = () => {
                   variant="outline"
                   leftIcon={<Sparkles className="w-3.5 h-3.5 text-amber-500" />}
                   onClick={handleSimulateFieldData}
-                  title="Populate test transactions and codes for all 12 teams"
+                  title="Populate test transactions and codes for squads"
                 >
                   Simulate Data
                 </Button>
@@ -626,9 +791,9 @@ export const Round3BlackMarketPage: React.FC = () => {
                   onClick={() => setIsFinalizeDialogOpen(true)}
                   disabled={!engine.canFinalize}
                   className={!engine.canFinalize ? 'opacity-60 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}
-                  title={engine.blockReason || 'Finalize official Top 8 qualification to Round 4'}
+                  title={engine.blockReason || 'Finalize official Top 6 qualification to Round 4'}
                 >
-                  Finalize Top 8
+                  Finalize Top 6
                 </Button>
               </>
             )}
@@ -707,11 +872,11 @@ export const Round3BlackMarketPage: React.FC = () => {
           <AlertTriangle className="w-5 h-5 text-rose-400 mt-0.5 flex-shrink-0" />
           <div>
             <div className="font-bold flex items-center gap-1.5 font-display tracking-wider text-rose-300">
-              CRITICAL CUTOFF TIE DETECTED ACROSS RANK #8
+              CRITICAL CUTOFF TIE DETECTED ACROSS RANK #6
               <Badge variant="danger" size="sm">Finalization Blocked</Badge>
             </div>
             <p className="mt-1 leading-relaxed text-rose-200/80">
-              Two or more teams share identical points across the 8th-place qualification boundary (e.g. spanning Rank #8 and Rank #9).
+              Two or more teams share identical points across the 6th-place qualification boundary (spanning Rank #6 and Rank #7).
               In accordance with official rules, no arbitrary tie-breaker is applied automatically. Manual marshal review and recorded tie-breaking procedures are required.
             </p>
           </div>
@@ -766,9 +931,9 @@ export const Round3BlackMarketPage: React.FC = () => {
               <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400/80 font-mono">Advancing Cutoff</span>
               <Trophy className="w-3.5 h-3.5 text-emerald-400" />
             </div>
-            <div className="text-xl font-bold font-mono text-emerald-400 mt-1">Top 8 Squads</div>
+            <div className="text-xl font-bold font-mono text-emerald-400 mt-1">Top 6 Squads</div>
             <p className="text-[10px] text-slate-400 mt-0.5">
-              {cutoffThresholdScore !== null ? `Rank #8: ${cutoffThresholdScore} pts` : 'Calculating...'}
+              {cutoffThresholdScore !== null ? `Rank #6: ${cutoffThresholdScore} pts` : 'Calculating...'}
             </p>
           </CardContent>
         </Card>
@@ -779,24 +944,22 @@ export const Round3BlackMarketPage: React.FC = () => {
               <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400/80 font-mono">Elimination Zone</span>
               <Ban className="w-3.5 h-3.5 text-rose-400" />
             </div>
-            <div className="text-xl font-bold font-mono text-rose-400 mt-1">4 Squads</div>
-            <p className="text-[10px] text-slate-400 mt-0.5">Records preserved</p>
+            <div className="text-xl font-bold font-mono text-rose-400 mt-1">6 Squads</div>
+            <p className="text-[10px] text-slate-400 mt-0.5">Ranks 7–12 eliminated</p>
           </CardContent>
         </Card>
 
         <Card className="border-cyan-500/20">
           <CardContent className="p-3.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400/80 font-mono">Code Verification</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400/80 font-mono">Fragments System</span>
               <QrCode className="w-3.5 h-3.5 text-purple-400" />
             </div>
             <div className="text-xl font-bold font-mono text-purple-400 mt-1">
-              {stats.codeCompletedCount} / {data.records.length}
+              4 Fragments
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-              {config.hiddenCodeConfig.isConfigured
-                ? `${config.hiddenCodeConfig.requiredFragmentCount} fragments req.`
-                : 'Requirements unconfigured'}
+              -350 pts per missing
             </p>
           </CardContent>
         </Card>
@@ -864,6 +1027,27 @@ export const Round3BlackMarketPage: React.FC = () => {
               Confidential
             </span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('approvals')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-t-lg transition-all border-b-2 flex items-center gap-2 cursor-pointer ${
+              activeTab === 'approvals'
+                ? 'border-cyan-400 text-cyan-300 bg-cyan-950/40 shadow-[0_0_15px_rgba(34,211,238,0.15)]'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5 text-amber-400" />
+            <span>Dual-Signoff Approvals</span>
+            {data.pendingPurchases && data.pendingPurchases.length > 0 ? (
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-mono border border-amber-500/40 font-bold animate-pulse">
+                {data.pendingPurchases.length} PENDING
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#030712]/90 font-mono text-slate-400 border border-slate-700">
+                0
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Global rule indicator */}
@@ -904,8 +1088,8 @@ export const Round3BlackMarketPage: React.FC = () => {
                 className="px-2.5 py-1.5 text-xs bg-[#030712]/90 border border-cyan-500/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400"
               >
                 <option value="all">All Qualification Statuses</option>
-                <option value="Provisional Top 8">Provisional Top 8</option>
-                <option value="Provisional Cutoff">Provisional Cutoff (9-12)</option>
+                <option value="Provisional Top 6">Provisional Top 6</option>
+                <option value="Provisional Cutoff">Provisional Cutoff (7-12)</option>
                 <option value="Tie Review Needed">Tie Review Needed</option>
                 <option value="Code Incomplete">Code Incomplete</option>
                 <option value="Finalized Qualified">Finalized Qualified</option>
@@ -931,7 +1115,7 @@ export const Round3BlackMarketPage: React.FC = () => {
                 <thead className="bg-[#030712]/90 border-b border-cyan-500/20 text-cyan-400/80 uppercase font-semibold text-[10px] tracking-wider font-mono">
                   <tr>
                     <th
-                      className="py-3 px-4 cursor-pointer hover:text-cyan-300 transition-colors"
+                      className="py-3 px-3 cursor-pointer hover:text-cyan-300 transition-colors"
                       onClick={() => handleSort('rank')}
                     >
                       <div className="flex items-center gap-1">
@@ -940,7 +1124,7 @@ export const Round3BlackMarketPage: React.FC = () => {
                       </div>
                     </th>
                     <th
-                      className="py-3 px-4 cursor-pointer hover:text-cyan-300 transition-colors"
+                      className="py-3 px-3 cursor-pointer hover:text-cyan-300 transition-colors"
                       onClick={() => handleSort('teamNumber')}
                     >
                       <div className="flex items-center gap-1">
@@ -948,27 +1132,29 @@ export const Round3BlackMarketPage: React.FC = () => {
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
+                    <th className="py-3 px-2 text-right">Start Bal</th>
                     <th
-                      className="py-3 px-4 cursor-pointer hover:text-cyan-300 transition-colors text-right"
+                      className="py-3 px-2 text-right cursor-pointer hover:text-cyan-300 transition-colors"
                       onClick={() => handleSort('currentBalance')}
                     >
                       <div className="flex items-center justify-end gap-1">
-                        <span>Current Balance</span>
+                        <span>Current</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </div>
                     </th>
-                    <th className="py-3 px-3 text-right">Earned (+)</th>
-                    <th className="py-3 px-3 text-right">Spent (-)</th>
-                    <th className="py-3 px-3 text-right">Net Adj</th>
-                    <th className="py-3 px-4 text-center">Hidden Code Status</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <th className="py-3 px-2 text-right">Spent</th>
+                    <th className="py-3 px-2 text-center">Code #1</th>
+                    <th className="py-3 px-2 text-center">Code #2</th>
+                    <th className="py-3 px-2 text-center">Key Status</th>
+                    <th className="py-3 px-2 text-center">Powerups (R4)</th>
+                    <th className="py-3 px-3">Status</th>
+                    <th className="py-3 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-cyan-500/10">
                   {processedRecords.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="py-8">
+                      <td colSpan={11} className="py-8">
                         <EmptyState
                           icon={Coins}
                           title="No squads found"
@@ -978,22 +1164,26 @@ export const Round3BlackMarketPage: React.FC = () => {
                     </tr>
                   ) : (
                     processedRecords.map((rec) => {
-                      const isAfterCutoff = rec.rank !== null && rec.rank !== undefined && rec.rank === 9;
-                      const isTop8 = rec.rank !== null && rec.rank !== undefined && rec.rank <= 8;
+                      const isAfterCutoff = rec.rank !== null && rec.rank !== undefined && rec.rank === 7;
+                      const isTop6 = rec.rank !== null && rec.rank !== undefined && rec.rank <= 6;
+
+                      const hasCode1 = rec.hasSecretCode1 ?? (rec.codeRecord?.fragments?.some((f) => f.fragmentIndex === 1) ?? false);
+                      const hasCode2 = rec.hasSecretCode2 ?? (rec.codeRecord?.fragments?.some((f) => f.fragmentIndex === 2) ?? false);
+                      const hasKey = rec.hasCompleteKey ?? ((hasCode1 && hasCode2) || rec.codeRecord?.isComplete);
 
                       return (
                         <React.Fragment key={rec.teamId}>
-                          {/* Cutoff Demarcation Line before Rank 9 */}
+                          {/* Cutoff Demarcation Line before Rank 7 */}
                           {isAfterCutoff && (
                             <tr className="bg-gradient-to-r from-purple-950/70 via-blue-950/60 to-purple-950/70 border-y-2 border-purple-500/60">
-                              <td colSpan={9} className="py-2.5 px-4">
+                              <td colSpan={11} className="py-2.5 px-4">
                                 <div className="flex items-center justify-between text-[11px] font-bold text-purple-200">
                                   <div className="flex items-center gap-2">
                                     <Trophy className="w-4 h-4 text-purple-400" />
-                                    <span className="font-display tracking-wider">ROUND 4 QUALIFICATION CUTOFF (TOP 8 ADVANCE TO THE LEGAL BATTLE)</span>
+                                    <span className="font-display tracking-wider">ROUND 4 QUALIFICATION CUTOFF (TOP 6 ADVANCE TO THE LEGAL BATTLE)</span>
                                   </div>
                                   <span className="text-[10px] uppercase tracking-wider text-purple-300 bg-purple-900/60 px-2 py-0.5 rounded border border-purple-500/40 font-mono">
-                                    Bottom 4 Eliminated (Records Preserved)
+                                    Ranks 7–12 Eliminated (Balances Preserved)
                                   </span>
                                 </div>
                               </td>
@@ -1004,106 +1194,132 @@ export const Round3BlackMarketPage: React.FC = () => {
                             className={`transition-colors ${
                               rec.tieRequiresReview
                                 ? 'bg-rose-950/30 hover:bg-rose-950/50'
-                                : isTop8
+                                : isTop6
                                 ? 'hover:bg-cyan-500/5 bg-[#090d1a]/30'
                                 : 'hover:bg-slate-800/30 bg-[#060a14]/60 text-slate-400'
                             }`}
                           >
                             {/* Rank */}
-                            <td className="py-3 px-4">
+                            <td className="py-3 px-3">
                               {renderRankBadge(rec.rank)}
                             </td>
 
                             {/* Squad Number & Name */}
-                            <td className="py-3 px-4 font-medium">
+                            <td className="py-3 px-3 font-medium">
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-[11px] font-bold text-cyan-400">
                                   {formatTeamNumber(rec.teamNumber)}
                                 </span>
-                                <span className="truncate max-w-[180px] font-semibold text-slate-100" title={rec.teamName}>
+                                <span className="truncate max-w-[150px] font-semibold text-slate-100" title={rec.teamName}>
                                   {rec.teamName}
                                 </span>
                               </div>
                               {rec.tieReason && (
                                 <p className="text-[10px] text-rose-400 mt-0.5 flex items-center gap-1 font-sans">
                                   <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                                  <span className="truncate max-w-[280px]" title={rec.tieReason}>
+                                  <span className="truncate max-w-[240px]" title={rec.tieReason}>
                                     {rec.tieReason}
                                   </span>
                                 </p>
                               )}
                             </td>
 
-                            {/* Current Balance */}
-                            <td className="py-3 px-4 text-right">
-                              <span className="font-mono text-sm font-black text-cyan-300 bg-[#030712]/90 px-2 py-0.5 rounded border border-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.15)]">
-                                {rec.ledger.currentBalance} <span className="text-[10px] font-normal text-slate-400">pts</span>
+                            {/* Starting Balance */}
+                            <td className="py-3 px-2 text-right">
+                              <span className="font-mono text-xs text-slate-300" title={rec.startingBalanceBreakdown ? `1000 base + R1:${rec.startingBalanceBreakdown.r1_points} + R2:${rec.startingBalanceBreakdown.r2_cabo_score} + Ag:${rec.startingBalanceBreakdown.agent_task_points}` : undefined}>
+                                {rec.startingBalanceBreakdown?.total_starting ?? rec.ledger.openingBalance}
                               </span>
                             </td>
 
-                            {/* Total Earned */}
-                            <td className="py-3 px-3 text-right font-mono text-emerald-400 font-semibold">
-                              +{rec.ledger.totalEarned}
+                            {/* Current Balance */}
+                            <td className="py-3 px-2 text-right">
+                              <span className="font-mono text-xs font-bold text-cyan-300">
+                                {rec.ledger.currentBalance} <span className="text-[9px] text-slate-500">pts</span>
+                              </span>
                             </td>
 
                             {/* Total Spent */}
-                            <td className="py-3 px-3 text-right font-mono text-amber-400 font-semibold">
-                              -{rec.ledger.totalSpent}
+                            <td className="py-3 px-2 text-right">
+                              <span className="font-mono text-xs text-slate-400">
+                                {rec.ledger.totalSpent} <span className="text-[9px] text-slate-600">pts</span>
+                              </span>
                             </td>
 
-                            {/* Net Adjustments */}
-                            <td className="py-3 px-3 text-right font-mono text-slate-400">
-                              {rec.ledger.netAdjustments > 0 ? `+${rec.ledger.netAdjustments}` : rec.ledger.netAdjustments}
-                            </td>
-
-                            {/* Hidden Code Status */}
-                            <td className="py-3 px-4 text-center">
-                              {!config.hiddenCodeConfig.isConfigured ? (
-                                <Badge variant="neutral" size="sm">
-                                  Requirements TBD
-                                </Badge>
-                              ) : rec.codeRecord.isComplete ? (
-                                <Badge variant="success" size="sm" dot>
-                                  {rec.codeRecord.fragments.length}/{config.hiddenCodeConfig.requiredFragmentCount} Verified
-                                </Badge>
+                            {/* Secret Code Item 1 */}
+                            <td className="py-3 px-2 text-center">
+                              {hasCode1 ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/40">
+                                  Item 1
+                                </span>
                               ) : (
-                                <Badge variant="warning" size="sm">
-                                  {rec.codeRecord.fragments.length}/{config.hiddenCodeConfig.requiredFragmentCount} Fragments
-                                </Badge>
+                                <span className="text-[10px] font-mono text-slate-600">-</span>
                               )}
                             </td>
 
+                            {/* Secret Code Item 2 */}
+                            <td className="py-3 px-2 text-center">
+                              {hasCode2 ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/40">
+                                  Item 2
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-mono text-slate-600">-</span>
+                              )}
+                            </td>
+
+                            {/* Complete Key */}
+                            <td className="py-3 px-2 text-center">
+                              {hasKey ? (
+                                <Badge variant="success" size="sm" dot>Complete</Badge>
+                              ) : (
+                                <Badge variant="warning" size="sm">Missing</Badge>
+                              )}
+                            </td>
+
+                            {/* Powerups (R4) */}
+                            <td className="py-3 px-2 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                {rec.hasPowerup1 && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-950/60 text-purple-300 border border-purple-500/30" title="Powerup 1: Prep Time Bonus">
+                                    P1
+                                  </span>
+                                )}
+                                {rec.hasPowerup2 && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-950/60 text-purple-300 border border-purple-500/30" title="Powerup 2: Question Bonus">
+                                    P2
+                                  </span>
+                                )}
+                                {!rec.hasPowerup1 && !rec.hasPowerup2 && (
+                                  <span className="text-[10px] font-mono text-slate-600">None</span>
+                                )}
+                              </div>
+                            </td>
+
                             {/* Qualification Status */}
-                            <td className="py-3 px-4">
+                            <td className="py-3 px-3">
                               {renderStatusBadge(rec.qualificationStatus)}
                             </td>
 
                             {/* Actions */}
-                            <td className="py-3 px-4 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
+                            <td className="py-3 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1">
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  leftIcon={<Coins className="w-3 h-3 text-cyan-400" />}
-                                  onClick={() => {
-                                    setSelectedTeamId(rec.teamId);
-                                    setActiveTab('economy');
-                                  }}
-                                  title="View complete financial transaction ledger"
+                                  leftIcon={<Eye className="w-3 h-3 text-indigo-400" />}
+                                  onClick={() => handleOpenPlayerView(rec.teamId)}
+                                  title="Open Squad Private Player Portal View"
                                 >
-                                  Ledger
+                                  Squad View
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  leftIcon={<QrCode className="w-3 h-3 text-purple-400" />}
-                                  onClick={() => {
-                                    setFragmentForm((prev) => ({ ...prev, teamId: rec.teamId }));
-                                    setActiveTab('hidden_code');
-                                  }}
-                                  title="Inspect hidden code fragments"
+                                  leftIcon={<Info className="w-3 h-3 text-cyan-400" />}
+                                  onClick={() => setInspectTeamRecord(rec)}
+                                  title="Inspect full financials, items & audit log"
                                 >
-                                  Code
+                                  Inspect
                                 </Button>
                               </div>
                             </td>
@@ -1402,37 +1618,93 @@ export const Round3BlackMarketPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Requirements Status Box */}
-          <div className="bg-[#090d1a]/80 p-4 rounded-xl border border-cyan-500/20 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 font-mono">
-                Hidden Code Requirement Policy
-              </span>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-sm font-bold text-slate-100">
-                  {config.hiddenCodeConfig.isConfigured
-                    ? `${config.hiddenCodeConfig.requiredFragmentCount} fragments required for completion`
-                    : 'Requirements not configured (Pending Organizer Confirmation)'}
+          {/* Binary Code Checker (Official Spec) */}
+          <div className="bg-[#090d1a]/90 p-4 rounded-xl border border-cyan-500/30 shadow-[0_0_20px_rgba(34,211,238,0.1)]">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 font-mono flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  Binary Code Checker
                 </span>
-                {config.hiddenCodeConfig.isRequiredForQualification ? (
-                  <Badge variant="warning" size="sm">Mandatory for Round 4</Badge>
-                ) : (
-                  <Badge variant="neutral" size="sm">Optional / Parallel Track</Badge>
-                )}
+                <h4 className="text-sm font-bold text-slate-100 mt-0.5">
+                  Validate Decoded Key Submission
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Returns strictly <span className="text-emerald-400 font-bold">✅ Valid Key</span> or <span className="text-rose-400 font-bold">❌ Invalid Key</span>. Never exposes secret targets or intermediate diagnostics.
+                </p>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {config.hiddenCodeConfig.instructionsNote || 'Physical verification card tags recovered at designated stations.'}
-              </p>
+
+              <form onSubmit={handleCheckCode} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <select
+                  value={checkerTeamId}
+                  onChange={(e) => {
+                    setCheckerTeamId(e.target.value);
+                    setCheckerResult(null);
+                  }}
+                  className="px-2.5 py-1.5 text-xs bg-[#030712] border border-cyan-500/30 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400 font-mono"
+                  required
+                >
+                  <option value="">Select Squad...</option>
+                  {data.records.map((r) => (
+                    <option key={r.teamId} value={r.teamId}>
+                      {formatTeamNumber(r.teamNumber)} - {r.teamName}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="text"
+                  placeholder="Enter decoded key..."
+                  value={checkerCodeInput}
+                  onChange={(e) => {
+                    setCheckerCodeInput(e.target.value);
+                    setCheckerResult(null);
+                  }}
+                  className="px-3 py-1.5 text-xs bg-[#030712] border border-cyan-500/30 rounded-lg text-slate-100 placeholder-slate-500 font-mono tracking-widest uppercase focus:outline-none focus:border-cyan-400 min-w-[180px]"
+                  required
+                />
+
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="primary"
+                  disabled={isCheckingCode || !checkerCodeInput.trim() || !checkerTeamId}
+                  className="bg-cyan-600 hover:bg-cyan-500"
+                >
+                  {isCheckingCode ? 'Verifying...' : 'Check Key'}
+                </Button>
+              </form>
             </div>
 
-            <Button
-              size="sm"
-              variant="outline"
-              leftIcon={<Sliders className="w-3.5 h-3.5 text-purple-400" />}
-              onClick={() => setIsRulesModalOpen(true)}
-            >
-              Configure Code Policy
-            </Button>
+            {/* Checker Outcome Display */}
+            {checkerResult && (
+              <div className="mt-3 pt-3 border-t border-cyan-500/20 flex items-center justify-between animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-mono">Result:</span>
+                  {checkerResult.valid ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      ✅ Valid Key
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-500/50 shadow-[0_0_12px_rgba(244,63,94,0.3)]">
+                      <AlertTriangle className="w-4 h-4 text-rose-400" />
+                      ❌ Invalid Key
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCheckerResult(null);
+                    setCheckerCodeInput('');
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-300 cursor-pointer"
+                >
+                  Clear Result
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 12 Squads Code Verification Table */}
@@ -1559,6 +1831,170 @@ export const Round3BlackMarketPage: React.FC = () => {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 4: DUAL-SIGNOFF APPROVALS */}
+      {activeTab === 'approvals' && (
+        <div className="space-y-4">
+          <div className="bg-[#090d1a]/80 p-4 rounded-xl border border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.05)] flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="font-bold text-slate-100 flex items-center gap-2 font-display text-sm tracking-wide">
+                <Shield className="w-4 h-4 text-amber-400" />
+                <span>Dual-Organizer Signoff Workflow</span>
+                <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded font-mono">
+                  Official Spec Enforced
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed max-w-2xl">
+                Per the final organizer specification, any item or asset purchased in the Black Market requires official approval signatures from <strong>two distinct organizers</strong> before points are deducted from the squad's wallet balance.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                leftIcon={<RotateCcw className="w-3.5 h-3.5 text-cyan-400" />}
+                onClick={handleSyncBalances}
+              >
+                Sync Starting Balances
+              </Button>
+            </div>
+          </div>
+
+          <Card className="border-cyan-500/20 overflow-hidden">
+            <CardHeader className="bg-[#030712]/90 border-b border-cyan-500/20 py-3 px-4 flex justify-between items-center">
+              <div className="font-mono text-xs font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-2">
+                <span>Purchase Signoff Queue</span>
+                <Badge variant={data.pendingPurchases && data.pendingPurchases.length > 0 ? 'warning' : 'neutral'} size="sm">
+                  {data.pendingPurchases?.length || 0} Pending
+                </Badge>
+              </div>
+            </CardHeader>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-300">
+                <thead className="bg-[#030712]/90 border-b border-cyan-500/20 text-cyan-400/80 uppercase font-semibold text-[10px] tracking-wider font-mono">
+                  <tr>
+                    <th className="py-3 px-4">Squad</th>
+                    <th className="py-3 px-4">Asset / Item</th>
+                    <th className="py-3 px-3 text-right">Cost (pts)</th>
+                    <th className="py-3 px-4">1st Organizer Signoff</th>
+                    <th className="py-3 px-4">2nd Organizer Signoff</th>
+                    <th className="py-3 px-3 text-center">Status</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-cyan-500/10">
+                  {(!data.pendingPurchases || data.pendingPurchases.length === 0) ? (
+                    <tr>
+                      <td colSpan={7} className="py-8">
+                        <EmptyState
+                          icon={CheckCircle2}
+                          title="No pending purchase signoffs"
+                          description="All Black Market purchases are either fully approved by two organizers or no pending requests exist."
+                        />
+                      </td>
+                    </tr>
+                  ) : (
+                    data.pendingPurchases.map((p: any) => {
+                      const squad = data.records.find((r) => r.teamId === p.team_id);
+                      const isFirstApproved = !!p.first_approved_by;
+                      const isFullyApproved = p.approval_status === 'APPROVED';
+
+                      return (
+                        <tr key={p.id} className="hover:bg-cyan-500/5 transition-colors">
+                          <td className="py-3 px-4 font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-cyan-400 font-bold text-[11px]">
+                                {squad ? formatTeamNumber(squad.teamNumber) : p.team_id}
+                              </span>
+                              <span className="font-semibold text-slate-100">{squad?.teamName || p.team_id}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-200 capitalize">
+                              {p.asset_type.replace(/_/g, ' ')}
+                            </span>
+                            {p.quantity > 1 && (
+                              <span className="text-slate-400 font-mono text-[10px] ml-1">×{p.quantity}</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-amber-400">
+                            {p.total_price} pts
+                          </td>
+                          <td className="py-3 px-4 text-[11px]">
+                            {p.first_approved_by ? (
+                              <div className="text-emerald-400 font-medium">
+                                <span>{p.first_approved_by}</span>
+                                <span className="text-[10px] text-slate-500 font-mono block">
+                                  {p.first_approved_at ? new Date(p.first_approved_at).toLocaleTimeString() : 'Signed'}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 italic">Pending 1st Signature</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-[11px]">
+                            {p.second_approved_by ? (
+                              <div className="text-emerald-400 font-medium">
+                                <span>{p.second_approved_by}</span>
+                                <span className="text-[10px] text-slate-500 font-mono block">
+                                  {p.second_approved_at ? new Date(p.second_approved_at).toLocaleTimeString() : 'Signed'}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 italic">Pending 2nd Signature</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {p.approval_status === 'APPROVED' ? (
+                              <Badge variant="success" size="sm" dot>Approved</Badge>
+                            ) : p.approval_status === 'REJECTED' ? (
+                              <Badge variant="danger" size="sm">Rejected</Badge>
+                            ) : (
+                              <Badge variant="warning" size="sm" dot>
+                                {isFirstApproved ? '1/2 Signed' : '0/2 Signed'}
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {!isFullyApproved && p.approval_status !== 'REJECTED' && (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  leftIcon={<Check className="w-3 h-3" />}
+                                  onClick={() => {
+                                    setApprovalModalPurchase(p);
+                                    setApprovalNotes('');
+                                  }}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-xs py-1"
+                                >
+                                  {isFirstApproved ? 'Sign 2nd' : 'Sign 1st'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  leftIcon={<X className="w-3 h-3 text-rose-400" />}
+                                  onClick={() => {
+                                    setRejectionModalPurchase(p);
+                                    setRejectionReason('');
+                                  }}
+                                  className="text-xs py-1 hover:border-rose-500/50"
+                                >
+                                  Reject
+                                </Button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2049,14 +2485,137 @@ export const Round3BlackMarketPage: React.FC = () => {
         </Modal>
       )}
 
-      {/* DIALOG: FINALIZE TOP 8 */}
+      {/* MODAL: APPROVE PURCHASE */}
+      {approvalModalPurchase && (
+        <Modal
+          isOpen={!!approvalModalPurchase}
+          onClose={() => setApprovalModalPurchase(null)}
+          title="Sign & Approve Black Market Purchase"
+          subtitle="Dual-organizer signoff is mandatory. Points deduction only activates once both distinct signatures are logged."
+        >
+          <form onSubmit={handleApprovePurchase} className="space-y-3.5 text-xs">
+            <div className="bg-[#030712]/90 p-3 rounded-lg border border-cyan-500/30 space-y-1.5 font-mono text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Squad:</span>
+                <span className="text-cyan-300 font-bold">
+                  {data.records.find((r) => r.teamId === approvalModalPurchase.team_id)?.teamName || approvalModalPurchase.team_id}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Asset:</span>
+                <span className="text-amber-400 font-semibold">{approvalModalPurchase.asset_type.replace(/_/g, ' ')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Total Price:</span>
+                <span className="text-rose-400 font-bold">-{approvalModalPurchase.total_price} pts</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-cyan-500/20">
+                <span className="text-slate-400">1st Signer:</span>
+                <span className={approvalModalPurchase.first_approved_by ? 'text-emerald-400 font-semibold' : 'text-slate-500 italic'}>
+                  {approvalModalPurchase.first_approved_by || 'Awaiting 1st signature'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-300 mb-1 font-mono text-[11px]">
+                Organizer Signer Name
+              </label>
+              <input
+                type="text"
+                value={approvalOrganizerName}
+                onChange={(e) => setApprovalOrganizerName(e.target.value)}
+                className="w-full px-3 py-1.5 border border-cyan-500/30 rounded-lg bg-[#030712]/90 text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                required
+              />
+              {approvalModalPurchase.first_approved_by && (
+                <p className="text-[10px] text-amber-400 mt-1">
+                  Note: 2nd organizer must differ from 1st signer ({approvalModalPurchase.first_approved_by}).
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-300 mb-1 font-mono text-[11px]">
+                Signoff Notes / Reference (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Verified physically at black market booth"
+                value={approvalNotes}
+                onChange={(e) => setApprovalNotes(e.target.value)}
+                className="w-full px-3 py-1.5 border border-cyan-500/30 rounded-lg bg-[#030712]/90 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-cyan-500/20">
+              <Button type="button" variant="outline" onClick={() => setApprovalModalPurchase(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" className="bg-emerald-600 hover:bg-emerald-700" disabled={isSubmitting}>
+                {isSubmitting ? 'Signing...' : 'Sign & Confirm Signoff'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL: REJECT PURCHASE */}
+      {rejectionModalPurchase && (
+        <Modal
+          isOpen={!!rejectionModalPurchase}
+          onClose={() => setRejectionModalPurchase(null)}
+          title="Reject Black Market Purchase"
+          subtitle="Void this transaction and release the purchase request."
+        >
+          <form onSubmit={handleRejectPurchase} className="space-y-3.5 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-300 mb-1 font-mono text-[11px]">
+                Rejecting Organizer Name
+              </label>
+              <input
+                type="text"
+                value={approvalOrganizerName}
+                onChange={(e) => setApprovalOrganizerName(e.target.value)}
+                className="w-full px-3 py-1.5 border border-cyan-500/30 rounded-lg bg-[#030712]/90 text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-300 mb-1 font-mono text-[11px]">
+                Reason for Rejection
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Squad cancelled purchase, or booth protocol discrepancy"
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                className="w-full px-3 py-1.5 border border-cyan-500/30 rounded-lg bg-[#030712]/90 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                required
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-cyan-500/20">
+              <Button type="button" variant="outline" onClick={() => setRejectionModalPurchase(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" className="bg-rose-600 hover:bg-rose-700" disabled={isSubmitting}>
+                {isSubmitting ? 'Rejecting...' : 'Confirm Rejection'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* DIALOG: FINALIZE TOP 6 */}
       <ConfirmationDialog
         isOpen={isFinalizeDialogOpen}
         onClose={() => setIsFinalizeDialogOpen(false)}
         onConfirm={handleFinalizeRound3}
         title="Finalize Round 3: The Black Market"
-        message="Sealing official results will permanently advance the Top 8 qualifying squads to Round 4 (The Legal Battle). The bottom 4 squads will be officially eliminated, with all records permanently preserved. Are you sure you want to proceed?"
-        confirmLabel={isSubmitting ? 'Finalizing...' : 'Finalize & Advance Top 8'}
+        message="Sealing official results will permanently advance the Top 6 qualifying squads to Round 4 (The Legal Battle). The bottom 6 squads will be officially eliminated, with all wallet balances permanently preserved. Are you sure you want to proceed?"
+        confirmLabel={isSubmitting ? 'Finalizing...' : 'Finalize & Advance Top 6'}
         isDestructive={false}
       />
 
@@ -2070,6 +2629,288 @@ export const Round3BlackMarketPage: React.FC = () => {
         confirmLabel="Reset All Ledgers"
         isDestructive={true}
       />
+
+      {/* MODAL: PLAYER VIEW (TEAM STATUS - ISOLATED SQUAD VIEW) */}
+      {isPlayerViewOpen && (
+        <Modal
+          isOpen={isPlayerViewOpen}
+          onClose={() => setIsPlayerViewOpen(false)}
+          title="Squad Status & Private Inventory Portal"
+          subtitle="Isolated participant perspective: Wallet balance, owned items, and purchase logs."
+        >
+          <div className="space-y-4 text-xs">
+            {isLoadingPlayerView ? (
+              <div className="py-8 text-center text-slate-400 font-mono animate-pulse">
+                Loading squad inventory...
+              </div>
+            ) : playerViewInventory ? (
+              <>
+                {/* Balance Cards */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-[#030712] p-3 rounded-lg border border-cyan-500/30">
+                    <span className="text-[10px] font-mono text-cyan-400 font-bold uppercase block">
+                      Wallet Balance
+                    </span>
+                    <span className="text-lg font-bold font-mono text-cyan-300">
+                      {playerViewInventory.current_balance} <span className="text-[10px] text-slate-400">pts</span>
+                    </span>
+                  </div>
+                  <div className="bg-[#030712] p-3 rounded-lg border border-cyan-500/20">
+                    <span className="text-[10px] font-mono text-slate-400 font-bold uppercase block">
+                      Total Spent
+                    </span>
+                    <span className="text-lg font-bold font-mono text-slate-300">
+                      {playerViewInventory.total_spent} <span className="text-[10px] text-slate-500">pts</span>
+                    </span>
+                  </div>
+                  <div className="bg-[#030712] p-3 rounded-lg border border-cyan-500/20">
+                    <span className="text-[10px] font-mono text-slate-400 font-bold uppercase block">
+                      Total Earned
+                    </span>
+                    <span className="text-lg font-bold font-mono text-slate-300">
+                      {playerViewInventory.total_earned} <span className="text-[10px] text-slate-500">pts</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Starting Breakdown */}
+                {playerViewInventory.starting_balance_breakdown && (
+                  <div className="bg-[#090d1a] p-3 rounded-lg border border-cyan-500/20">
+                    <span className="text-[10px] font-mono text-cyan-400 uppercase font-bold block mb-1">
+                      Starting Balance Calculation
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px] text-slate-300">
+                      <div>Base: <strong className="text-slate-100">{playerViewInventory.starting_balance_breakdown.base}</strong></div>
+                      <div>R1 Rank: <strong className="text-slate-100">+{playerViewInventory.starting_balance_breakdown.r1_points}</strong></div>
+                      <div>R2 Cabo: <strong className="text-slate-100">+{playerViewInventory.starting_balance_breakdown.r2_cabo_score}</strong></div>
+                      <div>Agent Tasks: <strong className="text-slate-100">+{playerViewInventory.starting_balance_breakdown.agent_task_points}</strong></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4 Official Items Inventory Status */}
+                <div className="bg-[#090d1a] p-3 rounded-lg border border-cyan-500/20">
+                  <span className="text-[10px] font-mono text-cyan-400 uppercase font-bold block mb-2">
+                    Official Black Market Inventory (4 Items)
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Item 1 */}
+                    <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
+                      playerViewInventory.items_owned.secret_code_item_1
+                        ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                        : 'bg-slate-900/40 border-slate-700/50 text-slate-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-purple-400" />
+                        <div>
+                          <span className="font-bold block">Secret Code Item 1</span>
+                          <span className="text-[10px] text-slate-400">Key Part 1 of 2</span>
+                        </div>
+                      </div>
+                      <Badge variant={playerViewInventory.items_owned.secret_code_item_1 ? 'success' : 'neutral'} size="sm">
+                        {playerViewInventory.items_owned.secret_code_item_1 ? 'OWNED' : 'NOT ACQUIRED'}
+                      </Badge>
+                    </div>
+
+                    {/* Item 2 */}
+                    <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
+                      playerViewInventory.items_owned.secret_code_item_2
+                        ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                        : 'bg-slate-900/40 border-slate-700/50 text-slate-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-purple-400" />
+                        <div>
+                          <span className="font-bold block">Secret Code Item 2</span>
+                          <span className="text-[10px] text-slate-400">Key Part 2 of 2</span>
+                        </div>
+                      </div>
+                      <Badge variant={playerViewInventory.items_owned.secret_code_item_2 ? 'success' : 'neutral'} size="sm">
+                        {playerViewInventory.items_owned.secret_code_item_2 ? 'OWNED' : 'NOT ACQUIRED'}
+                      </Badge>
+                    </div>
+
+                    {/* Powerup 1 */}
+                    <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
+                      playerViewInventory.items_owned.powerup_1_r4
+                        ? 'bg-purple-950/40 border-purple-500/40 text-purple-300'
+                        : 'bg-slate-900/40 border-slate-700/50 text-slate-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <div>
+                          <span className="font-bold block">Powerup 1 for Round 4</span>
+                          <span className="text-[10px] text-slate-400">Prep Time Bonus</span>
+                        </div>
+                      </div>
+                      <Badge variant={playerViewInventory.items_owned.powerup_1_r4 ? 'primary' : 'neutral'} size="sm">
+                        {playerViewInventory.items_owned.powerup_1_r4 ? 'EQUIPPED' : 'NOT ACQUIRED'}
+                      </Badge>
+                    </div>
+
+                    {/* Powerup 2 */}
+                    <div className={`p-2.5 rounded-lg border flex items-center justify-between ${
+                      playerViewInventory.items_owned.powerup_2_r4
+                        ? 'bg-purple-950/40 border-purple-500/40 text-purple-300'
+                        : 'bg-slate-900/40 border-slate-700/50 text-slate-400'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <div>
+                          <span className="font-bold block">Powerup 2 for Round 4</span>
+                          <span className="text-[10px] text-slate-400">Question Bonus</span>
+                        </div>
+                      </div>
+                      <Badge variant={playerViewInventory.items_owned.powerup_2_r4 ? 'primary' : 'neutral'} size="sm">
+                        {playerViewInventory.items_owned.powerup_2_r4 ? 'EQUIPPED' : 'NOT ACQUIRED'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-cyan-500/20 flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-medium">Complete Qualification Key Status:</span>
+                    {playerViewInventory.has_complete_key ? (
+                      <span className="text-emerald-400 font-bold font-mono flex items-center gap-1">
+                        <CheckCircle2 className="w-4 h-4" /> ✅ COMPLETE (Both Code Items Held or Code Verified)
+                      </span>
+                    ) : (
+                      <span className="text-amber-400 font-semibold font-mono flex items-center gap-1">
+                        <AlertTriangle className="w-4 h-4" /> ⚠️ INCOMPLETE (Both Secret Code Items 1 & 2 Required)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Squad Transaction History */}
+                <div className="bg-[#090d1a] p-3 rounded-lg border border-cyan-500/20">
+                  <span className="text-[10px] font-mono text-cyan-400 uppercase font-bold block mb-2">
+                    Squad Purchase Ledger
+                  </span>
+                  {playerViewInventory.purchases && playerViewInventory.purchases.length > 0 ? (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {playerViewInventory.purchases.map((p) => (
+                        <div key={p.id} className="p-2 rounded bg-[#030712] border border-cyan-500/10 flex items-center justify-between text-[11px] font-mono">
+                          <span className="text-slate-300">{p.asset_type}</span>
+                          <span className="text-rose-400">-{p.price} pts</span>
+                          <span className="text-emerald-400 uppercase text-[10px]">{p.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-500 italic text-[11px]">No purchases recorded for this squad.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-slate-400">No inventory record found.</p>
+            )}
+
+            <div className="flex justify-end pt-3 border-t border-cyan-500/20">
+              <Button type="button" variant="outline" onClick={() => setIsPlayerViewOpen(false)}>
+                Close Player View
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: ORGANIZER DETAILED TEAM INSPECTOR */}
+      {inspectTeamRecord && (
+        <Modal
+          isOpen={!!inspectTeamRecord}
+          onClose={() => setInspectTeamRecord(null)}
+          title={`Squad Audit: ${inspectTeamRecord.teamName}`}
+          subtitle={`Team Number: ${formatTeamNumber(inspectTeamRecord.teamNumber)} · Rank #${inspectTeamRecord.rank ?? 'Unranked'}`}
+        >
+          <div className="space-y-4 text-xs">
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-[#030712] p-2.5 rounded border border-cyan-500/20 text-center font-mono">
+                <span className="text-[10px] text-slate-400 block">Start</span>
+                <span className="font-bold text-slate-200">
+                  {inspectTeamRecord.startingBalanceBreakdown?.total_starting ?? inspectTeamRecord.ledger.openingBalance}
+                </span>
+              </div>
+              <div className="bg-[#030712] p-2.5 rounded border border-cyan-500/30 text-center font-mono">
+                <span className="text-[10px] text-cyan-400 block">Current</span>
+                <span className="font-bold text-cyan-300">{inspectTeamRecord.ledger.currentBalance}</span>
+              </div>
+              <div className="bg-[#030712] p-2.5 rounded border border-cyan-500/20 text-center font-mono">
+                <span className="text-[10px] text-slate-400 block">Spent</span>
+                <span className="font-bold text-rose-400">{inspectTeamRecord.ledger.totalSpent}</span>
+              </div>
+              <div className="bg-[#030712] p-2.5 rounded border border-cyan-500/20 text-center font-mono">
+                <span className="text-[10px] text-slate-400 block">Status</span>
+                <span className="font-bold text-emerald-400 uppercase text-[10px]">
+                  {inspectTeamRecord.qualificationStatus}
+                </span>
+              </div>
+            </div>
+
+            {/* Starting Breakdown */}
+            {inspectTeamRecord.startingBalanceBreakdown && (
+              <div className="bg-[#090d1a] p-3 rounded border border-cyan-500/20 text-[11px] font-mono">
+                <span className="text-cyan-400 font-bold block mb-1">Starting Breakdown Formula</span>
+                <div className="grid grid-cols-2 gap-2 text-slate-300">
+                  <div>Base: 1000 pts</div>
+                  <div>R1 Clue Hunt: +{inspectTeamRecord.startingBalanceBreakdown.r1_points} pts</div>
+                  <div>R2 Cabo: +{inspectTeamRecord.startingBalanceBreakdown.r2_cabo_score} pts</div>
+                  <div>Secret Agent Tasks: +{inspectTeamRecord.startingBalanceBreakdown.agent_task_points} pts ({inspectTeamRecord.startingBalanceBreakdown.agent_tasks_count} completed)</div>
+                </div>
+              </div>
+            )}
+
+            {/* 4 Items Check */}
+            <div className="bg-[#090d1a] p-3 rounded border border-cyan-500/20">
+              <span className="text-cyan-400 font-bold font-mono text-[11px] block mb-2">4 Market Items Status</span>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2 rounded bg-[#030712] border border-cyan-500/10 flex justify-between">
+                  <span>Secret Code Item 1:</span>
+                  <strong className={inspectTeamRecord.hasSecretCode1 ? 'text-emerald-400' : 'text-slate-500'}>
+                    {inspectTeamRecord.hasSecretCode1 ? 'ACQUIRED' : 'MISSING'}
+                  </strong>
+                </div>
+                <div className="p-2 rounded bg-[#030712] border border-cyan-500/10 flex justify-between">
+                  <span>Secret Code Item 2:</span>
+                  <strong className={inspectTeamRecord.hasSecretCode2 ? 'text-emerald-400' : 'text-slate-500'}>
+                    {inspectTeamRecord.hasSecretCode2 ? 'ACQUIRED' : 'MISSING'}
+                  </strong>
+                </div>
+                <div className="p-2 rounded bg-[#030712] border border-cyan-500/10 flex justify-between">
+                  <span>Powerup 1 for Round 4:</span>
+                  <strong className={inspectTeamRecord.hasPowerup1 ? 'text-purple-400' : 'text-slate-500'}>
+                    {inspectTeamRecord.hasPowerup1 ? 'CARRIED' : 'NONE'}
+                  </strong>
+                </div>
+                <div className="p-2 rounded bg-[#030712] border border-cyan-500/10 flex justify-between">
+                  <span>Powerup 2 for Round 4:</span>
+                  <strong className={inspectTeamRecord.hasPowerup2 ? 'text-purple-400' : 'text-slate-500'}>
+                    {inspectTeamRecord.hasPowerup2 ? 'CARRIED' : 'NONE'}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-cyan-500/20">
+              <Button
+                type="button"
+                variant="outline"
+                leftIcon={<Eye className="w-3.5 h-3.5 text-indigo-400" />}
+                onClick={() => {
+                  const id = inspectTeamRecord.teamId;
+                  setInspectTeamRecord(null);
+                  handleOpenPlayerView(id);
+                }}
+              >
+                Open Player Portal
+              </Button>
+              <Button type="button" variant="primary" onClick={() => setInspectTeamRecord(null)}>
+                Close Audit
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

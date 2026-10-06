@@ -71,6 +71,9 @@ class Round4StageTimingModel(Base):
     ended_at = Column(DateTime, nullable=True)
     actual_duration_seconds = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
+    timekeeper_name = Column(String(255), nullable=True)
+    time_violations_notes = Column(Text, nullable=True)
+    penalty_seconds = Column(Integer, default=0, nullable=True)
 
 
 class Round4JudgeScore(Base):
@@ -88,6 +91,12 @@ class Round4JudgeScore(Base):
     is_submitted = Column(Boolean, default=True, nullable=False)
     submitted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     comments = Column(Text, nullable=True)
+    is_locked = Column(Boolean, default=False, nullable=False)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    locked_by = Column(String(255), nullable=True)
+    correction_notes = Column(Text, nullable=True)
+    corrected_by = Column(String(255), nullable=True)
+    corrected_at = Column(DateTime(timezone=True), nullable=True)
 
     team = relationship("Team")
 
@@ -111,6 +120,10 @@ class Round4AgentGuess(Base):
     verified_by = Column(String(255), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+    guesses_json = Column(JSON, default=list, nullable=True)
+    total_guesses = Column(Integer, default=0, nullable=False)
+    correct_guesses = Column(Integer, default=0, nullable=False)
+    wrong_guesses = Column(Integer, default=0, nullable=False)
 
     team = relationship("Team")
 

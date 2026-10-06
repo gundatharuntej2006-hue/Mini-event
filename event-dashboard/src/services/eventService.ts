@@ -173,7 +173,7 @@ class EventService {
       defaultConfig.isFinalized
     );
     const defaultEligibleTeams = defaultR1Standings.records
-      .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 24)
+      .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 16)
       .map((r) => defaultTeams.find((t) => t.id === r.teamId)!)
       .filter(Boolean);
     const defaultR2Games = generateInitialCaboGames(defaultEligibleTeams, defaultR2Config);
@@ -215,7 +215,7 @@ class EventService {
     });
     const defaultR3Standings = processRound3Standings(defaultR3Raw, defaultR3Config, defaultR2Config.isFinalized);
     const defaultR4EligibleTeams = defaultR3Standings.records
-      .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 8)
+      .filter((r) => r.rank !== null && r.rank !== undefined && r.rank <= 6)
       .map((r) => defaultTeams.find((t) => t.id === r.teamId)!)
       .filter(Boolean);
     const defaultR4Pairs = generateInitialRound4Pairs(defaultR4EligibleTeams);
@@ -233,7 +233,13 @@ class EventService {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed.teams) && Array.isArray(parsed.participants)) {
+          // Purge stale demo caches containing obsolete demo names (e.g. Apex Predators, Vortex Vipers)
+          const containsStaleDemoTeams = Array.isArray(parsed.teams) && parsed.teams.some(
+            (t: any) => t.name === 'Apex Predators' || t.name === 'Vortex Vipers' || t.name === 'Yield Yottas'
+          );
+          if (containsStaleDemoTeams) {
+            localStorage.removeItem(STORAGE_KEY);
+          } else if (Array.isArray(parsed.teams) && Array.isArray(parsed.participants)) {
             const config = parsed.round1Config || defaultConfig;
             // Sanitize unconfirmed/invented checkpoint locations in existing demo storage
             if (
@@ -281,10 +287,18 @@ class EventService {
             });
 
             const r2Config: CaboConfig = parsed.round2Config || defaultR2Config;
-            const r2Games: [CaboGameRecord, CaboGameRecord, CaboGameRecord] =
+            let r2Games: [CaboGameRecord, CaboGameRecord, CaboGameRecord] =
               Array.isArray(parsed.round2Games) && parsed.round2Games.length === 3
                 ? parsed.round2Games
                 : defaultR2Games;
+            if (
+              r2Games &&
+              (Object.keys(r2Games[0]?.placements || {}).length > 16 ||
+                Object.keys(r2Games[1]?.placements || {}).length > 16 ||
+                Object.keys(r2Games[2]?.placements || {}).length > 16)
+            ) {
+              r2Games = defaultR2Games;
+            }
 
             const r3Config: BlackMarketConfig = parsed.round3Config || defaultR3Config;
             const r3Transactions: BlackMarketTransaction[] =
@@ -1187,9 +1201,37 @@ class EventService {
           backendApiService.getRound(1),
         ]);
         if (roundResp.success && roundResp.data) {
-          this.state.round1Config.isFinalized = !!roundResp.data.isFinalized;
-          if (roundResp.data.finalizedAt) {
-            this.state.round1Config.finalizedAt = roundResp.data.finalizedAt;
+          const rData = roundResp.data as any;
+          const rConfig = rData.config || {};
+
+          const isFinal = Boolean(
+            rData.isFinalized ?? rData.is_finalized ?? rConfig.isFinalized ?? rConfig.is_finalized
+          );
+          this.state.round1Config.isFinalized = isFinal;
+
+          const finalAt = rData.finalizedAt ?? rData.finalized_at ?? rConfig.finalizedAt ?? rConfig.finalized_at;
+          if (finalAt) {
+            this.state.round1Config.finalizedAt = finalAt;
+          }
+
+          const startAt = rData.startedAt ?? rData.started_at ?? rConfig.startedAt ?? rConfig.started_at;
+          const isStarted = Boolean(
+            startAt || rData.isStarted || rData.is_started || rConfig.isStarted || rConfig.is_started
+          );
+
+          if (startAt) {
+            this.state.round1Config.startedAt = startAt;
+          }
+          this.state.round1Config.isStarted = isStarted;
+
+          if (rConfig.started_by || rConfig.startedBy) {
+            this.state.round1Config.startedBy = rConfig.started_by || rConfig.startedBy;
+          }
+          if (rConfig.penalty_per_hint_seconds || rConfig.penaltyPerHintSeconds) {
+            this.state.round1Config.penaltyPerHintSeconds = rConfig.penalty_per_hint_seconds || rConfig.penaltyPerHintSeconds;
+          }
+          if (rConfig.checkpoint_names || rConfig.checkpointNames) {
+            this.state.round1Config.checkpointNames = rConfig.checkpoint_names || rConfig.checkpointNames;
           }
         }
         if (recordsResp.success && recordsResp.data && recordsResp.data.length > 0) {
@@ -1270,6 +1312,20 @@ class EventService {
       targetMR.checkpoints = input.checkpoints;
     }
 
+    if (input.phonePenaltiesCount !== undefined) {
+      record.phonePenaltiesCount = input.phonePenaltiesCount;
+    }
+    if (input.separationPenaltiesCount !== undefined) {
+      record.separationPenaltiesCount = input.separationPenaltiesCount;
+    }
+    if (input.clueTamperingDeduction !== undefined) {
+      record.clueTamperingDeduction = input.clueTamperingDeduction;
+    }
+    if (input.isDisqualified !== undefined) {
+      record.isDisqualified = input.isDisqualified;
+      record.disqualificationReason = input.disqualificationReason || null;
+    }
+
     const updated = computeTeamTotals(record, this.state.round1Config.penaltyPerHintSeconds);
     const recIdx = this.state.round1Records.findIndex((r) => r.teamId === teamId);
     this.state.round1Records[recIdx] = updated;
@@ -1285,6 +1341,16 @@ class EventService {
             isCompleted: !!(mr.startTime && mr.completionTime),
           })),
         });
+
+        if (input.phonePenaltiesCount !== undefined || input.separationPenaltiesCount !== undefined || input.isDisqualified !== undefined || input.clueTamperingDeduction !== undefined) {
+          await backendApiService.updateRound1Penalties(teamId, {
+            phone_penalties_count: record.phonePenaltiesCount || 0,
+            separation_penalties_count: record.separationPenaltiesCount || 0,
+            clue_tampering_deduction: record.clueTamperingDeduction || 0,
+            is_disqualified: record.isDisqualified,
+            disqualification_reason: record.disqualificationReason || undefined,
+          });
+        }
       } catch (err) {
         console.warn('Failed to sync Round 1 timing with backend:', err);
       }
@@ -1380,7 +1446,7 @@ class EventService {
     engine.records.forEach((rec) => {
       const team = this.state.teams.find((t) => t.id === rec.teamId);
       if (team && rec.rank !== null && rec.rank !== undefined) {
-        if (rec.rank <= 24) {
+        if (rec.rank <= 16) {
           team.isQualifiedForNextRound = true;
           rec.qualificationStatus = 'Finalized Qualified';
         } else {
@@ -1393,13 +1459,13 @@ class EventService {
 
     this.logActivity({
       category: 'qualification',
-      title: '[FINALIZED] Round 1: The Great Expedition Concluded',
-      description: 'Official results sealed. Exactly 24 squads advanced to Round 2 (Cabo). 8 squads eliminated.',
+      title: '[FINALIZED] Round 1: The ODDyssey Protocol Concluded',
+      description: 'Official results sealed. Exactly 16 squads advanced to Round 2 (Cabo). 16 squads eliminated.',
       badgeType: 'success',
     });
 
     this.notifyChange();
-    return { success: true, qualifiedTeamsCount: 24 };
+    return { success: true, qualifiedTeamsCount: 16 };
   }
 
   async resetRound1Timings(): Promise<void> {
@@ -1530,9 +1596,9 @@ class EventService {
   getEligibleRound2Teams(): Team[] {
     const isR1Finalized = this.state.round1Config.isFinalized;
     if (isR1Finalized) {
-      // Use official finalized Round 1 qualified teams (Rank <= 24)
+      // Use official finalized Round 1 qualified teams (Rank <= 16)
       const qualifiedRecs = this.state.round1Records.filter(
-        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 24
+        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 16
       );
       return qualifiedRecs
         .map((r) => this.state.teams.find((t) => t.id === r.teamId)!)
@@ -1545,7 +1611,7 @@ class EventService {
         false
       );
       const provisionalRecs = r1Standings.records.filter(
-        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 24
+        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 16
       );
       return provisionalRecs
         .map((r) => this.state.teams.find((t) => t.id === r.teamId)!)
@@ -1562,17 +1628,23 @@ class EventService {
       this.state.round2Games = generateInitialCaboGames(eligibleTeams, config);
     }
 
+    let liveCaboSummary: any = null;
+
     if (isLiveMode()) {
       try {
-        const [placementsResp, roundResp] = await Promise.all([
+        const [placementsResp, roundResp, summaryResp] = await Promise.all([
           backendApiService.getRound2Placements(),
           backendApiService.getRound(2),
+          backendApiService.getCaboSummary(),
         ]);
         if (roundResp.success && roundResp.data) {
           this.state.round2Config.isFinalized = !!roundResp.data.isFinalized;
           if (roundResp.data.finalizedAt) {
             this.state.round2Config.finalizedAt = roundResp.data.finalizedAt;
           }
+        }
+        if (summaryResp.success && summaryResp.data) {
+          liveCaboSummary = summaryResp.data;
         }
         if (placementsResp.success && placementsResp.data && this.state.round2Games) {
           placementsResp.data.forEach((p) => {
@@ -1618,6 +1690,17 @@ class EventService {
       round1Finalized,
       eligibleTeams.length
     );
+
+    // In Live Mode, override game completion counts and canFinalize directly from backend source of truth
+    if (liveCaboSummary) {
+      stats.game1CompletionCount = liveCaboSummary.game1CompletedTables;
+      stats.game2CompletionCount = liveCaboSummary.game2CompletedTables;
+      stats.game3CompletionCount = liveCaboSummary.game3CompletedTables;
+      engine.canFinalize = liveCaboSummary.canFinalize;
+      if (!liveCaboSummary.canFinalize && liveCaboSummary.incompleteReasons.length > 0) {
+        engine.blockReason = liveCaboSummary.incompleteReasons.join(' | ');
+      }
+    }
 
     return {
       config,
@@ -1941,18 +2024,34 @@ class EventService {
       this.state.round3CodeRecords = generateInitialRound3CodeRecords(eligibleTeams);
     }
 
+    let pendingPurchases: any[] = [];
+    const backendStandingsMap = new Map<string, any>();
+
     if (isLiveMode()) {
       try {
-        const [rResp, tResp, cResp] = await Promise.all([
+        const [rResp, tResp, cResp, sResp, pResp] = await Promise.all([
           backendApiService.getRound(3),
           backendApiService.getRound3Transactions(),
           backendApiService.getRound3Codes(),
+          backendApiService.getRound3Standings(),
+          backendApiService.getPendingPurchases(),
         ]);
         if (rResp.success && rResp.data) {
           this.state.round3Config.isFinalized = !!rResp.data.isFinalized;
           if (rResp.data.finalizedAt) {
             this.state.round3Config.finalizedAt = rResp.data.finalizedAt;
           }
+        }
+        if (pResp && pResp.success && Array.isArray(pResp.data)) {
+          pendingPurchases = pResp.data;
+        }
+        if (sResp && sResp.success && sResp.data) {
+          const list = Array.isArray(sResp.data)
+            ? sResp.data
+            : (sResp.data as any).standings || [];
+          list.forEach((s: any) => {
+            backendStandingsMap.set(s.team_id || s.teamId, s);
+          });
         }
         if (tResp.success && tResp.data && tResp.data.length > 0) {
           this.state.round3Transactions = tResp.data.map((tx) => ({
@@ -1996,6 +2095,7 @@ class EventService {
     const rawRecords: TeamRound3Record[] = eligibleTeams.map((team) => {
       const ledger = computeTeamLedger(team.id, transactions, config.startingBalance);
       const codeRecord = evaluateTeamCodeStatus(codeRecords[team.id], team.id, config);
+      const be = backendStandingsMap.get(team.id);
 
       return {
         teamId: team.id,
@@ -2004,14 +2104,52 @@ class EventService {
         round2Qualified: round2Finalized,
         ledger,
         codeRecord,
-        rank: null,
+        rank: be?.rank ?? null,
         tieRequiresReview: false,
         qualificationStatus: round2Finalized ? 'Standings Provisional' : 'Round 2 Pending',
+        effectiveBalance: be?.effective_balance ?? ledger.currentBalance,
+        hasSecretCode1: be?.has_secret_code_1 ?? false,
+        hasSecretCode2: be?.has_secret_code_2 ?? false,
+        hasPowerup1: be?.has_powerup_1 ?? false,
+        hasPowerup2: be?.has_powerup_2 ?? false,
+        hasCompleteKey: be?.has_complete_key ?? false,
+        fragmentsStatus: be?.fragments_status,
+        missingFragmentsCount: be?.missing_fragments_count ?? 0,
+        missingFragmentsPenalty: be?.missing_fragments_penalty ?? 0,
+        allFragmentsVerified: be?.all_fragments_verified ?? false,
       };
     });
 
     // Run standings & qualification engine
     const engine = processRound3Standings(rawRecords, config, round2Finalized);
+
+    // If backend standings are active, map their rich fields over the engine records
+    engine.records = engine.records.map((rec) => {
+      const be = backendStandingsMap.get(rec.teamId);
+      if (be) {
+        return {
+          ...rec,
+          rank: be.rank ?? rec.rank,
+          effectiveBalance: be.effective_balance ?? rec.ledger.currentBalance,
+          startingBalanceBreakdown: be.starting_balance_breakdown,
+          hasSecretCode1: be.has_secret_code_1 ?? rec.hasSecretCode1 ?? false,
+          hasSecretCode2: be.has_secret_code_2 ?? rec.hasSecretCode2 ?? false,
+          hasPowerup1: be.has_powerup_1 ?? rec.hasPowerup1 ?? false,
+          hasPowerup2: be.has_powerup_2 ?? rec.hasPowerup2 ?? false,
+          hasCompleteKey: be.has_complete_key ?? rec.hasCompleteKey ?? false,
+          fragmentsStatus: be.fragments_status,
+          missingFragmentsCount: be.missing_fragments_count ?? 0,
+          missingFragmentsPenalty: be.missing_fragments_penalty ?? 0,
+          allFragmentsVerified: be.all_fragments_verified ?? false,
+          qualificationStatus: be.status === 'QUALIFIED'
+            ? (config.isFinalized ? 'Finalized Qualified' : 'Provisional Top 6')
+            : be.status === 'ELIMINATED'
+            ? (config.isFinalized ? 'Finalized Eliminated' : 'Provisional Cutoff')
+            : rec.qualificationStatus,
+        };
+      }
+      return rec;
+    });
 
     // Compute summary KPI statistics
     const stats = computeRound3SummaryStats(
@@ -2031,6 +2169,7 @@ class EventService {
       engine,
       round2Finalized,
       round2QualifiedTeamsCount: eligibleTeams.length,
+      pendingPurchases,
     };
   }
 
@@ -2381,7 +2520,7 @@ class EventService {
     data.engine.records.forEach((rec) => {
       const team = this.state.teams.find((t) => t.id === rec.teamId);
       if (team && rec.rank !== null && rec.rank !== undefined) {
-        if (rec.rank <= 8) {
+        if (rec.rank <= 6) {
           rec.qualificationStatus = 'Finalized Qualified';
         } else {
           rec.qualificationStatus = 'Finalized Eliminated';
@@ -2392,12 +2531,65 @@ class EventService {
     this.logActivity({
       category: 'qualification',
       title: '[FINALIZED] Round 3: The Black Market Concluded',
-      description: 'Official results sealed. Exactly 8 finalist squads advanced to Round 4 (The Legal Battle). 4 squads eliminated.',
+      description: 'Official results sealed. Exactly 6 finalist squads advanced to Round 4 (The Legal Battle). 6 squads eliminated.',
       badgeType: 'success',
     });
 
     this.notifyChange();
-    return { success: true, qualifiedTeamsCount: 8 };
+    return { success: true, qualifiedTeamsCount: 6 };
+  }
+
+  async getPendingPurchases(): Promise<any[]> {
+    if (isLiveMode()) {
+      try {
+        const res = await backendApiService.getPendingPurchases();
+        return res.data || [];
+      } catch (err) {
+        console.warn('Failed to fetch pending purchases from backend:', err);
+      }
+    }
+    return [];
+  }
+
+  async approveMarketPurchase(
+    purchaseId: string,
+    organizerName: string,
+    notes?: string
+  ): Promise<any> {
+    if (isLiveMode()) {
+      const res = await backendApiService.approveMarketPurchase(purchaseId, {
+        organizer_name: organizerName,
+        notes,
+      });
+      this.notifyChange();
+      return res.data;
+    }
+    return null;
+  }
+
+  async rejectMarketPurchase(
+    purchaseId: string,
+    organizerName: string,
+    reason: string
+  ): Promise<any> {
+    if (isLiveMode()) {
+      const res = await backendApiService.rejectMarketPurchase(purchaseId, {
+        organizer_name: organizerName,
+        reason,
+      });
+      this.notifyChange();
+      return res.data;
+    }
+    return null;
+  }
+
+  async syncRound3Balances(): Promise<any> {
+    if (isLiveMode()) {
+      const res = await backendApiService.syncRound3Balances();
+      this.notifyChange();
+      return res.data;
+    }
+    return null;
   }
 
   async resetRound3Ledger(): Promise<void> {
@@ -2458,7 +2650,7 @@ class EventService {
 
   getEligibleRound4Teams(): Team[] {
     if (this.state.round3Config.isFinalized) {
-      // Official finalized Round 3 results: Top 8 squads
+      // Official finalized Round 3 results: Top 6 squads
       const r3Data = this.getEligibleRound3Teams().map((team) => {
         const ledger = computeTeamLedger(
           team.id,
@@ -2484,7 +2676,7 @@ class EventService {
       });
       const r3Standings = processRound3Standings(r3Data, this.state.round3Config, true);
       const qualifiedRecs = r3Standings.records.filter(
-        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 8
+        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 6
       );
       return qualifiedRecs
         .map((r) => this.state.teams.find((t) => t.id === r.teamId)!)
@@ -2523,7 +2715,7 @@ class EventService {
         this.state.round2Config.isFinalized
       );
       const provisionalRecs = r3Standings.records.filter(
-        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 8
+        (r) => r.rank !== null && r.rank !== undefined && r.rank <= 6
       );
       return provisionalRecs
         .map((r) => this.state.teams.find((t) => t.id === r.teamId)!)
@@ -2549,17 +2741,19 @@ class EventService {
       this.state.round4AgentGuesses = generateInitialRound4AgentGuesses(eligibleTeams);
     }
 
+    let backendOverview: any = null;
     if (isLiveMode()) {
       try {
-        const rResp = await backendApiService.getRound(4);
+        const rResp = await backendApiService.getRound4Overview();
         if (rResp.success && rResp.data) {
-          this.state.round4Config.isFinalized = !!rResp.data.isFinalized;
-          if (rResp.data.finalizedAt) {
-            this.state.round4Config.finalizedAt = rResp.data.finalizedAt;
+          backendOverview = rResp.data;
+          this.state.round4Config.isFinalized = !!backendOverview.is_finalized;
+          if (backendOverview.finalized_at) {
+            this.state.round4Config.finalizedAt = backendOverview.finalized_at;
           }
         }
       } catch (err) {
-        console.warn('Failed to sync Round 4 status from backend in Live Mode:', err);
+        console.warn('Failed to sync Round 4 overview from backend in Live Mode:', err);
       }
     }
 
@@ -2568,7 +2762,7 @@ class EventService {
     const agentGuessesMap = this.state.round4AgentGuesses;
 
     // Compute raw records for each eligible team
-    const rawRecords: TeamRound4Record[] = eligibleTeams.map((team) => {
+    const rawRecords: TeamRound4Record[] = eligibleTeams.map((team, tIdx) => {
       // Find pair
       const pair = pairs.find(
         (p) => p.teamAId === team.id || p.teamBId === team.id
@@ -2617,15 +2811,38 @@ class EventService {
         this.state.round3Config.startingBalance
       ).currentBalance;
 
+      // Backend breakdown if present
+      const beRec = backendOverview?.records?.find((r: any) => r.team_id === team.id);
+      const r1Points = beRec ? beRec.r1_points : (100 - tIdx * 10);
+      const r2Cabo = beRec ? beRec.r2_cabo : (70 - tIdx * 5);
+      const agentTaskCredits = beRec ? beRec.agent_task_credits : 50;
+      const r3Balance = beRec ? beRec.r3_balance : bmCurrentBalance;
+      const r4Legal = beRec ? beRec.r4_legal_score : panelScore;
+      const agentGuessPoints = beRec ? beRec.agent_guess_points : (agentRecord?.pointsAwarded ?? 0);
+
       // Final score breakdown
       const finalScoreBreakdown = calculateFinalScoreBreakdown(
         team.id,
-        panelScore,
+        r4Legal,
         agentRecord,
-        bmCurrentBalance,
+        r3Balance,
         config.finalScoreFormula,
-        config.isGuessingRulesConfigured
+        config.isGuessingRulesConfigured,
+        r1Points,
+        r2Cabo,
+        agentTaskCredits
       );
+      finalScoreBreakdown.agentGuessPoints = agentGuessPoints;
+
+      if (beRec && beRec.final_score !== null && beRec.final_score !== undefined) {
+        finalScoreBreakdown.finalScore = beRec.final_score;
+        finalScoreBreakdown.r1Points = beRec.r1_points;
+        finalScoreBreakdown.r2Cabo = beRec.r2_cabo;
+        finalScoreBreakdown.agentTaskCredits = beRec.agent_task_credits;
+        finalScoreBreakdown.r3Balance = beRec.r3_balance;
+        finalScoreBreakdown.r4LegalScore = beRec.r4_legal_score;
+        finalScoreBreakdown.agentGuessPoints = beRec.agent_guess_points;
+      }
 
       return {
         teamId: team.id,
@@ -2882,6 +3099,20 @@ class EventService {
       }
     }
 
+    if (isLiveMode()) {
+      try {
+        await backendApiService.updateRound4Stage(pairId, stageId, {
+          status: stage.status,
+          actual_duration_seconds: stage.actualDurationSeconds ?? undefined,
+          timekeeper_name: stage.timekeeperName ?? undefined,
+          time_violations_notes: stage.timeViolationsNotes ?? undefined,
+          penalty_seconds: stage.penaltySeconds ?? undefined,
+        });
+      } catch (err) {
+        console.warn('Failed to sync stage timing with backend:', err);
+      }
+    }
+
     this.logActivity({
       category: 'system',
       title: `[COURT TIMING] Pair #${pair.pairNumber} Stage: ${stage.name}`,
@@ -2995,6 +3226,7 @@ class EventService {
       comments: input.comments,
       submittedAt: new Date().toISOString(),
       isSubmitted: true,
+      isLocked: false,
     };
 
     if (existingIndex >= 0) {
@@ -3025,6 +3257,133 @@ class EventService {
       badgeType: 'info',
     });
 
+    this.notifyChange();
+  }
+
+  async lockJudgeScore(teamId: string, judgeId: string, lockedBy: string): Promise<void> {
+    const list = this.state.round4JudgeScores[teamId] || [];
+    const score = list.find((s) => s.judgeId === judgeId);
+    if (!score) throw new Error('Scorecard not found');
+    score.isLocked = true;
+    score.lockedAt = new Date().toISOString();
+    score.lockedBy = lockedBy;
+
+    if (isLiveMode()) {
+      try {
+        await backendApiService.lockRound4JudgeScore(score.id);
+      } catch (err) {
+        console.warn('Failed to lock score on backend:', err);
+      }
+    }
+    this.notifyChange();
+  }
+
+  async unlockJudgeScore(teamId: string, judgeId: string): Promise<void> {
+    const list = this.state.round4JudgeScores[teamId] || [];
+    const score = list.find((s) => s.judgeId === judgeId);
+    if (!score) throw new Error('Scorecard not found');
+    score.isLocked = false;
+    score.lockedAt = undefined;
+    score.lockedBy = undefined;
+
+    if (isLiveMode()) {
+      try {
+        await backendApiService.unlockRound4JudgeScore(score.id);
+      } catch (err) {
+        console.warn('Failed to unlock score on backend:', err);
+      }
+    }
+    this.notifyChange();
+  }
+
+  async correctJudgeScore(
+    teamId: string,
+    judgeId: string,
+    payload: {
+      scores?: Record<string, number>;
+      comments?: string;
+      correctionNotes: string;
+      actorName: string;
+    }
+  ): Promise<void> {
+    const list = this.state.round4JudgeScores[teamId] || [];
+    const score = list.find((s) => s.judgeId === judgeId);
+    if (!score) throw new Error('Scorecard not found');
+    if (payload.scores) {
+      score.scores = { ...payload.scores };
+      score.totalScore = Number(Object.values(payload.scores).reduce((a, b) => a + b, 0).toFixed(2));
+    }
+    if (payload.comments !== undefined) {
+      score.comments = payload.comments;
+    }
+    score.correctionNotes = payload.correctionNotes;
+    score.correctedBy = payload.actorName;
+    score.correctedAt = new Date().toISOString();
+
+    if (isLiveMode()) {
+      try {
+        await backendApiService.correctRound4JudgeScore(score.id, {
+          scores: payload.scores,
+          comments: payload.comments,
+          correction_notes: payload.correctionNotes,
+        });
+      } catch (err) {
+        console.warn('Failed to submit audited correction on backend:', err);
+      }
+    }
+    this.notifyChange();
+  }
+
+  async submitTeamAgentGuesses(
+    teamId: string,
+    payload: {
+      guesses: Array<{
+        suspectId: string;
+        suspectName?: string;
+        isCorrect?: boolean;
+      }>;
+      notes?: string;
+    }
+  ): Promise<void> {
+    if (payload.guesses.length < 1 || payload.guesses.length > 5) {
+      throw new Error('Must submit between 1 and 5 secret agent guesses per squad.');
+    }
+    let correct = 0;
+    let wrong = 0;
+    payload.guesses.forEach((g) => {
+      if (g.isCorrect === true) correct++;
+      else if (g.isCorrect === false) wrong++;
+    });
+    const pointsAwarded = (correct * 30) - (wrong * 20);
+
+    this.state.round4AgentGuesses[teamId] = {
+      teamId,
+      outcome: wrong === 0 ? 'correct' : (correct > 0 ? 'correct' : 'incorrect'),
+      pointsAwarded,
+      isVerified: true,
+      verifiedBy: 'Chief-Marshal',
+      verifiedAt: new Date().toISOString(),
+      notes: payload.notes || `Audited ${payload.guesses.length} guesses: ${correct} correct (+${correct * 30}), ${wrong} wrong (-${wrong * 20})`,
+      totalGuesses: payload.guesses.length,
+      correctGuesses: correct,
+      wrongGuesses: wrong,
+      guesses: payload.guesses,
+    };
+
+    if (isLiveMode()) {
+      try {
+        await backendApiService.submitRound4TeamAgentGuesses(teamId, {
+          guesses: payload.guesses.map((g) => ({
+            suspect_id: g.suspectId,
+            suspect_name: g.suspectName,
+            is_correct: g.isCorrect,
+          })),
+          notes: payload.notes,
+        });
+      } catch (err) {
+        console.warn('Failed to sync team agent guesses with backend:', err);
+      }
+    }
     this.notifyChange();
   }
 

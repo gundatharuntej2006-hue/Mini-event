@@ -82,19 +82,16 @@ def get_or_create_final_code_record(db: Session, team_id: str) -> FinalCodeRecor
 def record_fragment_1(
     db: Session,
     team_id: str,
-    fragment_value: str,
+    fragment_value: str = "ODD",
     actor: Optional[str] = None,
     overwrite: bool = False,
 ) -> FinalCodeRecord:
     """
-    Records Fragment 1 (discovered during Round 1: The Great Expedition).
+    Records Fragment 1 ('ODD') discovered during Round 1, Gate 1: The Signal Scramble.
     Prevents silent overwrite unless explicit organizer override is requested.
     Idempotent if the same fragment value is submitted again.
     """
-    if not fragment_value or not fragment_value.strip():
-        raise CodeHuntError("Fragment 1 value cannot be empty.")
-
-    clean_val = fragment_value.strip()
+    clean_val = (fragment_value or "ODD").strip()
     record = get_or_create_final_code_record(db, team_id)
 
     if record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
@@ -111,9 +108,10 @@ def record_fragment_1(
     record.fragment_1_discovered_at = now
     record.updated_at = now
 
-    # Try assembling final code if Fragment 2 is also available
-    if record.fragment_2_value:
-        record.final_code_assembled = f"{clean_val}{record.fragment_2_value}"
+    # Auto-confirm Gate 3 if Fragment 2 ('42') is also already held
+    if record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
+        record.gate_3_confirmed = True
+        record.gate_3_confirmed_at = now
 
     log_audit_event(
         db=db,
@@ -123,7 +121,7 @@ def record_fragment_1(
         actor_id=actor or "system",
         actor_role="ORGANIZER",
         round_number=1,
-        details={"team_id": team_id, "status": record.fragment_1_status.value}
+        details={"team_id": team_id, "status": record.fragment_1_status.value, "fragment": "ODD"}
     )
 
     db.commit()
@@ -134,19 +132,16 @@ def record_fragment_1(
 def record_fragment_2(
     db: Session,
     team_id: str,
-    fragment_value: str,
+    fragment_value: str = "42",
     actor: Optional[str] = None,
     overwrite: bool = False,
 ) -> FinalCodeRecord:
     """
-    Records Fragment 2 (discovered during Round 2: Cabo Tournament).
+    Records Fragment 2 ('42') discovered during Round 1, Gate 2: The Route Riddle.
     Prevents silent overwrite unless explicit organizer override is requested.
     Idempotent if the same fragment value is submitted again.
     """
-    if not fragment_value or not fragment_value.strip():
-        raise CodeHuntError("Fragment 2 value cannot be empty.")
-
-    clean_val = fragment_value.strip()
+    clean_val = (fragment_value or "42").strip()
     record = get_or_create_final_code_record(db, team_id)
 
     if record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
@@ -163,9 +158,10 @@ def record_fragment_2(
     record.fragment_2_discovered_at = now
     record.updated_at = now
 
-    # Try assembling final code if Fragment 1 is also available
-    if record.fragment_1_value:
-        record.final_code_assembled = f"{record.fragment_1_value}{clean_val}"
+    # Auto-confirm Gate 3 if Fragment 1 ('ODD') is also already held
+    if record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED):
+        record.gate_3_confirmed = True
+        record.gate_3_confirmed_at = now
 
     log_audit_event(
         db=db,
@@ -174,9 +170,99 @@ def record_fragment_2(
         entity_id=record.id,
         actor_id=actor or "system",
         actor_role="ORGANIZER",
-        round_number=2,
-        details={"team_id": team_id, "status": record.fragment_2_status.value}
+        round_number=1,
+        details={"team_id": team_id, "status": record.fragment_2_status.value, "fragment": "42"}
     )
+
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def confirm_gate_3_fragments(
+    db: Session,
+    team_id: str,
+    actor: Optional[str] = None,
+    bypass_check: bool = False
+) -> FinalCodeRecord:
+    """
+    Confirms that a squad holds both Round 1 fragments ('ODD' and '42') at Gate 3.
+    Gate 3 confirmation is required before a team can progress to Round 2.
+    """
+    record = get_or_create_final_code_record(db, team_id)
+    has_odd = record.fragment_1_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+    has_42 = record.fragment_2_status in (FragmentStatus.RECOVERED, FragmentStatus.PURCHASED)
+
+    if not (has_odd and has_42) and not bypass_check:
+        missing = []
+        if not has_odd:
+            missing.append("Fragment 'ODD' (Gate 1)")
+        if not has_42:
+            missing.append("Fragment '42' (Gate 2)")
+        raise CodeHuntError(
+            f"Gate 3 confirmation blocked for team '{team_id}'. Missing required fragments: {', '.join(missing)}."
+        )
+
+    now = datetime.now(timezone.utc)
+    record.gate_3_confirmed = True
+    record.gate_3_confirmed_at = now
+    record.gate_3_confirmed_by = actor or "organizer"
+    record.updated_at = now
+
+    log_audit_event(
+        db=db,
+        action="GATE_3_CONFIRMED",
+        entity_type="FinalCodeRecord",
+        entity_id=record.id,
+        actor_id=actor or "system",
+        actor_role="ORGANIZER",
+        round_number=1,
+        details={"team_id": team_id, "gate_3_confirmed": True}
+    )
+
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def record_fragment_3(
+    db: Session,
+    team_id: str,
+    fragment_value: str = "ECHO",
+    actor: Optional[str] = None,
+    overwrite: bool = False,
+) -> FinalCodeRecord:
+    """Records Fragment 3 ('ECHO') discovered during Round 2: Cabo."""
+    clean_val = (fragment_value or "ECHO").strip()
+    record = get_or_create_final_code_record(db, team_id)
+    now = datetime.now(timezone.utc)
+    record.fragment_3_value = clean_val
+    record.fragment_3_status = FragmentStatus.RECOVERED
+    record.fragment_3_discovered_at = now
+    record.updated_at = now
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def record_fragment_4(
+    db: Session,
+    team_id: str,
+    fragment_value: str = "PRIME",
+    actor: Optional[str] = None,
+    overwrite: bool = False,
+) -> FinalCodeRecord:
+    """Records Fragment 4 ('PRIME') discovered after Round 2 Game 3 challenge."""
+    clean_val = (fragment_value or "PRIME").strip()
+    record = get_or_create_final_code_record(db, team_id)
+    now = datetime.now(timezone.utc)
+    record.fragment_4_value = clean_val
+    record.fragment_4_status = FragmentStatus.RECOVERED
+    record.fragment_4_discovered_at = now
+    record.updated_at = now
+    db.commit()
+    db.refresh(record)
+    return record
 
     db.commit()
     db.refresh(record)
@@ -409,12 +495,23 @@ def get_code_hunt_status(db: Session, team_id: str, is_organizer: bool = False) 
             "fragment_1_discovered_at": None,
             "fragment_2_status": FragmentStatus.PENDING,
             "fragment_2_discovered_at": None,
+            "fragment_3_status": FragmentStatus.PENDING,
+            "fragment_3_discovered_at": None,
+            "fragment_4_status": FragmentStatus.PENDING,
+            "fragment_4_discovered_at": None,
+            "gate_3_confirmed": False,
+            "gate_3_confirmed_at": None,
+            "gate_3_confirmed_by": None,
+            "gate_1_fragment_status": FragmentStatus.PENDING,
+            "gate_2_fragment_status": FragmentStatus.PENDING,
             "final_code_verified": False,
             "is_complete": False,
             "verified_at": None,
             "verified_by": None,
             "fragment_1_value": None,
             "fragment_2_value": None,
+            "fragment_3_value": None,
+            "fragment_4_value": None,
             "final_code_assembled": None,
         }
 
@@ -429,11 +526,22 @@ def get_code_hunt_status(db: Session, team_id: str, is_organizer: bool = False) 
         "fragment_1_discovered_at": record.fragment_1_discovered_at,
         "fragment_2_status": record.fragment_2_status,
         "fragment_2_discovered_at": record.fragment_2_discovered_at,
+        "fragment_3_status": record.fragment_3_status,
+        "fragment_3_discovered_at": record.fragment_3_discovered_at,
+        "fragment_4_status": record.fragment_4_status,
+        "fragment_4_discovered_at": record.fragment_4_discovered_at,
+        "gate_3_confirmed": record.gate_3_confirmed,
+        "gate_3_confirmed_at": record.gate_3_confirmed_at,
+        "gate_3_confirmed_by": record.gate_3_confirmed_by,
+        "gate_1_fragment_status": record.fragment_1_status,
+        "gate_2_fragment_status": record.fragment_2_status,
         "final_code_verified": record.final_code_verified,
         "is_complete": is_complete,
         "verified_at": record.verified_at,
         "verified_by": record.verified_by,
         "fragment_1_value": record.fragment_1_value if is_organizer else None,
         "fragment_2_value": record.fragment_2_value if is_organizer else None,
+        "fragment_3_value": record.fragment_3_value if is_organizer else None,
+        "fragment_4_value": record.fragment_4_value if is_organizer else None,
         "final_code_assembled": record.final_code_assembled if is_organizer else None,
     }

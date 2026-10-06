@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 
 
 class BlackMarketAssetType(str, enum.Enum):
+    SECRET_CODE_ITEM_1 = "SECRET_CODE_ITEM_1"
+    SECRET_CODE_ITEM_2 = "SECRET_CODE_ITEM_2"
+    POWERUP_1_R4 = "POWERUP_1_R4"
+    POWERUP_2_R4 = "POWERUP_2_R4"
     MISSING_CODE_FRAGMENT = "MISSING_CODE_FRAGMENT"
     EXTRA_PREP_TIME = "EXTRA_PREP_TIME"
     EXTRA_WITNESS_QUESTION = "EXTRA_WITNESS_QUESTION"
@@ -103,6 +107,31 @@ class BlackMarketPurchase(Base):
     )
     purchased_by: Mapped[Optional[str]] = mapped_column(
         String(255),
+        nullable=True
+    )
+    approval_status: Mapped[str] = mapped_column(
+        String(30),
+        default="APPROVED",
+        nullable=False
+    )
+    first_approved_by: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    first_approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    second_approved_by: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
+    second_approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    notes: Mapped[Optional[str]] = mapped_column(
+        String(1000),
         nullable=True
     )
 

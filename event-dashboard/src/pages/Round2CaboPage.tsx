@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Layers,
   Trophy,
@@ -7,94 +6,154 @@ import {
   CheckCircle2,
   Clock,
   ArrowUpDown,
-  Settings,
   Sparkles,
-  RotateCcw,
-  ExternalLink,
   ShieldAlert,
   Edit3,
-  Trash2,
+  Users,
+  Key,
+  Shuffle,
+  Lock,
+  Printer,
+  Download,
+  Info,
+  Check,
+  X,
 } from 'lucide-react';
 import { eventService } from '../services/eventService';
 import {
+  backendApiService,
+  CaboSummaryData,
+  CaboValidationData,
+  CaboPlayerDetailData,
+  CaboTeamDetailData,
+  CaboPrintableSheetData,
+} from '../services/backendApiService';
+import { isLiveMode } from '../services/apiConfig';
+import {
   Round2Data,
   TeamRound2Record,
-  CaboScoringDirection,
-  CaboTiePolicy,
+  CaboTableDetail,
 } from '../types/round2';
 import { formatTeamNumber } from '../utils/formatters';
-import { createDefaultPointTable, isPointTableValid } from '../utils/round2Scoring';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { TableRowSkeleton } from '../components/ui/LoadingSkeleton';
-import { EmptyState } from '../components/ui/EmptyState';
 import { MetricCard } from '../components/dashboard/MetricCard';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SearchFilterToolbar } from '../components/ui/SearchFilterToolbar';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 
-type TabView = 'leaderboard' | 'game1' | 'game2' | 'game3';
-type SortField = 'rank' | 'teamNumber' | 'name' | 'totalPoints' | 'g1' | 'g2' | 'g3';
+type TabView = 'leaderboard' | 'seating' | 'game1' | 'game2' | 'game3';
+type SortField = 'rank' | 'teamNumber' | 'name' | 'totalPoints' | 'cardTotal' | 'firstPlaces' | 'g1' | 'g2' | 'g3';
 
 export const Round2CaboPage: React.FC = () => {
-  const navigate = useNavigate();
-
   // Data State
   const [data, setData] = useState<Round2Data | null>(null);
+  const [caboStandings, setCaboStandings] = useState<any[]>([]);
+  const [caboTables, setCaboTables] = useState<CaboTableDetail[]>([]);
+  const [caboSummary, setCaboSummary] = useState<CaboSummaryData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Active View Tab
   const [activeTab, setActiveTab] = useState<TabView>('leaderboard');
+  const [seatingGameNum, setSeatingGameNum] = useState<1 | 2 | 3>(1);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterCompletion, setFilterCompletion] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('rank');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 12; // 12 or 24 fits 24 squads cleanly
+  const pageSize = 16; // Exactly 16 squads for Round 2
 
   // Modals
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [isEditTeamModalOpen, setIsEditTeamModalOpen] = useState(false);
-  const [selectedTeamRecord, setSelectedTeamRecord] = useState<TeamRound2Record | null>(null);
   const [isFinalizeConfirmOpen, setIsFinalizeConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Edit Team Placements Form
-  const [editG1Placement, setEditG1Placement] = useState<string>('');
-  const [editG2Placement, setEditG2Placement] = useState<string>('');
-  const [editG3Placement, setEditG3Placement] = useState<string>('');
-  const [editFormError, setEditFormError] = useState<string | null>(null);
+  // ECHO Verification Modal State
+  const [isEchoModalOpen, setIsEchoModalOpen] = useState(false);
+  const [echoTeam, setEchoTeam] = useState<TeamRound2Record | null>(null);
+  const [echoG1, setEchoG1] = useState(false);
+  const [echoG2, setEchoG2] = useState(false);
+  const [echoG3, setEchoG3] = useState(false);
 
-  // Single Game Console Placement Form
-  const [gameSelectedTeamId, setGameSelectedTeamId] = useState<string>('');
-  const [gamePlacementInput, setGamePlacementInput] = useState<string>('');
-  const [gameNotesInput, setGameNotesInput] = useState<string>('');
-  const [gameFormError, setGameFormError] = useState<string | null>(null);
+  // PRIME Verification Modal State
+  const [isPrimeModalOpen, setIsPrimeModalOpen] = useState(false);
+  const [primeTeam, setPrimeTeam] = useState<TeamRound2Record | null>(null);
+  const [primeSequenceVerified, setPrimeSequenceVerified] = useState(false);
 
-  // Config Drawer Form States
-  const [configDirection, setConfigDirection] = useState<CaboScoringDirection>('higher_is_better');
-  const [configTiePolicy, setConfigTiePolicy] = useState<CaboTiePolicy>('strict_unique');
-  const [configPointTable, setConfigPointTable] = useState<Record<number, number>>(createDefaultPointTable());
-  const [configError, setConfigError] = useState<string | null>(null);
+  // Table Score Entry Modal State
+  const [isTableScoreModalOpen, setIsTableScoreModalOpen] = useState(false);
+  const [scoreTableGameNum, setScoreTableGameNum] = useState<1 | 2 | 3>(1);
+  const [scoreTableNum, setScoreTableNum] = useState<number>(1);
+  const [tablePlayersScores, setTablePlayersScores] = useState<
+    Array<{ participantId: string; participantName: string; teamId: string; teamName: string; placement: number; finalCardHandTotal: number }>
+  >([]);
+  const [tableScoreError, setTableScoreError] = useState<string | null>(null);
+
+  // Validation & Confirmation State
+  const [caboValidation, setCaboValidation] = useState<CaboValidationData | null>(null);
+  const [isConfirmTablesModalOpen, setIsConfirmTablesModalOpen] = useState(false);
+  const [isRegenerateModalOpen, setIsRegenerateModalOpen] = useState(false);
+
+  // Player Drill-Down Modal State
+  const [playerDetail, setPlayerDetail] = useState<CaboPlayerDetailData | null>(null);
+  const [isPlayerModalOpen, setIsPlayerModalOpen] = useState(false);
+
+  // Team Drill-Down Modal State
+  const [teamDetail, setTeamDetail] = useState<CaboTeamDetailData | null>(null);
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
+  // Score Correction Modal State
+  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
+  const [correctionTarget, setCorrectionTarget] = useState<{
+    gameNumber: number;
+    tableNumber: number;
+    participantId: string;
+    participantName: string;
+    teamName: string;
+    oldPlacement: number;
+    newPlacement: number;
+    reason: string;
+    newCardTotal?: number;
+  } | null>(null);
+
+  // Printable Sheets State
+  const [printableData, setPrintableData] = useState<CaboPrintableSheetData | null>(null);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   // Load Data
-  const loadRound2 = async () => {
+  const loadRound2 = async (gameOverride?: 1 | 2 | 3) => {
     try {
+      const activeGame = gameOverride ?? seatingGameNum;
       const r2Data = await eventService.getRound2Data();
       setData(r2Data);
 
-      setConfigDirection(r2Data.config.scoringDirection);
-      setConfigTiePolicy(r2Data.config.tiePolicy);
-      setConfigPointTable({ ...r2Data.config.pointTable });
-
-      if (selectedTeamRecord) {
-        const updated = r2Data.records.find((r) => r.teamId === selectedTeamRecord.teamId);
-        if (updated) setSelectedTeamRecord(updated);
+      if (isLiveMode()) {
+        try {
+          const [standingsRes, tablesRes, summaryRes, validationRes] = await Promise.all([
+            backendApiService.getCaboStandings(),
+            backendApiService.getCaboGameTables(activeGame),
+            backendApiService.getCaboSummary(),
+            backendApiService.getCaboValidation(),
+          ]);
+          if (standingsRes.success && standingsRes.data) {
+            setCaboStandings(standingsRes.data);
+          }
+          if (tablesRes.success && tablesRes.data) {
+            setCaboTables(tablesRes.data);
+          }
+          if (summaryRes.success && summaryRes.data) {
+            setCaboSummary(summaryRes.data);
+          }
+          if (validationRes.success && validationRes.data) {
+            setCaboValidation(validationRes.data);
+          }
+        } catch (e) {
+          console.error('Failed to fetch live Cabo tables/standings/summary/validation:', e);
+        }
       }
     } catch (err) {
       console.error('Failed to load Round 2 data:', err);
@@ -109,12 +168,49 @@ export const Round2CaboPage: React.FC = () => {
       loadRound2();
     });
     return unsubscribe;
-  }, []);
+  }, [seatingGameNum]);
+
+  // Merge backend Cabo standings if available
+  const enrichedRecords = useMemo(() => {
+    if (!data) return [];
+    if (!caboStandings || caboStandings.length === 0) {
+      return data.records.slice(0, 16);
+    }
+
+    const standingMap = new Map<string, any>();
+    caboStandings.forEach((s) => standingMap.set(s.teamId, s));
+
+    return data.records.slice(0, 16).map((rec) => {
+      const live = standingMap.get(rec.teamId);
+      if (live) {
+        return {
+          ...rec,
+          rank: live.rank,
+          totalPoints: live.caboScore,
+          game1Points: live.game1Score ?? rec.game1Points,
+          game2Points: live.game2Score ?? rec.game2Points,
+          game3Points: live.game3Score ?? rec.game3Points,
+          combinedCardTotal: live.combinedCardTotal,
+          firstPlaceCount: live.firstPlaceCount,
+          echoStatus: live.echoStatus,
+          echoEVerified: live.echoEVerified,
+          echoCVerified: live.echoCVerified,
+          echoHoVerified: live.echoHoVerified,
+          primeStatus: live.primeStatus,
+          primeSequenceVerified: live.primeSequenceVerified,
+          isComplete: live.caboScore !== undefined && live.caboScore !== null,
+          qualificationStatus: live.isQualified ? 'Provisional Top 8' : 'Provisional Cutoff',
+          tieRequiresReview: live.isTiedUnresolved,
+          tieReason: live.tieReason,
+        } as TeamRound2Record;
+      }
+      return rec;
+    });
+  }, [data, caboStandings]);
 
   // Filter & Sort for Overall Standings
   const filteredAndSortedRecords = useMemo(() => {
-    if (!data) return [];
-    return data.records
+    return enrichedRecords
       .filter((rec) => {
         const q = searchQuery.toLowerCase().trim();
         const matchesSearch =
@@ -123,69 +219,44 @@ export const Round2CaboPage: React.FC = () => {
           formatTeamNumber(rec.teamNumber).toLowerCase().includes(q);
 
         let matchesStatus = true;
-        if (filterStatus === 'top12') {
-          matchesStatus = rec.qualificationStatus === 'Provisional Top 12' || rec.qualificationStatus === 'Finalized Qualified';
+        if (filterStatus === 'top8') {
+          matchesStatus = rec.qualificationStatus === 'Provisional Top 8' || rec.qualificationStatus === 'Finalized Qualified' || (rec.rank !== null && rec.rank !== undefined && rec.rank <= 8);
         } else if (filterStatus === 'eliminated') {
-          matchesStatus = rec.qualificationStatus === 'Provisional Cutoff' || rec.qualificationStatus === 'Finalized Eliminated';
+          matchesStatus = rec.qualificationStatus === 'Provisional Cutoff' || rec.qualificationStatus === 'Finalized Eliminated' || (rec.rank !== null && rec.rank !== undefined && rec.rank > 8);
         } else if (filterStatus === 'tieReview') {
-          matchesStatus = rec.qualificationStatus === 'Tie Review Needed';
+          matchesStatus = !!rec.tieRequiresReview;
         } else if (filterStatus === 'incomplete') {
-          matchesStatus = rec.qualificationStatus === 'Incomplete';
+          matchesStatus = !rec.isComplete;
         }
 
-        let matchesCompletion = true;
-        if (filterCompletion === 'complete') {
-          matchesCompletion = rec.isComplete;
-        } else if (filterCompletion === 'missing') {
-          matchesCompletion = !rec.isComplete;
-        } else if (filterCompletion === 'missingG1') {
-          matchesCompletion = rec.game1Placement === null || rec.game1Placement === undefined;
-        } else if (filterCompletion === 'missingG2') {
-          matchesCompletion = rec.game2Placement === null || rec.game2Placement === undefined;
-        } else if (filterCompletion === 'missingG3') {
-          matchesCompletion = rec.game3Placement === null || rec.game3Placement === undefined;
-        }
-
-        return matchesSearch && matchesStatus && matchesCompletion;
+        return matchesSearch && matchesStatus;
       })
       .sort((a, b) => {
         let comparison = 0;
         if (sortField === 'rank') {
-          const aRank = a.rank ?? null;
-          const bRank = b.rank ?? null;
-          if (aRank === null && bRank === null) comparison = a.teamNumber - b.teamNumber;
-          else if (aRank === null) comparison = 1;
-          else if (bRank === null) comparison = -1;
-          else comparison = aRank - bRank;
+          const aRank = a.rank ?? 999;
+          const bRank = b.rank ?? 999;
+          comparison = aRank - bRank;
         } else if (sortField === 'teamNumber') {
           comparison = a.teamNumber - b.teamNumber;
         } else if (sortField === 'name') {
           comparison = a.teamName.localeCompare(b.teamName);
         } else if (sortField === 'totalPoints') {
-          const aPts = a.totalPoints ?? null;
-          const bPts = b.totalPoints ?? null;
-          if (aPts === null && bPts === null) comparison = 0;
-          else if (aPts === null) comparison = 1;
-          else if (bPts === null) comparison = -1;
-          else {
-            comparison = data.config.scoringDirection === 'higher_is_better' ? bPts - aPts : aPts - bPts;
-          }
-        } else if (sortField === 'g1') {
-          const aP = a.game1Placement ?? 999;
-          const bP = b.game1Placement ?? 999;
-          comparison = aP - bP;
-        } else if (sortField === 'g2') {
-          const aP = a.game2Placement ?? 999;
-          const bP = b.game2Placement ?? 999;
-          comparison = aP - bP;
-        } else if (sortField === 'g3') {
-          const aP = a.game3Placement ?? 999;
-          const bP = b.game3Placement ?? 999;
-          comparison = aP - bP;
+          const aPts = a.totalPoints ?? -999;
+          const bPts = b.totalPoints ?? -999;
+          comparison = bPts - aPts;
+        } else if (sortField === 'cardTotal') {
+          const aC = a.combinedCardTotal ?? 999;
+          const bC = b.combinedCardTotal ?? 999;
+          comparison = aC - bC; // lower is better
+        } else if (sortField === 'firstPlaces') {
+          const aF = a.firstPlaceCount ?? 0;
+          const bF = b.firstPlaceCount ?? 0;
+          comparison = bF - aF; // more is better
         }
         return sortOrder === 'asc' ? comparison : -comparison;
       });
-  }, [data, searchQuery, filterStatus, filterCompletion, sortField, sortOrder]);
+  }, [enrichedRecords, searchQuery, filterStatus, sortField, sortOrder]);
 
   const paginatedRecords = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -201,491 +272,322 @@ export const Round2CaboPage: React.FC = () => {
     }
   };
 
-  // Open Edit Team Placements Modal
-  const handleOpenEditTeam = (rec: TeamRound2Record) => {
-    setSelectedTeamRecord(rec);
-    setEditG1Placement(rec.game1Placement ? rec.game1Placement.toString() : '');
-    setEditG2Placement(rec.game2Placement ? rec.game2Placement.toString() : '');
-    setEditG3Placement(rec.game3Placement ? rec.game3Placement.toString() : '');
-    setEditFormError(null);
-    setIsEditTeamModalOpen(true);
+  // Open ECHO Verification Modal
+  const handleOpenEchoModal = (rec: TeamRound2Record) => {
+    setEchoTeam(rec);
+    setEchoG1(!!rec.echoEVerified);
+    setEchoG2(!!rec.echoCVerified);
+    setEchoG3(!!rec.echoHoVerified);
+    setIsEchoModalOpen(true);
   };
 
-  // Save Team Placements
-  const handleSaveTeamPlacements = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedTeamRecord || !data) return;
-    setEditFormError(null);
-    setIsSubmitting(true);
-
-    try {
-      // Validate inputs if provided
-      const parseVal = (str: string, gameNum: 1 | 2 | 3) => {
-        if (!str.trim()) return null;
-        const num = parseInt(str, 10);
-        if (isNaN(num) || num < 1 || num > 24) {
-          throw new Error(`Game ${gameNum} placement must be a whole number between 1 and 24.`);
-        }
-        return num;
-      };
-
-      const p1 = parseVal(editG1Placement, 1);
-      const p2 = parseVal(editG2Placement, 2);
-      const p3 = parseVal(editG3Placement, 3);
-
-      // Save or clear Game 1
-      if (p1 !== null) {
-        await eventService.recordCaboGamePlacement(1, selectedTeamRecord.teamId, p1);
-      } else if (selectedTeamRecord.game1Placement !== null && selectedTeamRecord.game1Placement !== undefined) {
-        await eventService.clearCaboGamePlacement(1, selectedTeamRecord.teamId);
-      }
-
-      // Save or clear Game 2
-      if (p2 !== null) {
-        await eventService.recordCaboGamePlacement(2, selectedTeamRecord.teamId, p2);
-      } else if (selectedTeamRecord.game2Placement !== null && selectedTeamRecord.game2Placement !== undefined) {
-        await eventService.clearCaboGamePlacement(2, selectedTeamRecord.teamId);
-      }
-
-      // Save or clear Game 3
-      if (p3 !== null) {
-        await eventService.recordCaboGamePlacement(3, selectedTeamRecord.teamId, p3);
-      } else if (selectedTeamRecord.game3Placement !== null && selectedTeamRecord.game3Placement !== undefined) {
-        await eventService.clearCaboGamePlacement(3, selectedTeamRecord.teamId);
-      }
-
-      setIsEditTeamModalOpen(false);
-    } catch (err: unknown) {
-      setEditFormError((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Single Game Console Placement Submission
-  const handleRecordGamePlacement = async (gameNum: 1 | 2 | 3) => {
-    if (!gameSelectedTeamId) {
-      setGameFormError('Please select a participating squad.');
-      return;
-    }
-    const p = parseInt(gamePlacementInput, 10);
-    if (isNaN(p) || p < 1 || p > 24) {
-      setGameFormError('Placement must be a valid positive number between 1 and 24.');
-      return;
-    }
-
-    setGameFormError(null);
+  const handleSaveEchoVerification = async () => {
+    if (!echoTeam) return;
     setIsSubmitting(true);
     try {
-      await eventService.recordCaboGamePlacement(gameNum, gameSelectedTeamId, p, gameNotesInput);
-      setGamePlacementInput('');
-      setGameNotesInput('');
-      setGameSelectedTeamId('');
-    } catch (err: unknown) {
-      setGameFormError((err as Error).message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleClearPlacement = async (gameNum: 1 | 2 | 3, teamId: string) => {
-    if (confirm('Clear placement record for this squad in this game?')) {
-      try {
-        await eventService.clearCaboGamePlacement(gameNum, teamId);
-      } catch (err: unknown) {
-        alert((err as Error).message);
-      }
-    }
-  };
-
-  // Save Scoring Config
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setConfigError(null);
-
-    if (!isPointTableValid(configPointTable)) {
-      setConfigError('All 24 placement values must have non-negative point numbers.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await eventService.updateCaboConfig({
-        scoringDirection: configDirection,
-        tiePolicy: configTiePolicy,
-        pointTable: configPointTable,
+      await backendApiService.verifyEcho(echoTeam.teamId, {
+        game1E: echoG1,
+        game2C: echoG2,
+        game3Ho: echoG3,
       });
-      setIsConfigOpen(false);
-    } catch (err: unknown) {
-      setConfigError((err as Error).message);
+      setIsEchoModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      alert(e.message || 'Failed to verify ECHO fragment');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleResetPointTableDefaults = () => {
-    if (confirm('Reset point table back to linear demo defaults (24 to 1 points)?')) {
-      setConfigPointTable(createDefaultPointTable());
+  // Open PRIME Verification Modal
+  const handleOpenPrimeModal = (rec: TeamRound2Record) => {
+    setPrimeTeam(rec);
+    setPrimeSequenceVerified(!!rec.primeSequenceVerified);
+    setIsPrimeModalOpen(true);
+  };
+
+  const handleSavePrimeVerification = async () => {
+    if (!primeTeam) return;
+    setIsSubmitting(true);
+    try {
+      await backendApiService.verifyPrime(primeTeam.teamId, {
+        sequence: [2, 3, 5, 7, 11],
+        isVerified: primeSequenceVerified,
+      });
+      setIsPrimeModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      alert(e.message || 'Failed to verify PRIME fragment');
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  // Open Table Score Modal
+  const handleOpenTableScoreModal = (table: CaboTableDetail) => {
+    setScoreTableGameNum(table.gameNumber as 1 | 2 | 3);
+    setScoreTableNum(table.tableNumber);
+    setTableScoreError(null);
+
+    const initial = table.players.map((p, idx) => ({
+      participantId: p.participantId,
+      participantName: p.participantName,
+      teamId: p.teamId,
+      teamName: p.teamName,
+      placement: p.placement ?? idx + 1,
+      finalCardHandTotal: p.finalCardHandTotal ?? 10,
+    }));
+    setTablePlayersScores(initial);
+    setIsTableScoreModalOpen(true);
+  };
+
+  const handleSaveTableScores = async () => {
+    const placements = tablePlayersScores.map((p) => p.placement);
+    const unique = new Set(placements);
+    if (unique.size !== 5 || !placements.every((p) => p >= 1 && p <= 5)) {
+      setTableScoreError('Every seated player must have a unique placement from 1st to 5th (no ties on table).');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await backendApiService.recordCaboTableScores(scoreTableGameNum, {
+        table_number: scoreTableNum,
+        scores: tablePlayersScores.map((p) => ({
+          gameNumber: scoreTableGameNum,
+          participantId: p.participantId,
+          teamId: p.teamId,
+          placement: p.placement,
+          finalCardHandTotal: p.finalCardHandTotal,
+        })),
+      });
+      setIsTableScoreModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      setTableScoreError(e.message || 'Failed to record table scores');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Confirm Tables & Freeze Seating
+  const handleConfirmTables = async () => {
+    setIsSubmitting(true);
+    try {
+      await backendApiService.confirmCaboTables();
+      setIsConfirmTablesModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      alert(e.message || 'Failed to confirm tables');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Safe table generation / regeneration trigger
+  const handleTriggerGenerate = () => {
+    if (caboValidation?.isConfirmed) {
+      setIsRegenerateModalOpen(true);
+    } else {
+      handleExecuteGenerate(false);
+    }
+  };
+
+  const handleExecuteGenerate = async (force: boolean) => {
+    setIsSubmitting(true);
+    try {
+      await backendApiService.generateCaboTables({ force_regenerate: force });
+      setIsRegenerateModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      alert(e.message || 'Failed to generate Cabo tables');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Inspect Player Details
+  const handleOpenPlayerDetail = async (participantId: string) => {
+    try {
+      const res = await backendApiService.getCaboPlayerDetail(participantId);
+      if (res.success && res.data) {
+        setPlayerDetail(res.data);
+        setIsPlayerModalOpen(true);
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to load player details');
+    }
+  };
+
+  // Inspect Team Details
+  const handleOpenTeamDetail = async (teamId: string) => {
+    try {
+      const res = await backendApiService.getCaboTeamDetail(teamId);
+      if (res.success && res.data) {
+        setTeamDetail(res.data);
+        setIsTeamModalOpen(true);
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to load team details');
+    }
+  };
+
+  // Open Score Correction Modal
+  const handleOpenScoreCorrection = (
+    gameNumber: number,
+    tableNumber: number,
+    p: { participantId: string; participantName: string; teamName: string; placement?: number | null; finalCardHandTotal?: number | null }
+  ) => {
+    setCorrectionTarget({
+      gameNumber,
+      tableNumber,
+      participantId: p.participantId,
+      participantName: p.participantName,
+      teamName: p.teamName,
+      oldPlacement: p.placement || 1,
+      newPlacement: p.placement || 1,
+      reason: '',
+      newCardTotal: p.finalCardHandTotal ?? undefined,
+    });
+    setIsCorrectionModalOpen(true);
+  };
+
+  const handleSaveScoreCorrection = async () => {
+    if (!correctionTarget) return;
+    if (!correctionTarget.reason || correctionTarget.reason.trim().length < 3) {
+      alert('A valid reason (minimum 3 characters) is mandatory for official organizer score correction.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await backendApiService.correctCaboTableScore(
+        correctionTarget.gameNumber,
+        correctionTarget.tableNumber,
+        {
+          participantId: correctionTarget.participantId,
+          newPlacement: correctionTarget.newPlacement,
+          reason: correctionTarget.reason.trim(),
+          newCardTotal: correctionTarget.newCardTotal,
+        }
+      );
+      setIsCorrectionModalOpen(false);
+      await loadRound2();
+    } catch (e: any) {
+      alert(e.message || 'Failed to correct score');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Open Printable Table Sheet Modal
+  const handleOpenPrintableSheet = async (gameNum: number) => {
+    try {
+      const res = await backendApiService.getCaboPrintableSheet(gameNum);
+      if (res.success && res.data) {
+        setPrintableData(res.data);
+        setIsPrintModalOpen(true);
+      }
+    } catch (e: any) {
+      alert(e.message || 'Failed to load printable table sheets');
+    }
+  };
+
+  // Export Data Download
+  const handleExportData = async (type: 'assignments' | 'results' | 'standings') => {
+    try {
+      const blob = await backendApiService.exportCaboData(type);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cabo_${type}_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e: any) {
+      alert(e.message || `Failed to export ${type}`);
+    }
+  };
+
 
   // Finalize Round 2
   const handleFinalizeRound2 = async () => {
     setIsSubmitting(true);
     try {
-      await eventService.finalizeRound2();
+      await backendApiService.finalizeCaboRound();
       setIsFinalizeConfirmOpen(false);
-    } catch (err: unknown) {
-      alert((err as Error).message);
+      await loadRound2();
+    } catch (err: any) {
+      alert(err.message || 'Failed to finalize Round 2');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Reset Placements
-  const handleResetPlacements = async () => {
-    if (confirm('Reset all Cabo game placements? Team rosters and configuration will NOT be lost.')) {
-      await eventService.resetRound2Placements();
+  const getStatusBadge = (rec: TeamRound2Record) => {
+    const isAdvancing = rec.rank !== null && rec.rank !== undefined && rec.rank <= 8;
+    if (data?.config.isFinalized) {
+      return isAdvancing ? (
+        <Badge variant="success" size="sm" dot>
+          Finalized Top 8 (To R3)
+        </Badge>
+      ) : (
+        <Badge variant="danger" size="sm">
+          Eliminated
+        </Badge>
+      );
     }
-  };
-
-  // Simulate Complete Field
-  const handleSimulateField = async () => {
-    if (confirm('Simulate complete placements for all 24 squads across all 3 games? This allows testing 12-team qualification.')) {
-      await eventService.simulateCompleteRound2Games();
+    if (rec.tieRequiresReview) {
+      return (
+        <Badge variant="warning" size="sm" dot>
+          Cutoff Tie Review
+        </Badge>
+      );
     }
-  };
-
-  const getStatusBadge = (status: TeamRound2Record['qualificationStatus']) => {
-    switch (status) {
-      case 'Finalized Qualified':
-        return (
-          <Badge variant="success" size="sm" dot>
-            Finalized Top 12 (To R3)
-          </Badge>
-        );
-      case 'Finalized Eliminated':
-        return (
-          <Badge variant="danger" size="sm">
-            Eliminated
-          </Badge>
-        );
-      case 'Provisional Top 12':
-        return (
-          <Badge variant="primary" size="sm" dot>
-            Provisional Top 12
-          </Badge>
-        );
-      case 'Provisional Cutoff':
-        return (
-          <Badge variant="danger" size="sm">
-            Elimination Zone
-          </Badge>
-        );
-      case 'Tie Review Needed':
-        return (
-          <Badge variant="warning" size="sm" dot>
-            Tie Review Needed
-          </Badge>
-        );
-      case 'Round 1 Pending':
-        return (
-          <Badge variant="neutral" size="sm">
-            R1 Pending
-          </Badge>
-        );
-      case 'Incomplete':
-      default:
-        return (
-          <Badge variant="neutral" size="sm">
-            Incomplete
-          </Badge>
-        );
+    if (isAdvancing) {
+      return (
+        <Badge variant="primary" size="sm" dot>
+          Provisional Top 8
+        </Badge>
+      );
     }
-  };
-
-  // Render Single Game Console View
-  const renderGameConsole = (gameNum: 1 | 2 | 3) => {
-    if (!data) return null;
-    const game = data.games[gameNum - 1];
-    const eligibleTeams = eventService.getEligibleRound2Teams();
-
-    // Map participating teams with their placement in this game
-    const teamEntries = eligibleTeams.map((team) => {
-      const p = game.placements[team.id];
-      return {
-        team,
-        placement: p?.placement ?? null,
-        points: p?.points ?? null,
-        recordedAt: p?.recordedAt ?? null,
-        notes: p?.notes ?? null,
-      };
-    });
-
-    const recordedEntries = teamEntries.filter((e) => e.placement !== null).sort((a, b) => a.placement! - b.placement!);
-    const unrecordedEntries = teamEntries.filter((e) => e.placement === null);
-
     return (
-      <div className="space-y-6">
-        {/* Game Console Header Bar */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-card flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                GAME 0{gameNum}
-              </span>
-              <h3 className="text-sm font-bold text-slate-800">{game.name} Placement Console</h3>
-              {game.isCompleted ? (
-                <Badge variant="success" size="sm" dot>
-                  Complete (24/24)
-                </Badge>
-              ) : (
-                <Badge variant="warning" size="sm" dot>
-                  {Object.keys(game.placements).length} / 24 Logged
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Record official placements (1st to 24th) for participating squads. Points are derived automatically from the configured point table.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">
-              Policy: <strong>{data.config.tiePolicy === 'strict_unique' ? 'Strict (No Duplicates)' : 'Shared Permitted'}</strong>
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsConfigOpen(true)}
-              leftIcon={<Settings className="w-3.5 h-3.5" />}
-            >
-              Configure Points Table
-            </Button>
-          </div>
-        </div>
-
-        {/* Record Placement Quick-Action Card */}
-        {!data.config.isFinalized && (
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-card">
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Edit3 className="w-4 h-4 text-blue-600" />
-              <span>Record Placement for Game {gameNum}</span>
-            </h4>
-
-            {gameFormError && (
-              <div className="mb-3 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <span>{gameFormError}</span>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div className="sm:col-span-5">
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Select Squad:
-                </label>
-                <select
-                  value={gameSelectedTeamId}
-                  onChange={(e) => {
-                    setGameSelectedTeamId(e.target.value);
-                    setGameFormError(null);
-                  }}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="">Choose Participating Squad...</option>
-                  {eligibleTeams.map((t) => {
-                    const hasPlacement = game.placements[t.id] !== undefined;
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {formatTeamNumber(t.teamNumber)} — {t.name} {hasPlacement ? `(Current: #${game.placements[t.id].placement})` : '— [Pending]'}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              <div className="sm:col-span-3">
-                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                  Placement (1–24):
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="24"
-                  placeholder="e.g. 1"
-                  value={gamePlacementInput}
-                  onChange={(e) => {
-                    setGamePlacementInput(e.target.value);
-                    setGameFormError(null);
-                  }}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <div className="text-[11px] text-slate-500 mb-1 font-semibold">
-                  Point Value:
-                </div>
-                <div className="px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg font-mono text-xs text-slate-700">
-                  {gamePlacementInput && parseInt(gamePlacementInput, 10) >= 1 && parseInt(gamePlacementInput, 10) <= 24
-                    ? `${data.config.pointTable[parseInt(gamePlacementInput, 10)] ?? 0} pts`
-                    : '—'}
-                </div>
-              </div>
-
-              <div className="sm:col-span-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full justify-center"
-                  onClick={() => handleRecordGamePlacement(gameNum)}
-                  isLoading={isSubmitting}
-                >
-                  Save Result
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Game Standings & Missing Teams Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recorded Standings (2 Columns) */}
-          <div className="lg:col-span-2 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Recorded Standings ({recordedEntries.length})
-              </h4>
-              <span className="text-xs text-slate-400 font-mono">Game {gameNum} Leaderboard</span>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-card overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/75 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
-                      <th className="py-2.5 px-3 text-center w-16">Placement</th>
-                      <th className="py-2.5 px-4">Squad</th>
-                      <th className="py-2.5 px-3 text-right">Points Earned</th>
-                      {!data.config.isFinalized && <th className="py-2.5 px-3 text-right">Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {recordedEntries.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="py-8 text-center text-slate-400">
-                          No placements recorded yet for Game {gameNum}.
-                        </td>
-                      </tr>
-                    ) : (
-                      recordedEntries.map((e) => (
-                        <tr key={e.team.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-2.5 px-3 text-center font-mono font-bold">
-                            {e.placement! <= 3 ? (
-                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-800 text-xs font-black">
-                                #{e.placement}
-                              </span>
-                            ) : (
-                              <span className="text-slate-700">#{e.placement}</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-4">
-                            <span className="font-mono text-[11px] text-blue-600 mr-2">
-                              {formatTeamNumber(e.team.teamNumber)}
-                            </span>
-                            <span className="font-semibold text-slate-800">{e.team.name}</span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700">
-                            +{e.points} pts
-                          </td>
-                          {!data.config.isFinalized && (
-                            <td className="py-2.5 px-3 text-right">
-                              <button
-                                onClick={() => handleClearPlacement(gameNum, e.team.id)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                                title="Clear placement"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Missing Results Panel (1 Column) */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Missing Results ({unrecordedEntries.length})
-              </h4>
-              <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                Pending Log
-              </span>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 shadow-card p-4 space-y-2">
-              {unrecordedEntries.length === 0 ? (
-                <div className="py-6 text-center text-emerald-600 text-xs flex flex-col items-center gap-1">
-                  <CheckCircle2 className="w-6 h-6" />
-                  <span className="font-bold">All 24 Squads Recorded!</span>
-                  <span className="text-slate-400 text-[11px]">Game {gameNum} has complete verified results.</span>
-                </div>
-              ) : (
-                <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
-                  <p className="text-[11px] text-slate-500 mb-2">
-                    These participating squads do not have a placement logged for Game {gameNum} yet:
-                  </p>
-                  {unrecordedEntries.map((e) => (
-                    <div
-                      key={e.team.id}
-                      className="p-2 bg-slate-50 hover:bg-blue-50/50 rounded-lg border border-slate-200/80 flex items-center justify-between text-xs transition-colors"
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="font-mono text-slate-400 text-[11px]">
-                          {formatTeamNumber(e.team.teamNumber)}
-                        </span>
-                        <span className="font-medium text-slate-700 truncate">{e.team.name}</span>
-                      </div>
-                      {!data.config.isFinalized && (
-                        <button
-                          onClick={() => {
-                            setGameSelectedTeamId(e.team.id);
-                            setGamePlacementInput('');
-                            setGameFormError(null);
-                          }}
-                          className="text-[11px] text-blue-600 hover:underline shrink-0 ml-2"
-                        >
-                          Select &rarr;
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <Badge variant="neutral" size="sm">
+        Elimination Zone
+      </Badge>
     );
+  };
+
+  const g1TablesLogged = Math.min(16, Math.max(0, caboSummary?.game1CompletedTables ?? data?.stats.game1CompletionCount ?? 0));
+  const g2TablesLogged = Math.min(16, Math.max(0, caboSummary?.game2CompletedTables ?? data?.stats.game2CompletionCount ?? 0));
+  const g3TablesLogged = Math.min(16, Math.max(0, caboSummary?.game3CompletedTables ?? data?.stats.game3CompletionCount ?? 0));
+
+  const canFinalize = caboSummary ? caboSummary.canFinalize : (data?.engine.canFinalize ?? false);
+  const isFinalized = caboSummary ? caboSummary.isFinalized : (data?.config.isFinalized ?? false);
+  const incompleteReasons: string[] = caboSummary?.incompleteReasons || (data?.engine.blockReason ? [data.engine.blockReason] : []);
+
+  const handleSelectGameTab = async (g: 1 | 2 | 3) => {
+    setActiveTab(`game${g}` as TabView);
+    setSeatingGameNum(g);
+    await loadRound2(g);
+  };
+
+  const handleSelectSeatingTab = async (g: 1 | 2 | 3) => {
+    setSeatingGameNum(g);
+    await loadRound2(g);
   };
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <PageHeader
-        title="Round 2: Cabo Operations Console"
-        subtitle="24 Qualified Teams from R1 · 3 Cabo Games · Top 12 advance to Round 3: The Black Market"
+        title="Round 2: Cabo - The Memory Heist"
+        subtitle="16 Qualified Teams from R1 · 16 Tables · 3 Cabo Games · Top 8 advance to Round 3: The Black Market"
         badge={
-          data?.config.isFinalized ? (
+          isFinalized ? (
             <Badge variant="success" size="sm" dot>
-              Finalized &amp; Sealed
+              Finalized &amp; Sealed (Top 8 Advancing)
             </Badge>
           ) : !data?.round1Finalized ? (
             <Badge variant="warning" size="sm" dot>
@@ -693,265 +595,489 @@ export const Round2CaboPage: React.FC = () => {
             </Badge>
           ) : (
             <Badge variant="primary" size="sm" dot>
-              Live Cabo Games
+              Live Cabo Tournament
             </Badge>
           )
         }
         actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsConfigOpen(true)}
-              leftIcon={<Settings className="w-3.5 h-3.5" />}
-            >
-              Scoring &amp; Rules
-            </Button>
+          <div className="flex items-center flex-wrap gap-2">
+            {caboValidation && !caboValidation.isConfirmed && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setIsConfirmTablesModalOpen(true)}
+                leftIcon={<Lock className="w-3.5 h-3.5 text-slate-900" />}
+                className="bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-black shadow-[0_0_15px_rgba(52,211,153,0.3)]"
+                disabled={!caboValidation.isValid}
+                title={!caboValidation.isValid ? 'All 8 constraints must pass before confirming' : 'Confirm & Freeze Seating Allocation'}
+              >
+                Confirm Tables
+              </Button>
+            )}
 
-            {!data?.config.isFinalized && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSimulateField}
-                  leftIcon={<Sparkles className="w-3.5 h-3.5 text-purple-600" />}
-                  title="Fill all 24 squads with valid placements across Games 1, 2, and 3"
-                >
-                  Simulate Games
-                </Button>
-
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setIsFinalizeConfirmOpen(true)}
-                  leftIcon={<Trophy className="w-3.5 h-3.5" />}
-                  disabled={!data?.engine.canFinalize}
-                >
-                  Finalize Top 12
-                </Button>
-              </>
+            {caboValidation?.isConfirmed && (
+              <Badge variant="success" size="sm" dot className="border border-emerald-500/40 bg-emerald-950/40 text-emerald-300">
+                Tables Confirmed &amp; Frozen
+              </Badge>
             )}
 
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={handleResetPlacements}
-              leftIcon={<RotateCcw className="w-3.5 h-3.5 text-slate-400" />}
-              title="Reset game placements"
+              onClick={handleTriggerGenerate}
+              leftIcon={<Shuffle className="w-3.5 h-3.5 text-cyan-400" />}
+              disabled={isFinalized}
             >
-              Reset Placements
+              {caboValidation?.isConfirmed ? 'Regenerate...' : 'Generate Tables'}
             </Button>
-          </>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleOpenPrintableSheet(seatingGameNum)}
+              leftIcon={<Printer className="w-3.5 h-3.5 text-cyan-400" />}
+            >
+              Print Table Sheets
+            </Button>
+
+            <div className="relative group inline-block">
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<Download className="w-3.5 h-3.5 text-cyan-400" />}
+              >
+                Export CSV
+              </Button>
+              <div className="absolute right-0 mt-1 w-44 bg-[#0a0f1d] border border-cyan-500/30 rounded-xl shadow-xl py-1 z-30 hidden group-hover:block text-xs font-mono">
+                <button
+                  onClick={() => handleExportData('assignments')}
+                  className="w-full text-left px-3 py-1.5 hover:bg-cyan-500/20 text-slate-200"
+                >
+                  Table Assignments
+                </button>
+                <button
+                  onClick={() => handleExportData('results')}
+                  className="w-full text-left px-3 py-1.5 hover:bg-cyan-500/20 text-slate-200"
+                >
+                  Scorecard Results
+                </button>
+                <button
+                  onClick={() => handleExportData('standings')}
+                  className="w-full text-left px-3 py-1.5 hover:bg-cyan-500/20 text-slate-200"
+                >
+                  Squad Standings
+                </button>
+              </div>
+            </div>
+
+            {!isFinalized && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setIsFinalizeConfirmOpen(true)}
+                leftIcon={<Trophy className="w-3.5 h-3.5" />}
+                disabled={!canFinalize}
+                title={!canFinalize ? (incompleteReasons[0] || 'Required scores incomplete') : 'Seal Round 2 results and advance Top 8'}
+              >
+                Finalize Top 8
+              </Button>
+            )}
+          </div>
         }
       />
 
-      {/* Warning if Round 1 is NOT finalized */}
-      {!data?.round1Finalized && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start justify-between gap-3 shadow-sm">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-amber-950">Round 1 (The Great Expedition) Is Not Yet Finalized!</span>
-              <p className="mt-0.5 leading-relaxed text-amber-800">
-                Official Round 2 qualification to Round 3 is <strong>strictly blocked</strong> until Round 1 results are officially sealed.
-                The 24 squads shown below are currently derived from provisional Round 1 standings.
-              </p>
+      {/* Seating Validation Banner (8 Constraints) */}
+      {caboValidation && (
+        <div className={`p-4 rounded-xl border text-xs shadow-sm ${
+          caboValidation.isValid
+            ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+            : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
+        }`}>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 pb-2 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              {caboValidation.isValid ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+              <span className="font-orbitron font-bold tracking-wide">
+                {caboValidation.isValid
+                  ? 'All 8 Seating Constraints Passed — Ready for Confirmation'
+                  : 'Seating Allocation Validation Issues Detected'}
+              </span>
+            </div>
+            <div className="font-mono text-[11px] opacity-80">
+              16 Teams · 80 Players · 16 Tables · 3 Cabo Games
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate('/round-1')}
-            leftIcon={<ExternalLink className="w-3.5 h-3.5 text-amber-800" />}
-            className="shrink-0 border-amber-300 hover:bg-amber-100 text-amber-900"
-          >
-            Go to Round 1 Console
-          </Button>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-[11px] font-mono">
+            {Object.entries(caboValidation.constraints).map(([name, passed]) => (
+              <div key={name} className="flex items-center gap-1.5">
+                {passed ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                ) : (
+                  <X className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                )}
+                <span className={passed ? 'text-slate-300' : 'text-rose-300 font-bold'}>
+                  {name.replace(/_/g, ' ')}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {caboValidation.errors.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-rose-500/20 text-rose-300 text-[11px] space-y-0.5">
+              {caboValidation.errors.map((err, i) => (
+                <div key={i}>• {err}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Discrepancy warning if Round 1 does not provide exactly 24 teams */}
-      {data?.round1Finalized && data?.round1QualifiedTeamsCount !== 24 && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-3">
-          <ShieldAlert className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold">Team Count Discrepancy Detected:</span>
-            <p className="mt-0.5 leading-relaxed">
-              Finalized Round 1 results yielded {data?.round1QualifiedTeamsCount} teams instead of exactly 24.
-              Official tournament rules prohibit inventing substitute teams. Organizer manual review required.
-            </p>
+      {/* Standby Banner if Round 1 is not finalized */}
+      {!data?.round1Finalized && (
+        <div className="p-4 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-cyan-200 text-xs flex items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-3">
+            <Layers className="w-5 h-5 text-cyan-400 shrink-0" />
+            <div>
+              <div className="font-bold font-orbitron text-cyan-300">
+                Waiting for Round 1 qualification
+              </div>
+              <div className="text-[11px] text-slate-300">
+                Round 2 CABO seating and scorecards will automatically lock in the official Top 16 teams once Round 1 is finalized.
+              </div>
+            </div>
           </div>
+          <Badge variant="warning" size="sm">R1 In Progress</Badge>
         </div>
       )}
 
-      {/* Cutoff & Tie Warning Banner */}
-      {data?.engine.tiesAffectingCutoff ? (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <span className="font-bold">Cutoff Tie Detected — Finalization Blocked:</span>
-            <p className="mt-0.5 leading-relaxed">
-              Two or more teams share identical points across the <strong>12th-place qualification cutoff boundary</strong>.
-              In accordance with tournament guidelines, no arbitrary tie-breaker is invented. Manual organizer/marshal review is required.
-            </p>
+      {/* Completion Status Alert / Banner */}
+      {!isFinalized && !canFinalize && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-3 shadow-sm">
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5 flex-1">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+              <span className="font-bold font-orbitron tracking-wide text-amber-300">
+                Round 2 Incomplete — Scoring &amp; Table Progress
+              </span>
+              <span className="font-mono text-[11px] text-amber-400 font-bold">
+                {caboSummary?.totalCompletedTables ?? 0}/48 Total Tables Logged
+              </span>
+            </div>
+            <div className="text-[11px] text-amber-200/90 font-mono">
+              Game 1: <strong>{g1TablesLogged}/16</strong> tables · Game 2: <strong>{g2TablesLogged}/16</strong> tables · Game 3: <strong>{g3TablesLogged}/16</strong> tables
+            </div>
+            {incompleteReasons.length > 0 && (
+              <ul className="list-disc list-inside text-[11px] text-amber-300/80 space-y-0.5 pt-0.5">
+                {incompleteReasons.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
-      ) : null}
+      )}
 
       {/* Overview Dynamic Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
         <MetricCard
           label="Eligible Teams"
-          value={`${data?.stats.round1EligibleTeamsCount ?? 24}`}
+          value="16"
           subtitle="From Round 1"
           icon={Layers}
-          badge={{ text: data?.round1Finalized ? 'Sealed' : 'Provisional', variant: data?.round1Finalized ? 'emerald' : 'amber' }}
+          badge={{ text: data?.round1Finalized ? 'Sealed' : 'Active', variant: 'emerald' }}
         />
 
         <MetricCard
-          label="Participating"
-          value={`${data?.stats.participatingCount ?? 24}`}
-          subtitle="24 Target Field"
-          icon={Layers}
-          badge={{ text: '24 Squads', variant: 'blue' }}
+          label="Tables"
+          value="16"
+          subtitle="5 Players / Table"
+          icon={Users}
+          badge={{ text: '16 Tables', variant: 'blue' }}
         />
 
         <MetricCard
           label="Game 1 Done"
-          value={`${data?.stats.game1CompletionCount ?? 0}/24`}
-          subtitle={`${Math.round(((data?.stats.game1CompletionCount ?? 0) / 24) * 100)}% Placed`}
+          value={`${g1TablesLogged}/16`}
+          subtitle="Tables Logged"
           icon={Clock}
-          badge={{ text: 'Game 1', variant: (data?.stats.game1CompletionCount ?? 0) === 24 ? 'emerald' : 'amber' }}
+          badge={{ text: 'Game 1', variant: 'emerald' }}
         />
 
         <MetricCard
           label="Game 2 Done"
-          value={`${data?.stats.game2CompletionCount ?? 0}/24`}
-          subtitle={`${Math.round(((data?.stats.game2CompletionCount ?? 0) / 24) * 100)}% Placed`}
+          value={`${g2TablesLogged}/16`}
+          subtitle="Tables Logged"
           icon={Clock}
-          badge={{ text: 'Game 2', variant: (data?.stats.game2CompletionCount ?? 0) === 24 ? 'emerald' : 'amber' }}
+          badge={{ text: 'Game 2', variant: 'emerald' }}
         />
 
         <MetricCard
           label="Game 3 Done"
-          value={`${data?.stats.game3CompletionCount ?? 0}/24`}
-          subtitle={`${Math.round(((data?.stats.game3CompletionCount ?? 0) / 24) * 100)}% Placed`}
+          value={`${g3TablesLogged}/16`}
+          subtitle="Tables Logged"
           icon={Clock}
-          badge={{ text: 'Game 3', variant: (data?.stats.game3CompletionCount ?? 0) === 24 ? 'emerald' : 'amber' }}
+          badge={{ text: 'Game 3', variant: 'emerald' }}
         />
 
         <MetricCard
-          label="All 3 Complete"
-          value={`${data?.stats.completeTeamsCount ?? 0}/24`}
-          subtitle="Valid 3-Game Total"
-          icon={CheckCircle2}
-          badge={{ text: 'Field', variant: (data?.stats.completeTeamsCount ?? 0) === 24 ? 'emerald' : 'amber' }}
-        />
-
-        <MetricCard
-          label="Top 12 Cutoff"
-          value={`${data?.stats.provisionalTop12Count ?? 0}`}
-          subtitle="Advance to R3"
+          label="Max Squad Score"
+          value="75"
+          subtitle="15 wins * 5 pts"
           icon={Trophy}
-          badge={{ text: 'Cutoff #12', variant: 'purple' }}
+          badge={{ text: '75 Pts', variant: 'purple' }}
+        />
+
+        <MetricCard
+          label="Top 8 Cutoff"
+          value="Top 8"
+          subtitle="Advance to R3"
+          icon={CheckCircle2}
+          badge={{ text: 'Cutoff #8', variant: 'purple' }}
         />
 
         <MetricCard
           label="Elimination"
-          value={`${data?.stats.provisionalEliminatedCount ?? 0}`}
-          subtitle="Ranks 13–24"
+          value="8"
+          subtitle="Ranks 9–16"
           icon={ShieldAlert}
           badge={{ text: 'Eliminated', variant: 'amber' }}
         />
       </div>
 
       {/* Navigation Tabs for Views */}
-      <div className="flex border-b border-cyan-500/20 bg-[#070b16]/70 rounded-t-2xl px-4 pt-2 gap-2">
+      <div className="flex border-b border-cyan-500/20 bg-[#070b16]/70 rounded-t-2xl px-4 pt-2 gap-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab('leaderboard')}
-          className={`px-4 py-2.5 text-xs font-orbitron font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+          className={`px-4 py-2.5 text-xs font-orbitron font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeTab === 'leaderboard'
               ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <Trophy className="w-3.5 h-3.5" />
-          <span>Overall Standings & Cutoff</span>
+          <span>Overall Standings &amp; Cutoff</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('game1')}
-          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+          onClick={() => {
+            setActiveTab('seating');
+            loadRound2(seatingGameNum);
+          }}
+          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
+            activeTab === 'seating'
+              ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Seating &amp; Tables (16 Tables)</span>
+        </button>
+
+        <button
+          onClick={() => handleSelectGameTab(1)}
+          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeTab === 'game1'
               ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <span>Game 1 Console</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-cyan-300 font-mono border border-cyan-500/30">
-            {data?.stats.game1CompletionCount ?? 0}/24
-          </span>
         </button>
 
         <button
-          onClick={() => setActiveTab('game2')}
-          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+          onClick={() => handleSelectGameTab(2)}
+          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeTab === 'game2'
               ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <span>Game 2 Console</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-cyan-300 font-mono border border-cyan-500/30">
-            {data?.stats.game2CompletionCount ?? 0}/24
-          </span>
         </button>
 
         <button
-          onClick={() => setActiveTab('game3')}
-          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+          onClick={() => handleSelectGameTab(3)}
+          className={`px-4 py-2.5 text-xs font-mono font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
             activeTab === 'game3'
               ? 'border-cyan-400 text-cyan-300 bg-cyan-950/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <span>Game 3 Console</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-cyan-300 font-mono border border-cyan-500/30">
-            {data?.stats.game3CompletionCount ?? 0}/24
-          </span>
         </button>
       </div>
 
-      {/* Render Active View */}
-      {activeTab === 'game1' && renderGameConsole(1)}
-      {activeTab === 'game2' && renderGameConsole(2)}
-      {activeTab === 'game3' && renderGameConsole(3)}
+      {/* SEATING MANAGEMENT VIEW */}
+      {activeTab === 'seating' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0a0f1d] p-4 rounded-xl border border-cyan-500/20">
+            <div>
+              <h3 className="text-sm font-orbitron font-bold text-slate-100 flex items-center gap-2">
+                <Users className="w-4 h-4 text-cyan-400" />
+                <span>16 Tables Seating Matrix (80 Players)</span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Strict Squad Isolation: Teammates from the same team <strong>NEVER</strong> share a table.
+              </p>
+            </div>
 
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-mono">Game:</span>
+              {[1, 2, 3].map((g) => (
+                <button
+                  key={g}
+                  onClick={() => handleSelectSeatingTab(g as 1 | 2 | 3)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+                    seatingGameNum === g
+                      ? 'bg-cyan-500 text-slate-950 font-black'
+                      : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-cyan-500/20'
+                  }`}
+                >
+                  Game {g}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {caboTables.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-slate-400 bg-[#080d1a] border border-cyan-500/10 rounded-2xl">
+                No table assignments generated yet. Click &quot;Generate Tables&quot; to initialize 16 squad-isolated tables.
+              </div>
+            ) : (
+              caboTables.map((tbl) => (
+                <div
+                  key={tbl.tableNumber}
+                  className="bg-[#080d1a] border border-cyan-500/20 hover:border-cyan-500/40 rounded-xl p-3.5 space-y-2.5 transition-all shadow-sm"
+                >
+                  <div className="flex items-center justify-between border-b border-cyan-500/10 pb-2">
+                    <span className="font-orbitron font-bold text-cyan-300 text-xs">
+                      Table {tbl.tableNumber}
+                    </span>
+                    {tbl.isCompleted ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Scored
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleOpenTableScoreModal(tbl)}
+                        className="text-[11px] font-mono text-cyan-400 hover:underline flex items-center gap-1"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        Enter Scores
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5 text-xs">
+                    {tbl.players.map((p) => (
+                      <div
+                        key={p.participantId}
+                        className="flex items-center justify-between p-2 rounded bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all"
+                      >
+                        <div className="truncate mr-2 cursor-pointer" onClick={() => handleOpenPlayerDetail(p.participantId)}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-cyan-400/80">
+                              S{p.seatPosition}:
+                            </span>
+                            <span className="font-semibold text-slate-200 hover:text-cyan-300 underline-offset-2 hover:underline">
+                              {p.participantName}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate font-mono flex items-center gap-2">
+                            <span>{p.teamName}</span>
+                            {p.participantUsn && <span className="text-slate-500 font-mono">({p.participantUsn})</span>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {p.placement && (
+                            <span className="font-mono text-xs font-bold text-amber-300">
+                              #{p.placement} ({p.placementPoints}p)
+                            </span>
+                          )}
+                          {tbl.isCompleted && (
+                            <button
+                              onClick={() => handleOpenScoreCorrection(tbl.gameNumber, tbl.tableNumber, p)}
+                              className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-amber-500/10"
+                              title="Correct Individual Score"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* GAME 1 / 2 / 3 CONSOLES */}
+      {(activeTab === 'game1' || activeTab === 'game2' || activeTab === 'game3') && (
+        <div className="space-y-4">
+          <div className="bg-[#0a0f1d] p-4 rounded-xl border border-cyan-500/20 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-orbitron font-bold text-slate-100 flex items-center gap-2">
+                <span>Cabo Game {seatingGameNum} Table Results</span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Official Cabo Placements: 1st = 5 pts, 2nd = 3 pts, 3rd = 2 pts, 4th = 1 pt, 5th = 0 pts.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {caboTables.map((tbl) => (
+              <div
+                key={tbl.tableNumber}
+                className="bg-[#080d1a] border border-cyan-500/20 rounded-xl p-3.5 space-y-2"
+              >
+                <div className="flex items-center justify-between border-b border-cyan-500/10 pb-2">
+                  <span className="font-orbitron font-bold text-cyan-300 text-xs">Table {tbl.tableNumber}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenTableScoreModal(tbl)}
+                    leftIcon={<Edit3 className="w-3 h-3" />}
+                    className="h-6 text-[10px] px-2 py-0 border-cyan-500/30 text-cyan-300"
+                  >
+                    {tbl.isCompleted ? 'Edit Scores' : 'Record'}
+                  </Button>
+                </div>
+                <div className="space-y-1">
+                  {tbl.players.map((p) => (
+                    <div key={p.participantId} className="flex items-center justify-between text-xs py-0.5">
+                      <span className="text-slate-300 truncate max-w-[140px] font-mono text-[11px]">{p.teamName}</span>
+                      <span className="font-mono text-cyan-300 text-xs font-bold">
+                        {p.placement ? `#${p.placement} (${p.placementPoints} pts)` : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* OVERALL STANDINGS / SCOREBOARD VIEW */}
       {activeTab === 'leaderboard' && (
         <div className="space-y-4">
-          {/* Finalization Block Standby Alert */}
-          {!data?.config.isFinalized && !data?.engine.canFinalize && data?.engine.blockReason && (
-            <div className="p-3 bg-[#090d1a]/80 border border-cyan-500/20 rounded-2xl text-xs text-slate-300 flex items-center justify-between font-mono">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-cyan-400 shrink-0" />
-                <span>
-                  <strong className="text-cyan-300">Qualification Standby:</strong> {data.engine.blockReason}
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-400 font-mono shrink-0 ml-2">
-                Provisional Mode
-              </span>
-            </div>
-          )}
-
-          {/* Filter and Search Bar */}
           <SearchFilterToolbar
             searchQuery={searchQuery}
             onSearchChange={(val) => {
               setSearchQuery(val);
               setCurrentPage(1);
             }}
-            searchPlaceholder="Search squad name or tag (T-01)..."
+            searchPlaceholder="Search squad name or tag..."
             filters={[
               {
                 id: 'status',
@@ -962,54 +1088,32 @@ export const Round2CaboPage: React.FC = () => {
                   setCurrentPage(1);
                 },
                 options: [
-                  { label: 'All Standings', value: 'all' },
-                  { label: 'Top 12 Advancing', value: 'top12' },
+                  { label: 'All 16 Squads', value: 'all' },
+                  { label: 'Top 8 Advancing', value: 'top8' },
                   { label: 'Elimination Zone', value: 'eliminated' },
-                  { label: 'Tie Review Needed', value: 'tieReview' },
-                  { label: 'Incomplete', value: 'incomplete' },
-                ],
-              },
-              {
-                id: 'completion',
-                label: 'Games',
-                value: filterCompletion,
-                onChange: (val) => {
-                  setFilterCompletion(val);
-                  setCurrentPage(1);
-                },
-                options: [
-                  { label: 'All Progress', value: 'all' },
-                  { label: 'All 3 Games Complete', value: 'complete' },
-                  { label: 'Missing Games', value: 'missing' },
-                  { label: 'Missing Game 1', value: 'missingG1' },
-                  { label: 'Missing Game 2', value: 'missingG2' },
-                  { label: 'Missing Game 3', value: 'missingG3' },
+                  { label: 'Cutoff Tie Review', value: 'tieReview' },
                 ],
               },
             ]}
-            activeCount={
-              (filterStatus !== 'all' ? 1 : 0) + (filterCompletion !== 'all' ? 1 : 0) + (searchQuery ? 1 : 0)
-            }
+            activeCount={(filterStatus !== 'all' ? 1 : 0) + (searchQuery ? 1 : 0)}
             onClearAll={() => {
               setSearchQuery('');
               setFilterStatus('all');
-              setFilterCompletion('all');
             }}
           />
 
-          {/* Leaderboard Table Card */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-3 px-4 border-b border-cyan-500/20 bg-[#070b16]/50">
               <div className="flex items-center gap-2">
                 <div className="text-xs font-orbitron font-bold uppercase tracking-wider text-slate-200">
-                  Round 2 Cabo Standings ({filteredAndSortedRecords.length} Squads)
+                  Cabo Scoreboard ({filteredAndSortedRecords.length} Squads)
                 </div>
                 <span className="text-[10px] text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30 font-mono">
-                  Scoring: {data?.config.scoringDirection === 'higher_is_better' ? 'Higher Points Win' : 'Lower Points Win'}
+                  Max: 75 Pts · 1st=5, 2nd=3, 3rd=2, 4th=1, 5th=0
                 </span>
               </div>
               <div className="text-xs text-slate-400 font-mono">
-                Cutoff Boundary: Top 12 Advance
+                Cutoff: Top 8 Advance to Round 3
               </div>
             </CardHeader>
 
@@ -1018,90 +1122,65 @@ export const Round2CaboPage: React.FC = () => {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-cyan-500/20 bg-[#030712]/90 text-[11px] font-mono font-bold text-cyan-400/80 uppercase tracking-wider">
-                      <th
-                        className="py-3 px-3 text-center w-14 cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('rank')}
-                      >
+                      <th className="py-3 px-3 text-center w-14 cursor-pointer" onClick={() => handleSort('rank')}>
                         <div className="flex items-center justify-center gap-1">
                           <span>Rank</span>
                           <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
                         </div>
                       </th>
-                      <th
-                        className="py-3 px-4 cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('name')}
-                      >
+                      <th className="py-3 px-4 cursor-pointer" onClick={() => handleSort('name')}>
                         <div className="flex items-center gap-1">
                           <span>Squad</span>
                           <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
                         </div>
                       </th>
-                      <th
-                        className="py-3 px-3 text-center cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('g1')}
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Game 1</span>
-                          <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
-                        </div>
-                      </th>
-                      <th
-                        className="py-3 px-3 text-center cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('g2')}
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Game 2</span>
-                          <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
-                        </div>
-                      </th>
-                      <th
-                        className="py-3 px-3 text-center cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('g3')}
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Game 3</span>
-                          <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
-                        </div>
-                      </th>
-                      <th
-                        className="py-3 px-4 text-right cursor-pointer hover:text-cyan-300 transition-colors select-none"
-                        onClick={() => handleSort('totalPoints')}
-                      >
+                      <th className="py-3 px-3 text-center">G1 (/25)</th>
+                      <th className="py-3 px-3 text-center">G2 (/25)</th>
+                      <th className="py-3 px-3 text-center">G3 (/25)</th>
+                      <th className="py-3 px-4 text-right cursor-pointer" onClick={() => handleSort('totalPoints')}>
                         <div className="flex items-center justify-end gap-1">
-                          <span>Total Points</span>
+                          <span>Score (/75)</span>
                           <ArrowUpDown className="w-3 h-3 text-cyan-400/60" />
                         </div>
                       </th>
-                      <th className="py-3 px-4">Qualification</th>
+                      <th className="py-3 px-3 text-center cursor-pointer" onClick={() => handleSort('firstPlaces')} title="Tie-Breaker 3: More 1st places">
+                        1st Places
+                      </th>
+                      <th className="py-3 px-3 text-center cursor-pointer" onClick={() => handleSort('cardTotal')} title="Tie-Breaker 2: Lower card total">
+                        Card Total
+                      </th>
+                      <th className="py-3 px-3 text-center">ECHO</th>
+                      <th className="py-3 px-3 text-center">PRIME</th>
+                      <th className="py-3 px-4">Status</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-cyan-500/10 text-xs text-slate-300">
                     {isLoading ? (
-                      Array.from({ length: 8 }).map((_, i) => <TableRowSkeleton key={i} cols={8} />)
+                      Array.from({ length: 8 }).map((_, i) => <TableRowSkeleton key={i} cols={12} />)
                     ) : paginatedRecords.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="py-12">
-                          <EmptyState
-                            icon={Layers}
-                            title="No Squad Standings Found"
-                            description="No records match your search or filter criteria."
-                            action={{
-                              label: 'Clear Filters',
-                              onClick: () => {
-                                setSearchQuery('');
-                                setFilterStatus('all');
-                                setFilterCompletion('all');
-                              },
-                            }}
-                          />
+                        <td colSpan={12} className="py-12 text-center text-slate-400">
+                          {!data?.round1Finalized ? (
+                            <div className="flex flex-col items-center justify-center gap-2 py-6">
+                              <AlertTriangle className="w-8 h-8 text-amber-400" />
+                              <span className="font-orbitron font-bold text-sm text-amber-300">
+                                Waiting for Round 1 qualification
+                              </span>
+                              <span className="text-xs text-slate-400 max-w-md">
+                                Round 2 (CABO) seating and scoreboards unlock automatically once the official Top 16 squads are finalized in Round 1.
+                              </span>
+                            </div>
+                          ) : (
+                            'No squad standings found.'
+                          )}
                         </td>
                       </tr>
                     ) : (
                       paginatedRecords.map((rec) => {
                         const rankNum = rec.rank ?? null;
-                        const isCutoffLine = rankNum === 12;
-                        const isBeyondCutoff = rankNum !== null && rankNum > 12;
+                        const isCutoffLine = rankNum === 8;
+                        const isBeyondCutoff = rankNum !== null && rankNum > 8;
 
                         return (
                           <React.Fragment key={rec.teamId}>
@@ -1125,7 +1204,7 @@ export const Round2CaboPage: React.FC = () => {
                                 )}
                               </td>
 
-                              {/* Squad Name & Tag */}
+                              {/* Squad */}
                               <td className="py-3 px-4">
                                 <div className="flex items-center gap-2">
                                   <span className="font-mono text-[11px] font-semibold text-cyan-300 bg-cyan-950/50 px-1.5 py-0.5 rounded-lg border border-cyan-500/30">
@@ -1133,45 +1212,21 @@ export const Round2CaboPage: React.FC = () => {
                                   </span>
                                   <span className="font-orbitron font-semibold text-slate-100">{rec.teamName}</span>
                                 </div>
-                                {rec.tieRequiresReview && (
-                                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 mt-1 font-mono">
-                                    <AlertTriangle className="w-3 h-3 text-amber-400" />
-                                    <span>Cutoff Tie Review Required</span>
-                                  </span>
-                                )}
                               </td>
 
-                              {/* Game 1 */}
-                              <td className="py-3 px-3 text-center">
-                                {rec.game1Placement ? (
-                                  <span className="font-mono text-xs font-semibold text-slate-200">
-                                    #{rec.game1Placement} <span className="text-[11px] text-cyan-400/70">({rec.game1Points} pts)</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600 font-mono">—</span>
-                                )}
+                              {/* G1 */}
+                              <td className="py-3 px-3 text-center font-mono text-slate-300">
+                                {rec.game1Points !== null && rec.game1Points !== undefined ? `${rec.game1Points}p` : '—'}
                               </td>
 
-                              {/* Game 2 */}
-                              <td className="py-3 px-3 text-center">
-                                {rec.game2Placement ? (
-                                  <span className="font-mono text-xs font-semibold text-slate-200">
-                                    #{rec.game2Placement} <span className="text-[11px] text-cyan-400/70">({rec.game2Points} pts)</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600 font-mono">—</span>
-                                )}
+                              {/* G2 */}
+                              <td className="py-3 px-3 text-center font-mono text-slate-300">
+                                {rec.game2Points !== null && rec.game2Points !== undefined ? `${rec.game2Points}p` : '—'}
                               </td>
 
-                              {/* Game 3 */}
-                              <td className="py-3 px-3 text-center">
-                                {rec.game3Placement ? (
-                                  <span className="font-mono text-xs font-semibold text-slate-200">
-                                    #{rec.game3Placement} <span className="text-[11px] text-cyan-400/70">({rec.game3Points} pts)</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-600 font-mono">—</span>
-                                )}
+                              {/* G3 */}
+                              <td className="py-3 px-3 text-center font-mono text-slate-300">
+                                {rec.game3Points !== null && rec.game3Points !== undefined ? `${rec.game3Points}p` : '—'}
                               </td>
 
                               {/* Total Points */}
@@ -1185,30 +1240,92 @@ export const Round2CaboPage: React.FC = () => {
                                 )}
                               </td>
 
-                              {/* Qualification Badge */}
+                              {/* 1st Places */}
+                              <td className="py-3 px-3 text-center font-mono text-slate-400">
+                                {rec.firstPlaceCount ?? 0}
+                              </td>
+
+                              {/* Card Total */}
+                              <td className="py-3 px-3 text-center font-mono text-slate-400">
+                                {rec.combinedCardTotal ?? '—'}
+                              </td>
+
+                              {/* ECHO Status */}
+                              <td className="py-3 px-3 text-center">
+                                <button
+                                  onClick={() => handleOpenEchoModal(rec)}
+                                  className="cursor-pointer group flex items-center justify-center mx-auto"
+                                  title="Click to verify ECHO marked cards"
+                                >
+                                  {rec.echoStatus === 'RECOVERED' ? (
+                                    <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                      ECHO ✓
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-slate-800 text-slate-400 group-hover:text-cyan-300 border border-slate-700">
+                                      {rec.echoEVerified ? 'E' : '·'}{rec.echoCVerified ? 'C' : '·'}{rec.echoHoVerified ? 'HO' : '··'}
+                                    </span>
+                                  )}
+                                </button>
+                              </td>
+
+                              {/* PRIME Status */}
+                              <td className="py-3 px-3 text-center">
+                                <button
+                                  onClick={() => handleOpenPrimeModal(rec)}
+                                  className="cursor-pointer group flex items-center justify-center mx-auto"
+                                  title="Click to verify PRIME challenge"
+                                >
+                                  {rec.primeStatus === 'RECOVERED' ? (
+                                    <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                                      PRIME ✓
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded font-mono text-[10px] bg-slate-800 text-slate-400 group-hover:text-cyan-300 border border-slate-700">
+                                      Pending
+                                    </span>
+                                  )}
+                                </button>
+                              </td>
+
+                              {/* Status */}
                               <td className="py-3 px-4">
-                                {getStatusBadge(rec.qualificationStatus)}
+                                {getStatusBadge(rec)}
                               </td>
 
                               {/* Actions */}
                               <td className="py-3 px-4 text-right">
-                                {!data?.config.isFinalized && (
+                                <div className="flex items-center justify-end gap-1.5">
                                   <button
-                                    onClick={() => handleOpenEditTeam(rec)}
-                                    className="p-1.5 rounded-xl text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 transition-colors"
-                                    title="Edit squad placements"
+                                    onClick={() => handleOpenTeamDetail(rec.teamId)}
+                                    className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10"
+                                    title="View 5-Member Performance Drill-Down"
                                   >
-                                    <Edit3 className="w-4 h-4" />
+                                    <Info className="w-3.5 h-3.5" />
                                   </button>
-                                )}
+                                  <button
+                                    onClick={() => handleOpenEchoModal(rec)}
+                                    className="p-1 rounded text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10"
+                                    title="Verify ECHO cards"
+                                  >
+                                    <Key className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenPrimeModal(rec)}
+                                    className="p-1 rounded text-slate-400 hover:text-purple-300 hover:bg-purple-500/10"
+                                    title="Verify PRIME challenge"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
 
                             {/* Cutoff Marker Row */}
                             {isCutoffLine && (
                               <tr className="bg-cyan-950/40 border-y-2 border-cyan-400/60 shadow-[0_0_12px_rgba(6,182,212,0.2)]">
-                                <td colSpan={8} className="py-2.5 px-4 text-center text-xs font-orbitron font-bold text-cyan-300 tracking-wider uppercase">
-                                  ⚡ Round 2 Cabo Cutoff Threshold — Top 12 Advance to Round 3: The Black Market
+                                <td colSpan={12} className="py-2.5 px-4 text-center text-xs font-orbitron font-bold text-cyan-300 tracking-wider uppercase">
+                                  ⚡ Round 2 Cabo Cutoff Threshold — Top 8 Advance to Round 3: The Black Market
                                 </td>
                               </tr>
                             )}
@@ -1219,304 +1336,532 @@ export const Round2CaboPage: React.FC = () => {
                   </tbody>
                 </table>
               </div>
-
-              {/* Pagination */}
-              {filteredAndSortedRecords.length > pageSize && (
-                <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-500">
-                  <div>
-                    Showing {(currentPage - 1) * pageSize + 1} to{' '}
-                    {Math.min(currentPage * pageSize, filteredAndSortedRecords.length)} of{' '}
-                    {filteredAndSortedRecords.length} participating squads
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      Previous
-                    </Button>
-                    <span className="px-2 font-mono">
-                      Page {currentPage} of {Math.ceil(filteredAndSortedRecords.length / pageSize)}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setCurrentPage(
-                          Math.min(Math.ceil(filteredAndSortedRecords.length / pageSize), currentPage + 1)
-                        )
-                      }
-                      disabled={currentPage === Math.ceil(filteredAndSortedRecords.length / pageSize)}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 1. Edit Squad Placements Modal              */}
-      {/* ========================================== */}
-      {selectedTeamRecord && (
+      {/* ECHO Verification Modal */}
+      {echoTeam && (
         <Modal
-          isOpen={isEditTeamModalOpen}
-          onClose={() => setIsEditTeamModalOpen(false)}
-          title={
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-blue-600">
-                {formatTeamNumber(selectedTeamRecord.teamNumber)}
-              </span>
-              <span>{selectedTeamRecord.teamName}</span>
-              <span className="text-xs font-normal text-slate-400">&middot; Cabo Placements</span>
-            </div>
-          }
-          subtitle={`Current Total: ${selectedTeamRecord.totalPoints !== null && selectedTeamRecord.totalPoints !== undefined ? `${selectedTeamRecord.totalPoints} pts` : 'Incomplete'} · Rank: ${selectedTeamRecord.rank ? `#${selectedTeamRecord.rank}` : 'Unranked'}`}
+          isOpen={isEchoModalOpen}
+          onClose={() => setIsEchoModalOpen(false)}
+          title={`Verify ECHO Marked Cards — ${echoTeam.teamName}`}
+          subtitle="Mark cards discovered across Cabo Games 1, 2, and 3. Full ECHO awarded only after all 3 verified."
           maxWidth="md"
           footer={
-            <div className="flex items-center justify-between w-full">
-              <span className="text-[11px] text-slate-400 font-mono">Placements 1 to 24</span>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setIsEditTeamModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button variant="primary" size="sm" onClick={handleSaveTeamPlacements} isLoading={isSubmitting}>
-                  Save Placements
-                </Button>
-              </div>
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button variant="outline" size="sm" onClick={() => setIsEchoModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSaveEchoVerification} isLoading={isSubmitting}>
+                Save Verification
+              </Button>
             </div>
           }
         >
-          <form onSubmit={handleSaveTeamPlacements} className="space-y-4 text-xs">
-            {editFormError && (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <span>{editFormError}</span>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {/* Game 1 */}
-              <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div>
-                  <div className="font-bold text-slate-800">Cabo Game 1</div>
-                  <div className="text-[11px] text-slate-500">
-                    Points:{' '}
-                    {editG1Placement && parseInt(editG1Placement, 10) >= 1 && parseInt(editG1Placement, 10) <= 24
-                      ? `+${data?.config.pointTable[parseInt(editG1Placement, 10)] ?? 0} pts`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-mono">Rank #</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="24"
-                    placeholder="1–24"
-                    value={editG1Placement}
-                    onChange={(e) => setEditG1Placement(e.target.value)}
-                    className="w-20 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-center text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-
-              {/* Game 2 */}
-              <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div>
-                  <div className="font-bold text-slate-800">Cabo Game 2</div>
-                  <div className="text-[11px] text-slate-500">
-                    Points:{' '}
-                    {editG2Placement && parseInt(editG2Placement, 10) >= 1 && parseInt(editG2Placement, 10) <= 24
-                      ? `+${data?.config.pointTable[parseInt(editG2Placement, 10)] ?? 0} pts`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-mono">Rank #</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="24"
-                    placeholder="1–24"
-                    value={editG2Placement}
-                    onChange={(e) => setEditG2Placement(e.target.value)}
-                    className="w-20 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-center text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
-
-              {/* Game 3 */}
-              <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div>
-                  <div className="font-bold text-slate-800">Cabo Game 3</div>
-                  <div className="text-[11px] text-slate-500">
-                    Points:{' '}
-                    {editG3Placement && parseInt(editG3Placement, 10) >= 1 && parseInt(editG3Placement, 10) <= 24
-                      ? `+${data?.config.pointTable[parseInt(editG3Placement, 10)] ?? 0} pts`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-mono">Rank #</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="24"
-                    placeholder="1–24"
-                    value={editG3Placement}
-                    onChange={(e) => setEditG3Placement(e.target.value)}
-                    className="w-20 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-center text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
-                </div>
-              </div>
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-cyan-950/40 border border-cyan-500/30 rounded-xl text-slate-300 space-y-1">
+              <div className="font-bold text-cyan-300">ODDyssey Official Rule:</div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Only the player who receives the marked card may report it to their team.
+                A volunteer verifies each marked card before awarding the fragment centrally.
+              </p>
             </div>
 
-            <p className="text-[11px] text-slate-400 italic">
-              * Note: Teams must complete all 3 games to receive a valid total score. Leaving a field blank leaves that game unrecorded (never counted as 0).
-            </p>
-          </form>
+            <div className="space-y-2.5">
+              <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-cyan-500/40">
+                <input
+                  type="checkbox"
+                  checked={echoG1}
+                  onChange={(e) => setEchoG1(e.target.checked)}
+                  className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                />
+                <div>
+                  <span className="font-bold text-slate-200">Game 1: Card Marked with &quot;E&quot;</span>
+                  <span className="block text-[11px] text-slate-500">Verified by table marshal</span>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-cyan-500/40">
+                <input
+                  type="checkbox"
+                  checked={echoG2}
+                  onChange={(e) => setEchoG2(e.target.checked)}
+                  className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                />
+                <div>
+                  <span className="font-bold text-slate-200">Game 2: Card Marked with &quot;C&quot;</span>
+                  <span className="block text-[11px] text-slate-500">Verified by table marshal</span>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-cyan-500/40">
+                <input
+                  type="checkbox"
+                  checked={echoG3}
+                  onChange={(e) => setEchoG3(e.target.checked)}
+                  className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
+                />
+                <div>
+                  <span className="font-bold text-slate-200">Game 3: Card Marked with &quot;HO&quot;</span>
+                  <span className="block text-[11px] text-slate-500">Verified by table marshal</span>
+                </div>
+              </label>
+            </div>
+
+            {echoG1 && echoG2 && echoG3 ? (
+              <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs font-bold text-center">
+                ✨ All 3 cards verified! Code Fragment &quot;ECHO&quot; will be officially awarded!
+              </div>
+            ) : (
+              <div className="p-2.5 bg-amber-950/30 border border-amber-500/20 rounded-xl text-amber-300/80 text-[11px] text-center">
+                Requires all 3 cards (E + C + HO) to assemble the ECHO fragment.
+              </div>
+            )}
+          </div>
         </Modal>
       )}
 
-      {/* ========================================== */}
-      {/* 2. Round 2 Settings & Point Table Modal     */}
-      {/* ========================================== */}
-      <Modal
-        isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
-        title="Round 2 Scoring Parameters &amp; Point Table"
-        subtitle="Manage scoring direction, tie policy, and placement point values"
-        maxWidth="2xl"
-        footer={
-          <div className="flex items-center justify-between w-full">
-            <Button variant="ghost" size="sm" onClick={handleResetPointTableDefaults}>
-              Reset Demo Defaults
-            </Button>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setIsConfigOpen(false)}>
+      {/* PRIME Verification Modal */}
+      {primeTeam && (
+        <Modal
+          isOpen={isPrimeModalOpen}
+          onClose={() => setIsPrimeModalOpen(false)}
+          title={`Verify PRIME Number Challenge — ${primeTeam.teamName}`}
+          subtitle="Number cards: 1, 2, 3, 4, 5, 7, 9, 11 · Primes: 2=P, 3=R, 5=I, 7=M, 11=E"
+          maxWidth="md"
+          footer={
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button variant="outline" size="sm" onClick={() => setIsPrimeModalOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" size="sm" onClick={handleSaveConfig} isLoading={isSubmitting}>
-                Save Configuration
+              <Button variant="primary" size="sm" onClick={handleSavePrimeVerification} isLoading={isSubmitting}>
+                Award PRIME Fragment
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-xl text-slate-300 space-y-1">
+              <div className="font-bold text-purple-300">Challenge Instructions:</div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                After Game 3, teams receive number cards [1, 2, 3, 4, 5, 7, 9, 11].
+                Teams must identify prime numbers and arrange them smallest to largest:
+                <strong> 2=P, 3=R, 5=I, 7=M, 11=E</strong> to spell <strong>PRIME</strong>.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-5 gap-2 text-center">
+              {[
+                { num: 2, letter: 'P' },
+                { num: 3, letter: 'R' },
+                { num: 5, letter: 'I' },
+                { num: 7, letter: 'M' },
+                { num: 11, letter: 'E' },
+              ].map((c) => (
+                <div key={c.num} className="p-2.5 rounded-xl bg-slate-900 border border-purple-500/40 font-mono">
+                  <div className="text-xs text-purple-400 font-bold">{c.num}</div>
+                  <div className="text-lg font-black text-slate-100">{c.letter}</div>
+                </div>
+              ))}
+            </div>
+
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-purple-500/40">
+              <input
+                type="checkbox"
+                checked={primeSequenceVerified}
+                onChange={(e) => setPrimeSequenceVerified(e.target.checked)}
+                className="rounded border-slate-700 text-purple-500 focus:ring-purple-500"
+              />
+              <div>
+                <span className="font-bold text-slate-200">Volunteer Verification</span>
+                <span className="block text-[11px] text-slate-500">
+                  Confirmed: Team successfully arranged prime cards smallest to largest spelling PRIME.
+                </span>
+              </div>
+            </label>
+          </div>
+        </Modal>
+      )}
+
+      {/* Table Score Entry Modal */}
+      <Modal
+        isOpen={isTableScoreModalOpen}
+        onClose={() => setIsTableScoreModalOpen(false)}
+        title={`Enter Scores — Table ${scoreTableNum} (Game ${scoreTableGameNum})`}
+        subtitle="5 seated players · Assign unique placements 1st through 5th · Points calculated automatically"
+        maxWidth="lg"
+        footer={
+          <div className="flex items-center justify-between w-full">
+            <span className="text-[11px] text-slate-500 font-mono">1st=5p, 2nd=3p, 3rd=2p, 4th=1p, 5th=0p</span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsTableScoreModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSaveTableScores} isLoading={isSubmitting}>
+                Save Table Scores
               </Button>
             </div>
           </div>
         }
       >
-        <form onSubmit={handleSaveConfig} className="space-y-5 text-xs">
-          {/* Unconfirmed Tournament Rules Notice */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5">
-            <div className="flex items-center gap-1.5 font-bold text-amber-900 text-xs">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Organizer Notice: Unconfirmed Tournament Rules</span>
-            </div>
-            <p className="text-[11px] text-amber-800 leading-relaxed">
-              1. <strong>Placement Points</strong>: The point values below are currently set to a <strong>demo default linear table (24 to 1 points)</strong>. This is <em>not</em> an official rule. Configure the official point values as decided by the organizing committee.<br />
-              2. <strong>Scoring Direction</strong>: Higher points win is set as a demo default. If your Cabo tournament rules specify lower cumulative score wins, toggle the option below.
-            </p>
-          </div>
-
-          {configError && (
-            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{configError}</span>
+        <div className="space-y-4 text-xs">
+          {tableScoreError && (
+            <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <span>{tableScoreError}</span>
             </div>
           )}
 
-          {/* Scoring Direction & Tie Policy */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">
-                Scoring Direction
-              </label>
-              <select
-                value={configDirection}
-                onChange={(e) => setConfigDirection(e.target.value as CaboScoringDirection)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+          <div className="space-y-2">
+            {tablePlayersScores.map((p, idx) => (
+              <div
+                key={p.participantId}
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-slate-900 border border-slate-800"
               >
-                <option value="higher_is_better">Higher Points Win (Desc) — Demo Default</option>
-                <option value="lower_is_better">Lower Points Win (Asc)</option>
-              </select>
-              <span className="text-[10px] text-slate-400 mt-1 block">
-                Controls leaderboard ordering and Top 12 determination.
-              </span>
-            </div>
+                <div>
+                  <div className="font-bold text-slate-200">{p.participantName}</div>
+                  <div className="text-[11px] text-slate-400 font-mono">{p.teamName}</div>
+                </div>
 
-            <div>
-              <label className="block font-semibold text-slate-700 mb-1">
-                Placement Tie Policy
-              </label>
-              <select
-                value={configTiePolicy}
-                onChange={(e) => setConfigTiePolicy(e.target.value as CaboTiePolicy)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="strict_unique">Strict: Disallow Duplicate Placements</option>
-                <option value="allow_shared">Permit Shared Placements in Same Game</option>
-              </select>
-              <span className="text-[10px] text-slate-400 mt-1 block">
-                Controls whether multiple squads can hold the same placement in a game.
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-mono">Placement:</span>
+                    <select
+                      value={p.placement}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        const copy = [...tablePlayersScores];
+                        copy[idx].placement = val;
+                        setTablePlayersScores(copy);
+                        setTableScoreError(null);
+                      }}
+                      className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 font-mono font-bold text-cyan-300 text-xs focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    >
+                      <option value={1}>1st (5 pts)</option>
+                      <option value={2}>2nd (3 pts)</option>
+                      <option value={3}>3rd (2 pts)</option>
+                      <option value={4}>4th (1 pt)</option>
+                      <option value={5}>5th (0 pts)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-mono" title="Combined final card total (tie-breaker)">
+                      Cards:
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={p.finalCardHandTotal}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10) || 0;
+                        const copy = [...tablePlayersScores];
+                        copy[idx].finalCardHandTotal = val;
+                        setTablePlayersScores(copy);
+                      }}
+                      className="w-16 px-2 py-1 rounded bg-slate-800 border border-slate-700 font-mono text-center text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirm Tables Modal */}
+      <ConfirmationDialog
+        isOpen={isConfirmTablesModalOpen}
+        onClose={() => setIsConfirmTablesModalOpen(false)}
+        onConfirm={handleConfirmTables}
+        title="Confirm & Freeze Round 2 Table Seating"
+        message="Are you sure you want to officially confirm and freeze the Cabo table assignments? All 8 structural constraints have passed. Once confirmed, tables are locked and cannot be regenerated without explicit override confirmation."
+        confirmLabel="Confirm & Freeze Tables"
+        isDestructive={false}
+        isLoading={isSubmitting}
+      />
+
+      {/* Safe Regenerate Confirmation Modal */}
+      <ConfirmationDialog
+        isOpen={isRegenerateModalOpen}
+        onClose={() => setIsRegenerateModalOpen(false)}
+        onConfirm={() => handleExecuteGenerate(true)}
+        title="Override & Regenerate Confirmed Tables"
+        message="WARNING: Cabo tables have already been confirmed and frozen. Regenerating will reset all table allocations and clear any existing Cabo scorecards. Are you sure you want to force regeneration?"
+        confirmLabel="Force Regenerate Tables"
+        isDestructive={true}
+        isLoading={isSubmitting}
+      />
+
+      {/* Player Drill-Down Modal */}
+      {playerDetail && (
+        <Modal
+          isOpen={isPlayerModalOpen}
+          onClose={() => setIsPlayerModalOpen(false)}
+          title={`Player Dossier: ${playerDetail.participantName}`}
+          subtitle={`Squad: ${playerDetail.teamName} ${playerDetail.participantUsn ? `· USN: ${playerDetail.participantUsn}` : ''}`}
+          maxWidth="lg"
+          footer={
+            <div className="flex items-center justify-between w-full text-xs">
+              <span className="font-mono text-cyan-300 font-bold">
+                Total Individual Points: {playerDetail.totalPoints} pts · 1st Place Finishes: {playerDetail.firstPlacesCount}
               </span>
+              <Button variant="outline" size="sm" onClick={() => setIsPlayerModalOpen(false)}>
+                Close
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {[1, 2, 3].map((gNum) => {
+                const g = playerDetail.games.find((x) => x.gameNumber === gNum);
+                return (
+                  <div key={gNum} className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 font-orbitron font-bold text-cyan-300">
+                      <span>Game {gNum}</span>
+                      {g ? (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                          Table {g.tableNumber} · Seat {g.seatPosition}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 font-mono">Unassigned</span>
+                      )}
+                    </div>
+                    {g ? (
+                      <div className="space-y-1 font-mono text-[11px]">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Finish:</span>
+                          <span className="font-bold text-amber-300">{g.placement ? `${g.placement}th Place` : 'Not Logged'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Points Awarded:</span>
+                          <span className="font-bold text-emerald-300">{g.placementPoints !== null && g.placementPoints !== undefined ? `${g.placementPoints} pts` : '—'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Card Total:</span>
+                          <span className="text-slate-200">{g.finalCardHandTotal ?? '—'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Verified:</span>
+                          <span className={g.isVerified ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                            {g.isVerified ? 'YES ✓' : 'NO'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="py-4 text-center text-slate-500 font-mono">No game record</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
+        </Modal>
+      )}
 
-          {/* 24-Placement Point Table */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block font-semibold text-slate-700">
-                Configurable Placement-Point Table (1st to 24th)
-              </label>
-              <span className="text-[10px] text-amber-700 font-medium">
-                Unconfirmed Demo Defaults
-              </span>
+      {/* Team Drill-Down Modal */}
+      {teamDetail && (
+        <Modal
+          isOpen={isTeamModalOpen}
+          onClose={() => setIsTeamModalOpen(false)}
+          title={`Squad Performance: ${teamDetail.teamName}`}
+          subtitle={`Team #${teamDetail.teamNumber} · 5 Members · 15 Player-Games · Squad Score: ${teamDetail.caboSquadTotal}/75 pts`}
+          maxWidth="2xl"
+          footer={
+            <div className="flex items-center justify-between w-full text-xs">
+              <div className="font-mono text-cyan-300 font-bold flex items-center gap-3">
+                <span>G1: {teamDetail.game1Total}p</span>
+                <span>G2: {teamDetail.game2Total}p</span>
+                <span>G3: {teamDetail.game3Total}p</span>
+                <span className="text-amber-300 font-black">Total: {teamDetail.caboSquadTotal}/75</span>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setIsTeamModalOpen(false)}>
+                Close
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-cyan-500/20 bg-slate-900/80 text-[11px] text-cyan-400 uppercase">
+                    <th className="py-2.5 px-3">Player</th>
+                    <th className="py-2.5 px-3">Role</th>
+                    <th className="py-2.5 px-2 text-center">G1 Tbl</th>
+                    <th className="py-2.5 px-2 text-center">G1 Place</th>
+                    <th className="py-2.5 px-2 text-center">G2 Tbl</th>
+                    <th className="py-2.5 px-2 text-center">G2 Place</th>
+                    <th className="py-2.5 px-2 text-center">G3 Tbl</th>
+                    <th className="py-2.5 px-2 text-center">G3 Place</th>
+                    <th className="py-2.5 px-3 text-right">Indiv Pts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-slate-300">
+                  {teamDetail.members.map((m) => (
+                    <tr key={m.participantId} className="hover:bg-cyan-500/5">
+                      <td className="py-2.5 px-3 font-semibold text-slate-100">
+                        <div>{m.participantName}</div>
+                        {m.participantUsn && <div className="text-[10px] text-slate-500">{m.participantUsn}</div>}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-400 capitalize">{m.role}</td>
+                      <td className="py-2.5 px-2 text-center text-slate-400">{m.game1Table ? `T${m.game1Table}` : '—'}</td>
+                      <td className="py-2.5 px-2 text-center font-bold text-amber-300">{m.game1Placement ? `${m.game1Placement}th (${m.game1Points}p)` : '—'}</td>
+                      <td className="py-2.5 px-2 text-center text-slate-400">{m.game2Table ? `T${m.game2Table}` : '—'}</td>
+                      <td className="py-2.5 px-2 text-center font-bold text-amber-300">{m.game2Placement ? `${m.game2Placement}th (${m.game2Points}p)` : '—'}</td>
+                      <td className="py-2.5 px-2 text-center text-slate-400">{m.game3Table ? `T${m.game3Table}` : '—'}</td>
+                      <td className="py-2.5 px-2 text-center font-bold text-amber-300">{m.game3Placement ? `${m.game3Placement}th (${m.game3Points}p)` : '—'}</td>
+                      <td className="py-2.5 px-3 text-right font-black text-cyan-300">{m.totalIndividualPoints} pts</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Organizer Score Correction Modal */}
+      {correctionTarget && (
+        <Modal
+          isOpen={isCorrectionModalOpen}
+          onClose={() => setIsCorrectionModalOpen(false)}
+          title={`Organizer Score Correction — Table ${correctionTarget.tableNumber} (Game ${correctionTarget.gameNumber})`}
+          subtitle={`Player: ${correctionTarget.participantName} (${correctionTarget.teamName})`}
+          maxWidth="md"
+          footer={
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button variant="outline" size="sm" onClick={() => setIsCorrectionModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleSaveScoreCorrection} isLoading={isSubmitting}>
+                Save & Record Audit Trail
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-xs">
+            <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300 space-y-1">
+              <div className="font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Audited Administrative Action</span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                Modifying this player&apos;s placement will swap placements with the player currently occupying that position at Table {correctionTarget.tableNumber}.
+                Points will recalculate automatically and the reason will be logged permanently in audit records.
+              </p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-64 overflow-y-auto p-1 bg-slate-50 border border-slate-200 rounded-xl">
-              {Array.from({ length: 24 }, (_, i) => i + 1).map((pos) => (
-                <div key={pos} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between gap-1">
-                  <span className="font-mono text-slate-500 text-xs font-semibold w-8">
-                    #{pos}:
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="1000"
-                    value={configPointTable[pos] ?? 0}
-                    onChange={(e) => {
-                      const val = Math.max(0, parseInt(e.target.value, 10) || 0);
-                      setConfigPointTable({ ...configPointTable, [pos]: val });
-                    }}
-                    className="w-16 px-2 py-1 bg-slate-50 border border-slate-200 rounded text-center font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">Current Placement</label>
+                <div className="p-2 rounded bg-slate-900 border border-slate-800 font-mono font-bold text-slate-300">
+                  {correctionTarget.oldPlacement}th Place
+                </div>
+              </div>
+              <div>
+                <label className="block text-slate-400 font-mono text-[11px] mb-1">New Placement</label>
+                <select
+                  value={correctionTarget.newPlacement}
+                  onChange={(e) => setCorrectionTarget({ ...correctionTarget, newPlacement: parseInt(e.target.value, 10) })}
+                  className="w-full p-2 rounded bg-slate-800 border border-slate-700 font-mono font-bold text-cyan-300 text-xs focus:ring-1 focus:ring-cyan-500"
+                >
+                  <option value={1}>1st Place (5 pts)</option>
+                  <option value={2}>2nd Place (3 pts)</option>
+                  <option value={3}>3rd Place (2 pts)</option>
+                  <option value={4}>4th Place (1 pt)</option>
+                  <option value={5}>5th Place (0 pts)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-slate-400 font-mono text-[11px] mb-1">
+                Mandatory Correction Reason <span className="text-rose-400">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={correctionTarget.reason}
+                onChange={(e) => setCorrectionTarget({ ...correctionTarget, reason: e.target.value })}
+                placeholder="e.g. Card dispute reviewed by lead marshal; confirmed final hand score..."
+                className="w-full p-2.5 rounded bg-slate-900 border border-slate-700 font-mono text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Printable Table Sheets Modal */}
+      {printableData && (
+        <Modal
+          isOpen={isPrintModalOpen}
+          onClose={() => setIsPrintModalOpen(false)}
+          title={`Printable Table Sheets — Cabo Game ${printableData.gameNumber}`}
+          subtitle="Official Seating Sheets for Marshals & Table Leads (16 Tables)"
+          maxWidth="2xl"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => window.print()}
+                leftIcon={<Printer className="w-3.5 h-3.5" />}
+              >
+                Print All 16 Sheets
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setIsPrintModalOpen(false)}>
+                Close
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-6 text-xs max-h-[70vh] overflow-y-auto pr-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {printableData.tables.map((tbl) => (
+                <div key={tbl.tableNumber} className="p-4 rounded-xl border border-slate-700 bg-slate-950 space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <span className="font-orbitron font-bold text-sm text-cyan-300">
+                      Table {tbl.tableNumber} (Game {printableData.gameNumber})
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-400">5 Seated Players</span>
+                  </div>
+                  <div className="space-y-1.5 font-mono text-[11px]">
+                    {tbl.players.map((p) => (
+                      <div key={p.seatPosition} className="flex justify-between items-center p-1.5 rounded bg-slate-900 border border-slate-800">
+                        <div className="truncate mr-2">
+                          <span className="text-cyan-400 font-bold mr-1">S{p.seatPosition}:</span>
+                          <span className="font-semibold text-slate-200">{p.participantName}</span>
+                          <span className="text-[10px] text-slate-400 block truncate">{p.teamName}</span>
+                        </div>
+                        <div className="w-16 h-6 border border-dashed border-slate-700 rounded text-center text-[10px] text-slate-600 flex items-center justify-center">
+                          Place: ____
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
-            <span className="text-[10px] text-slate-400 mt-1 block">
-              Changing point values dynamically recalculates all team totals and standings upon saving.
-            </span>
           </div>
-        </form>
-      </Modal>
+        </Modal>
+      )}
 
-      {/* ========================================== */}
-      {/* 3. Finalize Round 2 Confirmation Modal     */}
-      {/* ========================================== */}
+      {/* Finalize Round 2 Confirmation Modal */}
       <ConfirmationDialog
         isOpen={isFinalizeConfirmOpen}
         onClose={() => setIsFinalizeConfirmOpen(false)}
         onConfirm={handleFinalizeRound2}
         title="Finalize Round 2 Qualification to Round 3: The Black Market"
-        message="Are you sure you want to seal official Round 2 results? The top 12 squads will advance to Round 3, and 12 squads will be officially eliminated. All records will be preserved."
-        confirmLabel="Confirm & Seal Top 12"
+        message="Are you sure you want to seal official Round 2 results? Exactly the Top 8 squads will advance to Round 3 without re-registration, and 8 squads will be eliminated. All scorecards and fragments will be preserved."
+        confirmLabel="Confirm &amp; Advance Top 8"
         isDestructive={false}
         isLoading={isSubmitting}
       />
     </div>
   );
 };
+
