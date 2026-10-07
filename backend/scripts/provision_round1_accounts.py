@@ -8,6 +8,12 @@ stored as bcrypt hashes and are never written into source control.
 import secrets
 import string
 import sys
+from pathlib import Path
+
+# Permit both `python scripts/provision_round1_accounts.py` and module execution.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal

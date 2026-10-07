@@ -14,7 +14,7 @@ from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventRole, Round1Override
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
-from app.services.round1_service import get_or_create_route_allocations
+from app.services.round1_service import get_or_create_route_allocations, reset_round1_live_state
 
 router = APIRouter(prefix="/r1", tags=["Round 1 Live Event"])
 bearer = HTTPBearer(auto_error=False)
@@ -40,6 +40,14 @@ class OverrideInput(BaseModel):
     password: str = Field(min_length=1, max_length=128)
     team_identifier: str
     action: Literal["UNLOCK", "MARK_CORRECT"]
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ResetInput(BaseModel):
+    # The duplicate password and explicit confirmation make this irreversible action deliberate.
+    password: str = Field(min_length=1, max_length=128)
+    password_confirmation: str = Field(min_length=1, max_length=128)
+    confirmed: bool
     reason: str = Field(min_length=3, max_length=500)
 
 
@@ -279,3 +287,27 @@ def override(payload: OverrideInput, account: EventAccount = Depends(require_rol
     db.add(Round1Override(team_identifier=allocation.team_identifier, checkpoint_number=checkpoint, action=payload.action, reason=payload.reason, performed_by=account.id))
     db.commit()
     return {"success": True, "data": {"team_identifier": allocation.team_identifier, "action": payload.action}, "message": "Override recorded."}
+
+
+@router.post("/control/reset")
+def reset_round(payload: ResetInput, account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Reset all Round 1 progress while preserving the roster, routes, and credentials."""
+    if not payload.confirmed:
+        raise HTTPException(status_code=400, detail="Explicit reset confirmation is required.")
+    if payload.password != payload.password_confirmation:
+        raise HTTPException(status_code=400, detail="The two password entries do not match.")
+    if not verify_password(payload.password, account.password_hash):
+        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+
+    get_or_create_route_allocations(db)
+    result = reset_round1_live_state(db, actor=account)
+    # Keep a dedicated immutable record even though attempts/check-ins are cleared.
+    db.add(Round1Override(
+        team_identifier="ALL_TEAMS",
+        checkpoint_number=0,
+        action="RESET",
+        reason=payload.reason,
+        performed_by=account.id,
+    ))
+    db.commit()
+    return {"success": True, "data": result, "message": "Round 1 has been reset. Teams, routes, and login accounts are preserved."}
