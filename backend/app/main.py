@@ -12,16 +12,18 @@ from app.api.router import api_router
 from app.api.routes.health import health_check
 from app.services.auth_service import ensure_default_organizer
 from app.services.dashboard_service import get_or_create_settings
+from app.db.seed_production_roster import seed_production_roster
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize DB schema
     Base.metadata.create_all(bind=engine)
-    # Seed default organizer and settings
+    # Seed default organizer, settings, and authoritative tournament roster
     with SessionLocal() as db:
         ensure_default_organizer(db)
         get_or_create_settings(db)
+        seed_production_roster(db)
     yield
 
 

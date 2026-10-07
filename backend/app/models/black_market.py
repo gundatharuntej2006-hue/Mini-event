@@ -130,6 +130,10 @@ class BlackMarketPurchase(Base):
         DateTime(timezone=True),
         nullable=True
     )
+    countersigned_by: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True
+    )
     notes: Mapped[Optional[str]] = mapped_column(
         String(1000),
         nullable=True
