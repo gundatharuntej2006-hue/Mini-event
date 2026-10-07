@@ -1,4 +1,5 @@
 from app.models.user import User, UserRole
+from app.models.event_account import EventAccount, EventRole, Round1Override
 from app.models.team import Team, TeamStatus
 from app.models.participant import Participant, ParticipantRole
 from app.models.event_settings import EventSettings
@@ -69,6 +70,9 @@ __all__ = [
     # Core Tharun models
     "User",
     "UserRole",
+    "EventAccount",
+    "EventRole",
+    "Round1Override",
     "Team",
     "TeamStatus",
     "Participant",
@@ -88,6 +92,7 @@ __all__ = [
     "FinaleAgentVerdict",
     # Modular Round & Progression models
     "Round1ConfigModel",
+    "GateCheckinModel",
     "MiniRoundTimingModel",
     "CaboConfigModel",
     "CaboGameModel",

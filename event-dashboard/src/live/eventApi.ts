@@ -1,0 +1,40 @@
+const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const sessionKey = 'asymptotes_live_session';
+
+export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'PARTICIPANT';
+export type Session = { token: string; role: Role; displayName: string };
+
+export function getSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(sessionKey);
+    return raw ? JSON.parse(raw) as Session : null;
+  } catch { return null; }
+}
+
+export function clearSession() { localStorage.removeItem(sessionKey); }
+
+export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const session = getSession();
+  const response = await fetch(`${apiBase}/api/v1/r1${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok || !json?.success) throw new Error(json?.message || 'Something went wrong.');
+  return json.data as T;
+}
+
+export async function signIn(loginId: string, password: string): Promise<Session> {
+  const response = await fetch(`${apiBase}/api/v1/r1/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login_id: loginId, password }),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok || !json?.success) throw new Error(json?.message || 'Incorrect ID or password.');
+  const session: Session = { token: json.data.token, role: json.data.role, displayName: json.data.display_name };
+  localStorage.setItem(sessionKey, JSON.stringify(session));
+  return session;
+}
