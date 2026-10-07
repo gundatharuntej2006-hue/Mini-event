@@ -33,6 +33,20 @@ def start_round1(
     res = round1_service.start_round1(db, actor)
     return ApiResponse(data=res, message=res["message"])
 
+@router.post("/reset", response_model=ApiResponse[Dict[str, Any]])
+def reset_round1(
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_role(["organizer", "admin"]))
+):
+    """
+    Reset Round 1 to initial unstarted state (Organizers only).
+    - Removes all gate check-in scan records and attempts.
+    - Cleans route progress while preserving assigned routes and 32 squad registrations.
+    - Resets round status to Not Started and started_at to null.
+    """
+    res = round1_service.reset_round1_live_state(db, actor)
+    return ApiResponse(data=res, message=res["message"])
+
 @router.get("", response_model=ApiResponse[Round1OverviewResponse])
 def get_round1(db: Session = Depends(get_db)):
     """Get complete Round 1 overview, live standings, and finalization status."""

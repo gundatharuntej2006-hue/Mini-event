@@ -101,6 +101,17 @@ const getSetBadgeClass = (setStr?: string) => {
   return 'bg-slate-800 text-slate-300 border-slate-700';
 };
 
+const formatCheckinBadge = (chk: GateCheckinRecord) => {
+  if (chk.notes) {
+    const cpMatch = chk.notes.match(/Checkpoint\s+(?:R1\.)?(\d+)/i);
+    const locMatch = chk.notes.match(/Location\s+(\d+)/i);
+    if (cpMatch && locMatch) {
+      return `CP${cpMatch[1]} — Location ${locMatch[1].padStart(2, '0')}`;
+    }
+  }
+  return `Gate 0${chk.gate_number}`;
+};
+
 export function Round1ExpeditionPage() {
   const [data, setData] = useState<{
     records: TeamRound1Record[];
@@ -969,7 +980,7 @@ export function Round1ExpeditionPage() {
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white truncate max-w-[150px]">{chk.team_name}</span>
                         <span className="px-1.5 py-0.2 rounded text-[10px] bg-black/40 border border-current font-semibold">
-                          Gate 0{chk.gate_number}
+                          {formatCheckinBadge(chk)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-[11px] text-slate-400">
@@ -2117,7 +2128,7 @@ export function Round1ExpeditionPage() {
             >
               <div>
                 <span className="font-bold text-white">{chk.team_name}</span>
-                <span className="text-slate-400 ml-2">Gate 0{chk.gate_number}</span>
+                <span className="text-slate-400 ml-2">{formatCheckinBadge(chk)}</span>
                 <div className="text-[10px] text-slate-500">
                   {new Date(chk.scanned_at).toLocaleString()}
                 </div>

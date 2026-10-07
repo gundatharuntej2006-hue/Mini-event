@@ -376,3 +376,47 @@ def test_get_round1_records_fallback_when_legacy_service_raises(client, monkeypa
             assert mr["startTime"] is None
             assert mr["completionTime"] is None
 
+
+def test_round1_start_gating_and_checkins_feed_filtering(client, organizer_headers):
+    """
+    Test start gating and checkins feed isolation:
+    1. Checkins feed before round start returns empty list.
+    2. Reset Round 1 endpoint resets live session state cleanly.
+    3. Gate checkins strictly require Round 1 to be started.
+    """
+    # 1. Reset Round 1 state
+    reset_res = client.post("/api/rounds/1/reset", headers=organizer_headers)
+    assert reset_res.status_code == 200
+    assert reset_res.json()["data"]["is_started"] is False
+
+    # 2. Checkins feed must be empty when unstarted
+    chk_res = client.get("/api/rounds/1/checkins")
+    assert chk_res.status_code == 200
+    assert len(chk_res.json()["data"]) == 0
+
+    # 3. Attempting gate check-in before start is rejected
+    early_chk = client.post("/api/rounds/1/gates/1/checkin", json={"team_name": "Vanguard Titans"})
+    assert early_chk.status_code == 400
+    assert "Round 1 has not been started" in early_chk.json()["message"]
+
+    # 4. Start Round 1
+    start_res = client.post("/api/rounds/1/start", headers=organizer_headers)
+    assert start_res.status_code == 200
+
+    # 5. Checkin succeeds once started
+    chk_ok = client.post("/api/rounds/1/gates/1/checkin", json={"team_name": "Vanguard Titans"})
+    assert chk_ok.status_code == 200
+
+    # 6. Checkins feed now shows exactly 1 checkin
+    feed_res = client.get("/api/rounds/1/checkins")
+    assert feed_res.status_code == 200
+    assert len(feed_res.json()["data"]) == 1
+
+    # 7. Reset Round 1 again: feed returns to 0, start is cleared
+    reset_again = client.post("/api/rounds/1/reset", headers=organizer_headers)
+    assert reset_again.status_code == 200
+    assert reset_again.json()["data"]["deleted_checkins"] >= 1
+
+    feed_after_reset = client.get("/api/rounds/1/checkins")
+    assert feed_after_reset.status_code == 200
+    assert len(feed_after_reset.json()["data"]) == 0

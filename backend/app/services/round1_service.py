@@ -609,6 +609,11 @@ def record_gate_checkin(
 
     # 3. Server-side authoritative timestamp
     now_utc = datetime.now(timezone.utc)
+    if now_utc < round_start_utc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Scan timestamp cannot precede Round 1 start time."
+        )
 
     # 4. Enforce strict gate sequence for first-time scans
     # Gate 2 requires Gate 1 completed; Gate 3 requires Gate 2 completed
@@ -807,7 +812,17 @@ def record_gate_checkin(
     }
 
 def get_gate_checkins(db: Session, gate_number: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Retrieve all recorded QR gate check-ins for Round 1 (sorted latest first)."""
+    """
+    Retrieve all recorded QR gate check-ins for Round 1 (sorted latest first).
+    Only includes scans from the current active round session (scanned_at >= started_at).
+    If Round 1 has not started, returns an empty list so old test scans never leak into live feed.
+    """
+    cfg = get_or_create_round1_config(db)
+    if not cfg.started_at:
+        return []
+
+    started_at_utc = cfg.started_at.replace(tzinfo=timezone.utc) if cfg.started_at.tzinfo is None else cfg.started_at
+
     def _to_iso(dt):
         if dt is None:
             return None
@@ -815,7 +830,10 @@ def get_gate_checkins(db: Session, gate_number: Optional[int] = None) -> List[Di
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat()
 
-    query = db.query(GateCheckinModel).filter(GateCheckinModel.round_number == 1)
+    query = db.query(GateCheckinModel).filter(
+        GateCheckinModel.round_number == 1,
+        GateCheckinModel.scanned_at >= started_at_utc
+    )
     if gate_number is not None:
         query = query.filter(GateCheckinModel.gate_number == gate_number)
     checkins = query.order_by(GateCheckinModel.scanned_at.desc()).all()
@@ -1792,3 +1810,145 @@ def get_public_qualified_teams(db: Session) -> Dict[str, Any]:
     }
 
 
+def reset_round1_live_state(db: Session, actor=None) -> Dict[str, Any]:
+    """
+    Resets Round 1 to a clean initial unstarted state:
+    1. Removes all Round 1 gate check-in scan records (GateCheckinModel).
+    2. Removes all Round 1 checkpoint attempts (Round1CheckpointAttemptModel).
+    3. Resets all Round 1 route allocations progress (cp1/cp2/cp3 attempts=0, completed=False, completed_at=None).
+    4. Resets all MiniRoundTimingModel timings for Round 1.
+    5. Resets Round1Record mini-rounds and qualification status to Incomplete.
+    6. Resets FinalCodeRecord fragments (Fragment 1 ODD, Fragment 2 42, gate 3 confirmation).
+    7. Resets Round1ConfigModel: started_at=None, started_by=None, is_finalized=False, finalized_at=None, finalized_by=None.
+    8. Resets RoundState(id=1): started_at=None, status="Not Started".
+    PRESERVES:
+    - All 32 teams and participants
+    - Route allocations (cp locations & assigned sets)
+    - Organizer accounts and credentials
+    - Other rounds configuration and data
+    """
+    from app.models.round_models import RoundState
+
+    # 1. Delete gate checkins for Round 1
+    deleted_checkins = db.query(GateCheckinModel).filter(GateCheckinModel.round_number == 1).delete(synchronize_session=False)
+
+    # 2. Delete checkpoint attempts
+    deleted_attempts = db.query(Round1CheckpointAttemptModel).delete(synchronize_session=False)
+
+    # 3. Reset route allocations progress (preserving route assignments)
+    allocations = db.query(Round1RouteAllocationModel).all()
+    for alloc in allocations:
+        alloc.cp1_completed = False
+        alloc.cp1_completed_at = None
+        alloc.cp1_attempts = 0
+        alloc.cp2_completed = False
+        alloc.cp2_completed_at = None
+        alloc.cp2_attempts = 0
+        alloc.cp3_completed = False
+        alloc.cp3_completed_at = None
+        alloc.cp3_attempts = 0
+
+    # 4. Reset mini round timings for Round 1
+    timings = db.query(MiniRoundTimingModel).filter(MiniRoundTimingModel.mini_round_number.in_([1, 2, 3])).all()
+    for t in timings:
+        t.status = "Not Started"
+        t.start_time = None
+        t.completion_time = None
+        t.duration_seconds = None
+        t.adjusted_seconds = None
+        t.hints_used = 0
+        t.hint_penalty_seconds = 0
+        t.phone_penalties_count = 0
+        t.phone_penalty_seconds = 0
+        t.separation_penalties_count = 0
+        t.separation_penalty_seconds = 0
+        t.clue_tampering_deduction = 0
+        t.is_disqualified = False
+        t.disqualification_reason = None
+        t.checkpoints = []
+
+    # 5. Reset Round1Record objects to pristine baseline
+    r1_records = db.query(Round1Record).all()
+    for r in r1_records:
+        r.mini_rounds_json = [
+            {"roundNumber": 1, "hintsUsed": 0, "hintPenaltySeconds": 0, "isCompleted": False},
+            {"roundNumber": 2, "hintsUsed": 0, "hintPenaltySeconds": 0, "isCompleted": False},
+            {"roundNumber": 3, "hintsUsed": 0, "hintPenaltySeconds": 0, "isCompleted": False},
+        ]
+        r.raw_total_seconds = None
+        r.total_penalty_seconds = 0
+        r.adjusted_total_seconds = None
+        r.fastest_mini_round_seconds = None
+        r.rank = None
+        r.qualification_status = "Incomplete"
+        r.tie_requires_review = False
+        r.tie_reason = None
+        r.is_complete = False
+
+    # 6. Reset FinalCodeRecord fragment statuses awarded during Round 1
+    code_records = db.query(FinalCodeRecord).all()
+    for cr in code_records:
+        cr.fragment_1_status = FragmentStatus.PENDING
+        cr.fragment_1_discovered_at = None
+        cr.fragment_1_discovered_round = None
+        cr.fragment_1_discovered_by = None
+        cr.fragment_2_status = FragmentStatus.PENDING
+        cr.fragment_2_discovered_at = None
+        cr.fragment_2_discovered_round = None
+        cr.fragment_2_discovered_by = None
+        cr.gate_3_confirmed = False
+        cr.gate_3_confirmed_at = None
+        cr.status = "IN_PROGRESS"
+        cr.verification_status = "PENDING"
+        cr.verified_at = None
+        cr.verified_by = None
+
+    # 7. Reset Round1ConfigModel
+    cfg = get_or_create_round1_config(db)
+    cfg.started_at = None
+    cfg.started_by = None
+    cfg.is_finalized = False
+    cfg.finalized_at = None
+    cfg.finalized_by = None
+
+    # 8. Reset RoundState (id=1)
+    from app.services.round_service import ensure_round_states_initialized
+    ensure_round_states_initialized(db)
+    rs = db.query(RoundState).filter(RoundState.id == 1).first()
+    if rs:
+        rs.started_at = None
+        rs.completed_at = None
+        rs.status = "Not Started"
+
+    actor_id = getattr(actor, "id", None) or getattr(actor, "email", "system") if actor else "system"
+    actor_role = getattr(actor, "role", "ORGANIZER") if actor else "ORGANIZER"
+    if hasattr(actor_role, "value"):
+        actor_role = actor_role.value
+
+    log_audit_event(
+        db=db,
+        action="ROUND1_RESET_TO_INITIAL",
+        entity_type="Round1Config",
+        entity_id="1",
+        actor_id=str(actor_id),
+        actor_role=str(actor_role),
+        round_number=1,
+        details={
+            "deleted_checkins": deleted_checkins,
+            "deleted_attempts": deleted_attempts,
+            "allocations_reset": len(allocations),
+            "timings_reset": len(timings),
+            "records_reset": len(r1_records),
+        }
+    )
+
+    db.commit()
+
+    return {
+        "success": True,
+        "is_started": False,
+        "started_at": None,
+        "deleted_checkins": deleted_checkins,
+        "deleted_attempts": deleted_attempts,
+        "message": "Round 1 state has been cleanly reset to initial unstarted state. 32 teams and allocations preserved."
+    }
