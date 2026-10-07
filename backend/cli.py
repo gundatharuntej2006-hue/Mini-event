@@ -52,6 +52,17 @@ def init_db():
             print("Database initialized.")
 
 
+def seed_roster_cmd():
+    print("Seeding authoritative 32-team tournament roster...")
+    from app.db.seed_production_roster import seed_production_roster
+    with SessionLocal() as db:
+        Base.metadata.create_all(bind=engine)
+        ensure_default_organizer(db)
+        get_or_create_settings(db)
+        teams_count, parts_count = seed_production_roster(db)
+        print(f"Successfully seeded/verified roster: {teams_count} teams, {parts_count} participants.")
+
+
 def create_user_cmd(email: str, password: str | None, name: str, role_str: str):
     try:
         role = UserRole(role_str.upper())
@@ -154,6 +165,9 @@ if __name__ == "__main__":
     # seed-demo
     subparsers.add_parser("seed-demo", help="Seed 4 demo teams with full 5-person squads")
 
+    # seed-roster
+    subparsers.add_parser("seed-roster", help="Seed/sync authoritative 32-team tournament roster with 160 participants")
+
     args = parser.parse_args()
 
     if args.command == "init-db":
@@ -164,5 +178,7 @@ if __name__ == "__main__":
         reset_password_cmd(args.email, args.password)
     elif args.command == "seed-demo":
         seed_demo_data()
+    elif args.command == "seed-roster":
+        seed_roster_cmd()
     else:
         parser.print_help()

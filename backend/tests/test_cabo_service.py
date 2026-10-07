@@ -740,6 +740,6 @@ def test_36_real_teams_preserved():
         assert len(teams) >= 16, f"Expected at least 16 teams in real database, found {len(teams)}"
         for tid, tname in teams:
             parts = cursor.execute("SELECT id FROM participants WHERE team_id = ?", (tid,)).fetchall()
-            expected_count = 4 if tname == "Team Mirage" else 5
+            expected_count = 5
             assert len(parts) == expected_count, f"Expected {expected_count} participants for {tname}, found {len(parts)}"
         conn.close()

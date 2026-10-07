@@ -88,7 +88,7 @@ def create_team(db: Session, team_in: TeamCreate) -> TeamResponse:
 
     # 3. Validate member roster if provided
     if team_in.members is not None:
-        expected_count = 4 if team_in.name.strip() == "Team Mirage" else 5
+        expected_count = 5
         if len(team_in.members) != expected_count:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

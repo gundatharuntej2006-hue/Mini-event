@@ -2181,7 +2181,7 @@ export const MOCK_TEAMS: Team[] = [
     "teamNumber": 32,
     "name": "Team Mirage",
     "leaderName": "Parasmani Kushwaha",
-    "membersCount": 4,
+    "membersCount": 5,
     "members": [
       {
         "id": "part-08b53223",
@@ -2222,6 +2222,17 @@ export const MOCK_TEAMS: Team[] = [
         "email": "ayushyadav170707@gmail.com",
         "usn": "1BY25AI043",
         "phone": "7803077193",
+        "role": "Member",
+        "checkedIn": false,
+        "teamId": "team-1032",
+        "teamName": "Team Mirage"
+      },
+      {
+        "id": "part-9f571284",
+        "name": "Divyansh Singh",
+        "email": "divyansh.singh.mirage@bmsit.in",
+        "usn": "1BY24CS-DIVYANSH",
+        "phone": "9999991032",
         "role": "Member",
         "checkedIn": false,
         "teamId": "team-1032",
