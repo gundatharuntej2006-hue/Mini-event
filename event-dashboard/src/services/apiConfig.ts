@@ -38,7 +38,7 @@ export const API_CONFIG = {
   get isMockEnabled(): boolean {
     return getInitialAppMode() === 'demo';
   },
-  timeoutMs: 15000,
+  timeoutMs: 60000,
 };
 
 export function getAppMode(): 'live' | 'demo' {

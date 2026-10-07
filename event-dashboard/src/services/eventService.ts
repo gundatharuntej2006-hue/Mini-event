@@ -143,6 +143,7 @@ interface DemoStorageState {
 class EventService {
   private listeners = new Set<() => void>();
   private state: DemoStorageState;
+  private cachedLiveCounts: { teamsCount: number; participantsCount: number } | null = null;
 
   constructor() {
     this.state = this.loadInitialState();
@@ -561,15 +562,19 @@ class EventService {
     }
     try {
       const res = await this.getDashboardOverview();
-      return {
+      const counts = {
         teamsCount: res.data?.stats?.totalTeams ?? 0,
         participantsCount: res.data?.stats?.totalParticipants ?? 0,
       };
-    } catch {
-      return {
-        teamsCount: 0,
-        participantsCount: 0,
-      };
+      if (counts.teamsCount > 0 || counts.participantsCount > 0) {
+        this.cachedLiveCounts = counts;
+      }
+      return counts;
+    } catch (err) {
+      if (this.cachedLiveCounts) {
+        return this.cachedLiveCounts;
+      }
+      throw err;
     }
   }
 

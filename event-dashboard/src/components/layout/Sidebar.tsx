@@ -75,7 +75,13 @@ export function Sidebar({ isOpen, onClose, isCollapsed = false }: SidebarProps) 
         participants: summary.participantsCount,
       });
     } catch {
-      setCounts({ teams: 0, participants: 0 });
+      // Do not wipe out valid counts on transient error; keep existing counts or show '—'
+      setCounts((prev) => {
+        if (typeof prev.teams === 'number' && prev.teams > 0) {
+          return prev;
+        }
+        return { teams: '—', participants: '—' };
+      });
     }
   };
 

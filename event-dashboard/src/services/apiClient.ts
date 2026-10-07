@@ -41,7 +41,8 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    retryCount = 0
   ): Promise<ApiResponse<T>> {
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     let url: string;
@@ -63,8 +64,18 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
+    const timeoutErrorMessage = `Request timed out after ${API_CONFIG.timeoutMs}ms. The server may be waking from sleep.`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeoutMs);
+    let isTimeoutTriggered = false;
+
+    const timeoutId = setTimeout(() => {
+      isTimeoutTriggered = true;
+      try {
+        controller.abort(new Error(timeoutErrorMessage));
+      } catch {
+        controller.abort();
+      }
+    }, API_CONFIG.timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -96,13 +107,44 @@ class ApiClient {
             window.dispatchEvent(new CustomEvent('auth_session_expired', { detail: apiError }));
           }
         }
+
+        // Retry 5xx server gateway/boot errors (e.g. 502/503/504 Bad Gateway during Render container startup)
+        // Never retry 4xx client errors (400, 401, 403, 404, 422, etc.)
+        if (retryCount < 1 && response.status >= 500) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          return this.request<T>(endpoint, options, retryCount + 1);
+        }
+
         throw apiError;
       }
 
       return await response.json();
     } catch (err: unknown) {
       clearTimeout(timeoutId);
-      throw err;
+
+      // Normalize timeout aborts so they never display the unhelpful "signal is aborted without reason"
+      let effectiveError = err;
+      const isAbortError =
+        isTimeoutTriggered ||
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (err instanceof Error && err.name === 'AbortError') ||
+        (err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort')));
+
+      if (isAbortError) {
+        effectiveError = new Error(timeoutErrorMessage);
+      }
+
+      // Check if transient network/connection failure or timeout and retry once
+      const isNetworkOrTimeout =
+        isAbortError ||
+        (err instanceof TypeError && (err.message.includes('fetch') || err.message.includes('NetworkError') || err.message.includes('Failed to fetch')));
+
+      if (retryCount < 1 && isNetworkOrTimeout) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return this.request<T>(endpoint, options, retryCount + 1);
+      }
+
+      throw effectiveError;
     }
   }
 
