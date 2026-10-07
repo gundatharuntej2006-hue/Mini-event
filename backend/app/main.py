@@ -27,7 +27,9 @@ async def lifespan(app: FastAPI):
         # Ensure pre-start test scans and dry run state are cleanly reset
         from app.services.round1_service import reset_round1_live_state, get_or_create_round1_config
         cfg = get_or_create_round1_config(db)
-        if not cfg.is_finalized:
+        # A restart during the live event must never erase scans or answers.
+        # Only clean dry-run data while Round 1 has not started yet.
+        if not cfg.is_finalized and not cfg.started_at:
             # Clean up dry-run scans and reset initial state for real event
             reset_round1_live_state(db)
     yield
