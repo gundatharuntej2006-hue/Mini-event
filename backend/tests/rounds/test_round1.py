@@ -343,4 +343,36 @@ def test_get_round1_records_baseline_unstarted_no_crash(client):
         assert rec["qualificationStatus"] == "Incomplete"
 
 
+def test_get_round1_records_fallback_when_legacy_service_raises(client, monkeypatch):
+    """
+    Regression test:
+    GET /api/v1/rounds/1/records must fall back to round1_service.get_round1_overview
+    and return all 32 baseline records even if the legacy service raises an exception.
+    """
+    from app.services import round_service
+
+    def mock_broken_legacy_service(db):
+        raise RuntimeError("Simulated legacy round service error")
+
+    monkeypatch.setattr(round_service, "get_round1_records", mock_broken_legacy_service)
+
+    res = client.get("/api/v1/rounds/1/records")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] is True
+    records = body["data"]
+    assert len(records) == 32
+
+    for rec in records:
+        assert rec["isComplete"] is False
+        assert rec["rawTotalSeconds"] is None
+        assert rec["adjustedTotalSeconds"] is None
+        assert rec["rank"] is None
+        assert rec["qualificationStatus"] == "Incomplete"
+        assert len(rec["miniRounds"]) == 3
+        for mr in rec["miniRounds"]:
+            assert mr["isCompleted"] is False
+            assert mr["durationSeconds"] is None
+            assert mr["startTime"] is None
+            assert mr["completionTime"] is None
 

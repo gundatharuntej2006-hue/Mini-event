@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -38,7 +39,7 @@ from app.schemas.rounds import (
     FinaleAgentVerdictResponse,
     FinaleTeamSummary,
 )
-from app.services import round_service
+from app.services import round_service, round1_service
 
 router = APIRouter(prefix="/rounds", tags=["Tournament Rounds & Scoring"])
 
@@ -87,33 +88,72 @@ def finalize_round(
 
 @router.get("/1/records", response_model=ApiResponse[List[Round1RecordResponse]])
 def get_round1_records(db: Session = Depends(get_db)):
-    records = round_service.get_round1_records(db)
-    # Map team details into response
-    res = []
-    for r in records:
-        item = Round1RecordResponse(
-            id=r.id,
-            teamId=r.team_id,
-            teamName=r.team.name if r.team else None,
-            teamIdentifier=f"T{r.team.team_number:02d}" if r.team else None,
-            mini_rounds_json=r.mini_rounds_json or [],
-            rawTotalSeconds=r.raw_total_seconds,
-            totalPenaltySeconds=r.total_penalty_seconds,
-            adjustedTotalSeconds=r.adjusted_total_seconds,
-            fastestMiniRoundSeconds=r.fastest_mini_round_seconds,
-            isComplete=r.is_complete,
-            rank=r.rank,
-            qualificationStatus=r.qualification_status,
-            tieRequiresReview=r.tie_requires_review,
-            tieReason=r.tie_reason,
-            hiddenCodeRecovered=r.hidden_code_recovered,
-            hiddenCodeRecoveredAt=r.hidden_code_recovered_at,
-            hiddenCodeNotes=r.hidden_code_notes,
-            lastEditedBy=r.last_edited_by,
-            updatedAt=r.updated_at,
-        )
-        res.append(item)
-    return ApiResponse(data=res)
+    try:
+        records = round_service.get_round1_records(db)
+        # Map team details into response
+        res = []
+        for r in records:
+            item = Round1RecordResponse(
+                id=r.id,
+                teamId=r.team_id,
+                teamName=r.team.name if r.team else None,
+                teamIdentifier=f"T{r.team.team_number:02d}" if r.team else None,
+                mini_rounds_json=r.mini_rounds_json or [],
+                rawTotalSeconds=r.raw_total_seconds,
+                totalPenaltySeconds=r.total_penalty_seconds,
+                adjustedTotalSeconds=r.adjusted_total_seconds,
+                fastestMiniRoundSeconds=r.fastest_mini_round_seconds,
+                isComplete=r.is_complete,
+                rank=r.rank,
+                qualificationStatus=r.qualification_status,
+                tieRequiresReview=r.tie_requires_review,
+                tieReason=r.tie_reason,
+                hiddenCodeRecovered=r.hidden_code_recovered,
+                hiddenCodeRecoveredAt=r.hidden_code_recovered_at,
+                hiddenCodeNotes=r.hidden_code_notes,
+                lastEditedBy=r.last_edited_by,
+                updatedAt=r.updated_at,
+            )
+            res.append(item)
+        return ApiResponse(data=res)
+    except Exception:
+        overview = round1_service.get_round1_overview(db)
+        res = []
+        for r in overview.get("records", []):
+            mapped_mini_rounds = []
+            for mr in r.get("mini_rounds", []):
+                mapped_mini_rounds.append({
+                    "roundNumber": mr.get("mini_round_number"),
+                    "startTime": mr.get("start_time"),
+                    "completionTime": mr.get("completion_time"),
+                    "durationSeconds": mr.get("duration_seconds"),
+                    "hintsUsed": mr.get("hints_used", 0),
+                    "hintPenaltySeconds": mr.get("hint_penalty_seconds", 0.0),
+                    "adjustedSeconds": mr.get("adjusted_seconds"),
+                    "isCompleted": mr.get("status") == "Completed",
+                })
+            res.append(Round1RecordResponse(
+                id=f"r1-{r.get('team_id')}",
+                teamId=r.get("team_id"),
+                teamName=r.get("team_name"),
+                teamIdentifier=f"T{r.get('team_number', 0):02d}",
+                mini_rounds_json=mapped_mini_rounds,
+                rawTotalSeconds=r.get("raw_total_seconds"),
+                totalPenaltySeconds=float(r.get("total_penalty_seconds", 0.0) or 0.0),
+                adjustedTotalSeconds=r.get("adjusted_total_seconds"),
+                fastestMiniRoundSeconds=r.get("fastest_mini_round_seconds"),
+                isComplete=bool(r.get("is_complete", False)),
+                rank=r.get("rank"),
+                qualificationStatus=r.get("qualification_status", "Incomplete"),
+                tieRequiresReview=bool(r.get("tie_requires_review", False)),
+                tieReason=r.get("tie_reason"),
+                hiddenCodeRecovered=False,
+                hiddenCodeRecoveredAt=None,
+                hiddenCodeNotes=None,
+                lastEditedBy="system_fallback",
+                updatedAt=datetime.now(timezone.utc),
+            ))
+        return ApiResponse(data=res)
 
 
 @router.put("/1/records/{team_id}", response_model=ApiResponse[Round1RecordResponse])
