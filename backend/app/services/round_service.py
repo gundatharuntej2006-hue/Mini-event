@@ -475,12 +475,18 @@ def mirror_round1_record_to_timings(db: Session, rec: Round1Record, penalty_per_
         timing.hints_used = hints
         timing.hint_penalty_seconds = int(hints * penalty_per_hint)
 
-        # ODDyssey Section 4 rule penalties live only on the timing row - the
+        # ODDyssey Section 4 rule penalties live on the timing row (phone & separation penalties) - the
         # legacy record has nowhere to carry them. Recomputing the adjusted
         # time from hints alone would refund a phone-use or separation penalty
         # every time anyone re-saved the legacy timings, which the Round 1 data
         # entry screen does on every edit.
-        rule_penalty = int(timing.rule_penalty_seconds or 0)
+        phone_pen = getattr(timing, "phone_penalty_seconds", 0) or 0
+        if not phone_pen and getattr(timing, "phone_penalties_count", 0):
+            phone_pen = (timing.phone_penalties_count or 0) * C.DEFAULT_R1_PHONE_PENALTY_SECONDS
+        sep_pen = getattr(timing, "separation_penalty_seconds", 0) or 0
+        if not sep_pen and getattr(timing, "separation_penalties_count", 0):
+            sep_pen = (timing.separation_penalties_count or 0) * C.DEFAULT_R1_SEPARATION_PENALTY_SECONDS
+        rule_penalty = int(phone_pen + sep_pen)
 
         # compute_mini_round RECOMPUTES the duration from start_time and
         # completion_time and ignores duration_seconds entirely - a mini round
@@ -509,15 +515,24 @@ def get_team_rule_penalty_seconds(db: Session, team_id: str) -> int:
     """
     ODDyssey Section 4 rule penalties for one squad, summed across its gates.
 
-    These live on the timing rows, not on the legacy Round 1 record, which has
-    no column for them. The legacy leaderboard is what the dashboard shows and
-    what get_round1_standings ranks, so it has to fetch them rather than
-    recompute the adjusted time from hints alone.
+    These live on the timing rows (phone_penalty_seconds and separation_penalty_seconds),
+    not on the legacy Round 1 record, which has no column for them. The legacy leaderboard
+    is what the dashboard shows and what get_round1_standings ranks, so it has to fetch
+    them rather than recompute the adjusted time from hints alone.
     """
     rows = db.query(MiniRoundTimingModel).filter(
         MiniRoundTimingModel.team_id == team_id
     ).all()
-    return sum(int(r.rule_penalty_seconds or 0) for r in rows)
+    total = 0
+    for r in rows:
+        phone_pen = getattr(r, "phone_penalty_seconds", 0) or 0
+        if not phone_pen and getattr(r, "phone_penalties_count", 0):
+            phone_pen = (r.phone_penalties_count or 0) * C.DEFAULT_R1_PHONE_PENALTY_SECONDS
+        sep_pen = getattr(r, "separation_penalty_seconds", 0) or 0
+        if not sep_pen and getattr(r, "separation_penalties_count", 0):
+            sep_pen = (r.separation_penalties_count or 0) * C.DEFAULT_R1_SEPARATION_PENALTY_SECONDS
+        total += int(phone_pen + sep_pen)
+    return total
 
 
 def calculate_round1_record_scores(

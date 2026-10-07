@@ -323,3 +323,24 @@ def test_participant_checkpoint_completion_syncs_to_official_timing(client, orga
     assert mr_list[0]["isCompleted"] is True
 
 
+def test_get_round1_records_baseline_unstarted_no_crash(client):
+    """
+    Regression test:
+    GET /api/v1/rounds/1/records must not crash when baseline teams have no timing data,
+    and must correctly calculate rule penalties from MiniRoundTimingModel without AttributeError.
+    """
+    res = client.get("/api/v1/rounds/1/records")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["success"] is True
+    records = body["data"]
+    assert len(records) > 0
+    for rec in records:
+        assert rec["isComplete"] is False
+        assert rec["rawTotalSeconds"] is None
+        assert rec["adjustedTotalSeconds"] is None
+        assert rec["rank"] is None
+        assert rec["qualificationStatus"] == "Incomplete"
+
+
+
