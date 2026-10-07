@@ -259,3 +259,8 @@ DEPRECATED_AGENT_WRONG_PENALTY: Final[float] = -5.0
 FINAL_SCORE_CARRYOVER_WEIGHT_SUGGESTED: Final[float] = 0.10
 DEFAULT_CARRYOVER_WEIGHT_PERCENT: Final[float] = 10.0
 DEPRECATED_CARRYOVER_WEIGHT: Final[float] = 0.0
+
+# Point transfers between squads are disabled. transfer_round3_funds reads
+# this to raise a 403; without it the attribute lookup raised AttributeError
+# and POST /api/rounds/3/transfer answered 500 instead of the intended refusal.
+ALLOW_POINT_TRANSFERS = False

@@ -250,6 +250,16 @@ def verify_code_status(db: Session, team_id: str, is_complete: bool, actor):
         rec.verified_at = now
         rec.verified_by = actor.id
 
+    # Mirror onto the code-hunt record. Round 3 finalization decides whether a
+    # squad holds a code from FinalCodeRecord.final_code_verified, never from
+    # TeamCodeVerification, so writing only the row above left the organiser's
+    # verification invisible to the thing it exists to unblock: the screen said
+    # verified and finalize still reported the squad as having no code.
+    from app.services import code_hunt_service  # local import: avoids a cycle
+
+    code_rec = code_hunt_service.get_or_create_final_code_record(db, team_id)
+    code_rec.final_code_verified = bool(is_complete)
+
     log_audit_event(
         db=db,
         action="CODE_STATUS_VERIFIED",

@@ -79,6 +79,41 @@ def get_or_create_final_code_record(db: Session, team_id: str) -> FinalCodeRecor
     return record
 
 
+def record_fragment(
+    db: Session,
+    team_id: str,
+    fragment_number: int,
+    fragment_value: Optional[str] = None,
+    actor: Optional[str] = None,
+    overwrite: bool = False,
+) -> "FinalCodeRecord":
+    """
+    Dispatch to the per-fragment recorders.
+
+    Two callers already expect this unified entry point and neither could have
+    worked without it: the desk endpoint POST /api/code-hunt/{team}/fragment/{n}
+    in app/api/routes/code_hunt.py, and the Round 3 code mirror behind
+    PUT /api/rounds/3/codes/fragment in round_service. Both raised
+    AttributeError and answered 500, so there was no working way to log a
+    recovered fragment. The four record_fragment_N functions share one
+    signature apart from their default value, so dispatching is the whole fix.
+    """
+    fn = {
+        1: record_fragment_1,
+        2: record_fragment_2,
+        3: record_fragment_3,
+        4: record_fragment_4,
+    }.get(int(fragment_number))
+    if fn is None:
+        raise ValueError(f"fragment_number must be 1-4, got {fragment_number!r}")
+    kwargs = {"db": db, "team_id": team_id, "actor": actor, "overwrite": overwrite}
+    # Each recorder carries its own canonical default (ODD / 42 / ECHO / PRIME);
+    # only override it when the caller actually supplied a value.
+    if fragment_value is not None:
+        kwargs["fragment_value"] = fragment_value
+    return fn(**kwargs)
+
+
 def record_fragment_1(
     db: Session,
     team_id: str,

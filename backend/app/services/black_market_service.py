@@ -1120,7 +1120,16 @@ def calculate_round3_standings(db: Session) -> Dict[str, Any]:
         # Key is complete if both secret code items are owned, code is verified, or all 4 fragments recovered
         has_code_items = has_secret_code_1 and has_secret_code_2
         is_verified = (code_rec.final_code_verified if code_rec else False)
-        has_complete_key = has_all_4 or (has_code_items and missing_frag_count == 0) or (is_verified and missing_frag_count == 0)
+        # The three conditions are independent, as the comment above says and as
+        # Section 6.2 requires ("buying the Final Code completes the Final Code
+        # needed for Round 4"). They were not: has_all_4 IS missing_frag_count
+        # == 0, and the other two clauses were each AND-ed with that same
+        # condition, so the whole expression collapsed to missing_frag_count ==
+        # 0 and the last two could never change the result. A squad that bought
+        # both secret code items, and a squad an organiser had explicitly
+        # verified, both still counted as having no code - which blocked Round 3
+        # finalization with no working way to clear it.
+        has_complete_key = has_all_4 or has_code_items or is_verified
 
         current_balance = float(wallet.current_balance)
         effective_balance = current_balance - missing_penalty

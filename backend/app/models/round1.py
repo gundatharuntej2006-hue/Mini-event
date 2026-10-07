@@ -32,6 +32,13 @@ class MiniRoundTimingModel(Base):
     phone_penalty_seconds = Column(Integer, default=0, nullable=False)
     separation_penalties_count = Column(Integer, default=0, nullable=False)
     separation_penalty_seconds = Column(Integer, default=0, nullable=False)
+    # Migration a7b8c9d0e1f2 adds this column and round_service reads it in
+    # three places, but the model never mapped it. Every call into
+    # get_round1_records / update_round1_record therefore raised
+    # AttributeError and the Round 1 records endpoints answered 500 - which is
+    # the screen organisers use to enter and save Round 1 scores. The column
+    # already exists in the database; only the mapping was missing.
+    rule_penalty_seconds = Column(Integer, default=0, nullable=False)
     clue_tampering_deduction = Column(Integer, default=0, nullable=False)
     is_disqualified = Column(Boolean, default=False, nullable=False)
     disqualification_reason = Column(String(255), nullable=True)
