@@ -35,13 +35,17 @@ async def lifespan(app: FastAPI):
     yield
 
 
+is_production = settings.ENVIRONMENT.lower() == "production"
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
     description="Production-ready FastAPI backend for EVENT HQ tournament management platform.",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # Interactive API documentation is useful locally, but must not advertise
+    # operational endpoints during the live event.
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
     lifespan=lifespan,
 )
 

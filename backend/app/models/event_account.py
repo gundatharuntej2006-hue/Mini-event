@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -40,3 +40,29 @@ class Round1Override(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     performed_by: Mapped[str] = mapped_column(String(40), ForeignKey("event_accounts.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class Round1FinishOutcome(Base):
+    """Immutable finish order used to enforce the first-16 qualification gate."""
+
+    __tablename__ = "round1_finish_outcomes"
+    __table_args__ = (UniqueConstraint("rank", name="uq_round1_finish_rank"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: f"fin-{uuid.uuid4().hex[:18]}")
+    team_id: Mapped[str] = mapped_column(String(50), ForeignKey("teams.id"), nullable=False, unique=True, index=True)
+    team_identifier: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_qualified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    points_snapshot: Mapped[float] = mapped_column(Float, nullable=False, default=400.0)
+
+
+class Round1SecretAgentSelection(Base):
+    """One confidential agent nomination per team, entered before the hunt begins."""
+
+    __tablename__ = "round1_secret_agent_selections"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: f"agent-{uuid.uuid4().hex[:18]}")
+    team_id: Mapped[str] = mapped_column(String(50), ForeignKey("teams.id"), nullable=False, unique=True, index=True)
+    agent_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

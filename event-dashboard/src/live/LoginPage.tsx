@@ -14,6 +14,10 @@ export function LoginPage() {
     event.preventDefault(); setError(''); setLoading(true);
     try {
       const session = await signIn(loginId, password);
+      if ('redirect' in session) {
+        navigate('/results', { replace: true, state: { message: session.message } });
+        return;
+      }
       navigate(session.role === 'PARTICIPANT' ? '/play' : session.role === 'ADMIN' ? '/station' : '/control', { replace: true });
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to sign in.'); } finally { setLoading(false); }
   }
@@ -26,5 +30,5 @@ export function LoginPage() {
       {error && <div className="form-error"><AlertCircle size={16}/>{error}</div>}
       <button className="primary-button" disabled={loading}>{loading ? 'Signing in...' : <>Enter event <ArrowRight size={18}/></>}</button>
     </form>
-  </section><p className="auth-foot live-reveal">BMSIT · Bengaluru · Keep your login within your team.</p></main></LiveShell>;
+  </section><button className="text-link live-reveal" type="button" onClick={() => navigate('/')}>View event information</button><p className="auth-foot live-reveal">BMSIT · Bengaluru · Keep your login within your team.</p></main></LiveShell>;
 }

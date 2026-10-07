@@ -1,5 +1,5 @@
 from app.models.user import User, UserRole
-from app.models.event_account import EventAccount, EventRole, Round1Override
+from app.models.event_account import EventAccount, EventRole, Round1Override, Round1FinishOutcome, Round1SecretAgentSelection
 from app.models.team import Team, TeamStatus
 from app.models.participant import Participant, ParticipantRole
 from app.models.event_settings import EventSettings
@@ -73,6 +73,8 @@ __all__ = [
     "EventAccount",
     "EventRole",
     "Round1Override",
+    "Round1FinishOutcome",
+    "Round1SecretAgentSelection",
     "Team",
     "TeamStatus",
     "Participant",

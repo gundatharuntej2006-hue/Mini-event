@@ -1,25 +1,35 @@
 """Small, mobile-first API surface for the live Treasure Hunt."""
 
+import io
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, decode_access_token, verify_password
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
-from app.models.event_account import EventAccount, EventRole, Round1Override
+from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
+from app.models.team import Team, TeamStatus
 from app.services.round1_service import get_or_create_route_allocations, reset_round1_live_state
 
 router = APIRouter(prefix="/r1", tags=["Round 1 Live Event"])
 bearer = HTTPBearer(auto_error=False)
 
 EXACT_ANSWERS = {1: "ODD", 2: "42", 3: "ODD-42"}
+QUALIFIER_LIMIT = 16
+BASE_POINTS = 400.0
+LOGIN_WINDOW_SECONDS = 60
+LOGIN_MAX_ATTEMPTS = 8
+_login_attempts: dict[str, deque[float]] = defaultdict(deque)
 
 
 class LoginInput(BaseModel):
@@ -51,8 +61,23 @@ class ResetInput(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class SecretAgentInput(BaseModel):
+    agent_name: str = Field(min_length=2, max_length=120)
+
+
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def guard_login_rate(login_id: str) -> None:
+    """Small per-ID throttle that does not block many teams behind campus Wi-Fi."""
+    attempts = _login_attempts[login_id.strip().upper()]
+    cutoff = monotonic() - LOGIN_WINDOW_SECONDS
+    while attempts and attempts[0] < cutoff:
+        attempts.popleft()
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait one minute and try again.")
+    attempts.append(monotonic())
 
 
 def current_account(
@@ -64,8 +89,12 @@ def current_account(
     payload = decode_access_token(credentials.credentials)
     if not payload or not payload.get("sub"):
         raise HTTPException(status_code=401, detail="Your session is invalid or expired.")
-    account = db.query(EventAccount).filter(EventAccount.id == payload["sub"], EventAccount.is_active == True).first()
+    account = db.query(EventAccount).filter(EventAccount.id == payload["sub"]).first()
     if not account:
+        raise HTTPException(status_code=401, detail="Your account is not active.")
+    if not account.is_active:
+        if account.role == EventRole.PARTICIPANT:
+            raise HTTPException(status_code=403, detail="Round 1 has ended for this team. Please see Instagram for results.")
         raise HTTPException(status_code=401, detail="Your account is not active.")
     return account
 
@@ -137,12 +166,73 @@ def event_config(db: Session) -> Round1ConfigModel:
     return config
 
 
+def agent_selection(db: Session, account: EventAccount) -> Round1SecretAgentSelection | None:
+    return db.query(Round1SecretAgentSelection).filter(Round1SecretAgentSelection.team_id == account.team_id).first()
+
+
+def finish_outcome(db: Session, team_id: str | None) -> Round1FinishOutcome | None:
+    if not team_id:
+        return None
+    return db.query(Round1FinishOutcome).filter(Round1FinishOutcome.team_id == team_id).first()
+
+
+def outcome_data(outcome: Round1FinishOutcome | None) -> dict:
+    if not outcome:
+        return {"rank": None, "qualified": False, "completed_at": None}
+    return {"rank": outcome.rank, "qualified": outcome.is_qualified, "completed_at": outcome.completed_at.isoformat()}
+
+
+def record_finish(db: Session, allocation: Round1RouteAllocationModel) -> Round1FinishOutcome:
+    """Serialize final submissions so exactly the first sixteen are qualified."""
+    config = db.query(Round1ConfigModel).filter(Round1ConfigModel.id == 1).with_for_update().one()
+    existing = finish_outcome(db, allocation.team_id)
+    if existing:
+        return existing
+
+    rank = db.query(func.count(Round1FinishOutcome.id)).scalar() + 1
+    team = db.query(Team).filter(Team.id == allocation.team_id).with_for_update().first()
+    if not team:
+        raise HTTPException(status_code=409, detail="Team roster record is missing.")
+    qualified = rank <= QUALIFIER_LIMIT
+    outcome = Round1FinishOutcome(
+        team_id=team.id,
+        team_identifier=allocation.team_identifier,
+        rank=rank,
+        is_qualified=qualified,
+        completed_at=getattr(allocation, "cp3_completed_at") or now(),
+        points_snapshot=team.total_score,
+    )
+    db.add(outcome)
+    team.is_qualified_for_next_round = qualified
+    team.current_round = 2 if qualified else 1
+    team.status = TeamStatus.ACTIVE if qualified else TeamStatus.ELIMINATED
+    db.flush()
+
+    # When the sixteenth team qualifies, remaining participant accounts lose access.
+    if rank == QUALIFIER_LIMIT:
+        qualified_ids = [item[0] for item in db.query(Round1FinishOutcome.team_id).filter(Round1FinishOutcome.is_qualified == True).all()]
+        db.query(EventAccount).filter(
+            EventAccount.role == EventRole.PARTICIPANT,
+            ~EventAccount.team_id.in_(qualified_ids),
+        ).update({EventAccount.is_active: False}, synchronize_session=False)
+    return outcome
+
+
+def seed_base_points(db: Session) -> None:
+    for team in db.query(Team).all():
+        team.total_score = BASE_POINTS
+        team.is_qualified_for_next_round = False
+        team.current_round = 1
+        team.status = TeamStatus.ACTIVE
+
+
 def participant_state(db: Session, account: EventAccount) -> dict:
     allocation = allocation_for_account(db, account)
     checkpoint = checkpoint_for(allocation)
     config = event_config(db)
+    selection = agent_selection(db, account)
     if checkpoint == 4:
-        return {"complete": True, "checkpoint": 4, "round_started": bool(config.started_at), "instagram": "ASYMPTOTES_BMSIT"}
+        return {"complete": True, "checkpoint": 4, "round_started": bool(config.started_at), "instagram": "ASYMPTOTES_BMSIT", "secret_agent_submitted": bool(selection), **outcome_data(finish_outcome(db, account.team_id))}
     location, _set, attempts, _completed = checkpoint_values(allocation, checkpoint)
     return {
         "complete": False,
@@ -152,14 +242,20 @@ def participant_state(db: Session, account: EventAccount) -> dict:
         "is_scanned": has_scanned(db, allocation, checkpoint, location),
         "attempts_used": attempts,
         "is_locked": attempts >= 3,
+        "secret_agent_submitted": bool(selection),
         # Location name, question set, target, other teams and future clues are withheld.
     }
 
 
 @router.post("/login")
-def login(payload: LoginInput, db: Session = Depends(get_db)):
+def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
+    guard_login_rate(payload.login_id)
     account = db.query(EventAccount).filter(EventAccount.login_id == payload.login_id.strip().upper()).first()
-    if not account or not account.is_active or not verify_password(payload.password, account.password_hash):
+    if not account or not verify_password(payload.password, account.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    if not account.is_active:
+        if account.role == EventRole.PARTICIPANT:
+            return {"success": True, "data": {"redirect": "instagram"}, "message": "Round 1 has ended for this team. Please see Instagram for results."}
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
     token = create_access_token(account.id, account.role.value)
     return {"success": True, "data": {"token": token, "role": account.role.value, "display_name": account.display_name}, "message": "Signed in."}
@@ -175,11 +271,25 @@ def get_participant_state(account: EventAccount = Depends(require_roles(EventRol
     return {"success": True, "data": participant_state(db, account), "message": "Current event state loaded."}
 
 
+@router.post("/participant/secret-agent")
+def nominate_secret_agent(payload: SecretAgentInput, account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)), db: Session = Depends(get_db)):
+    if agent_selection(db, account):
+        raise HTTPException(status_code=409, detail="Your team has already submitted its Secret Agent name.")
+    agent_name = payload.agent_name.strip()
+    if len(agent_name) < 2:
+        raise HTTPException(status_code=422, detail="Enter a valid Secret Agent name.")
+    db.add(Round1SecretAgentSelection(team_id=account.team_id, agent_name=agent_name))
+    db.commit()
+    return {"success": True, "data": participant_state(db, account), "message": "Secret Agent recorded confidentially."}
+
+
 @router.post("/participant/scan")
 def scan(payload: ScanInput, account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)), db: Session = Depends(get_db)):
     config = event_config(db)
     if not config.started_at:
         raise HTTPException(status_code=409, detail="The round has not started yet.")
+    if not agent_selection(db, account):
+        raise HTTPException(status_code=409, detail="Choose your team's Secret Agent before starting the hunt.")
     allocation = allocation_for_account(db, account)
     checkpoint = checkpoint_for(allocation)
     if checkpoint == 4:
@@ -203,6 +313,8 @@ def answer(payload: AnswerInput, account: EventAccount = Depends(require_roles(E
     config = event_config(db)
     if not config.started_at:
         raise HTTPException(status_code=409, detail="The round has not started yet.")
+    if not agent_selection(db, account):
+        raise HTTPException(status_code=409, detail="Choose your team's Secret Agent before submitting an answer.")
     allocation = allocation_for_account(db, account)
     checkpoint = checkpoint_for(allocation)
     if checkpoint == 4:
@@ -224,10 +336,13 @@ def answer(payload: AnswerInput, account: EventAccount = Depends(require_roles(E
     if exact:
         setattr(allocation, f"cp{checkpoint}_completed", True)
         setattr(allocation, f"cp{checkpoint}_completed_at", now())
+        if checkpoint == 3:
+            db.flush()
+            record_finish(db, allocation)
     db.commit()
     state = participant_state(db, account)
     message = "Correct. Your next clue is now available." if exact and checkpoint < 3 else "Your time has been recorded. Please check Instagram for results." if exact else "That exact answer was not accepted. Check capitals, spaces, and hyphens."
-    return {"success": True, "data": {"correct": exact, "state": state}, "message": message}
+    return {"success": True, "data": {"correct": exact, "state": state, "outcome": outcome_data(finish_outcome(db, account.team_id)) if exact and checkpoint == 3 else None}, "message": message}
 
 
 @router.get("/admin/station")
@@ -255,14 +370,18 @@ def overview(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
         checkpoint = checkpoint_for(allocation)
         display_checkpoint = 3 if checkpoint == 4 else checkpoint
         attempt = latest_attempt(db, allocation, display_checkpoint)
-        teams.append({"team_identifier": allocation.team_identifier, "team_name": allocation.team_name, "checkpoint": checkpoint, "complete": checkpoint == 4, "attempts": getattr(allocation, f"cp{display_checkpoint}_attempts", 0), "location": getattr(allocation, f"cp{checkpoint}_location", None) if checkpoint < 4 else None, "set": getattr(allocation, f"cp{display_checkpoint}_set"), "last_answer": attempt.submitted_answer if attempt else None, "last_answer_correct": attempt.is_correct if attempt else None})
-    return {"success": True, "data": {"started": bool(config.started_at), "teams": teams, "instagram": "ASYMPTOTES_BMSIT"}, "message": "Control room loaded."}
+        outcome = finish_outcome(db, allocation.team_id)
+        selection = db.query(Round1SecretAgentSelection).filter(Round1SecretAgentSelection.team_id == allocation.team_id).first()
+        team = db.query(Team).filter(Team.id == allocation.team_id).first()
+        teams.append({"team_identifier": allocation.team_identifier, "team_name": allocation.team_name, "checkpoint": checkpoint, "complete": checkpoint == 4, "attempts": getattr(allocation, f"cp{display_checkpoint}_attempts", 0), "location": getattr(allocation, f"cp{checkpoint}_location", None) if checkpoint < 4 else None, "set": getattr(allocation, f"cp{display_checkpoint}_set"), "last_answer": attempt.submitted_answer if attempt else None, "last_answer_correct": attempt.is_correct if attempt else None, "points": team.total_score if team else 0, "secret_agent_name": selection.agent_name if selection else None, **outcome_data(outcome)})
+    return {"success": True, "data": {"started": bool(config.started_at), "qualifier_limit": QUALIFIER_LIMIT, "qualified_count": db.query(func.count(Round1FinishOutcome.id)).filter(Round1FinishOutcome.is_qualified == True).scalar(), "teams": teams, "instagram": "ASYMPTOTES_BMSIT"}, "message": "Control room loaded."}
 
 
 @router.post("/control/start")
 def start(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
     config = event_config(db)
     if not config.started_at:
+        seed_base_points(db)
         config.started_at = now()
         config.started_by = account.login_id
         db.commit()
@@ -284,6 +403,9 @@ def override(payload: OverrideInput, account: EventAccount = Depends(require_rol
     else:
         setattr(allocation, f"cp{checkpoint}_completed", True)
         setattr(allocation, f"cp{checkpoint}_completed_at", now())
+        if checkpoint == 3:
+            db.flush()
+            record_finish(db, allocation)
     db.add(Round1Override(team_identifier=allocation.team_identifier, checkpoint_number=checkpoint, action=payload.action, reason=payload.reason, performed_by=account.id))
     db.commit()
     return {"success": True, "data": {"team_identifier": allocation.team_identifier, "action": payload.action}, "message": "Override recorded."}
@@ -301,6 +423,10 @@ def reset_round(payload: ResetInput, account: EventAccount = Depends(require_rol
 
     get_or_create_route_allocations(db)
     result = reset_round1_live_state(db, actor=account)
+    db.query(Round1FinishOutcome).delete(synchronize_session=False)
+    db.query(Round1SecretAgentSelection).delete(synchronize_session=False)
+    seed_base_points(db)
+    db.query(EventAccount).filter(EventAccount.role == EventRole.PARTICIPANT).update({EventAccount.is_active: True}, synchronize_session=False)
     # Keep a dedicated immutable record even though attempts/check-ins are cleared.
     db.add(Round1Override(
         team_identifier="ALL_TEAMS",
@@ -311,3 +437,44 @@ def reset_round(payload: ResetInput, account: EventAccount = Depends(require_rol
     ))
     db.commit()
     return {"success": True, "data": result, "message": "Round 1 has been reset. Teams, routes, and login accounts are preserved."}
+
+
+@router.get("/control/report.pdf")
+def download_report(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Download an organizer-only verification report of every Round 1 submission."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=landscape(A4))
+    width, height = landscape(A4)
+    pdf.setTitle("ASYMPTOTES Round 1 verification report")
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(36, height - 38, "ASYMPTOTES · Round 1 verification report")
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(36, height - 52, f"Generated {now().isoformat()} UTC · first {QUALIFIER_LIMIT} final submissions qualify")
+    y = height - 76
+    for allocation in db.query(Round1RouteAllocationModel).order_by(Round1RouteAllocationModel.team_identifier).all():
+        outcome = finish_outcome(db, allocation.team_id)
+        team = db.query(Team).filter(Team.id == allocation.team_id).first()
+        selection = db.query(Round1SecretAgentSelection).filter(Round1SecretAgentSelection.team_id == allocation.team_id).first()
+        if y < 54:
+            pdf.showPage(); y = height - 42
+        pdf.setFont("Helvetica-Bold", 9)
+        finish = outcome.completed_at.isoformat() if outcome else "Not finished"
+        rank = f"#{outcome.rank} {'QUALIFIED' if outcome.is_qualified else 'ELIMINATED'}" if outcome else "Pending"
+        pdf.drawString(36, y, f"TEAM {allocation.team_identifier} · {allocation.team_name} · {rank} · finish: {finish} · points: {team.total_score if team else 0}")
+        y -= 12
+        pdf.setFont("Helvetica", 7)
+        agent = selection.agent_name if selection else "Not submitted"
+        pdf.drawString(50, y, f"Secret Agent: {agent}")
+        y -= 10
+        attempts = db.query(Round1CheckpointAttemptModel).filter(Round1CheckpointAttemptModel.team_id == allocation.team_id).order_by(Round1CheckpointAttemptModel.created_at).all()
+        for attempt in attempts:
+            if y < 42:
+                pdf.showPage(); y = height - 42
+            pdf.drawString(64, y, f"R1.{attempt.checkpoint_number} · L{attempt.location_number} · Set {attempt.question_set} · answer: {attempt.submitted_answer} · {'correct' if attempt.is_correct else 'incorrect'} · {attempt.created_at.isoformat()}")
+            y -= 9
+        y -= 5
+    pdf.save()
+    return Response(content=buffer.getvalue(), media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=asymptotes-round1-verification.pdf"})
