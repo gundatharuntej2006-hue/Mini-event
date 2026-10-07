@@ -24,6 +24,12 @@ async def lifespan(app: FastAPI):
         ensure_default_organizer(db)
         get_or_create_settings(db)
         seed_production_roster(db)
+        # Ensure pre-start test scans and dry run state are cleanly reset
+        from app.services.round1_service import reset_round1_live_state, get_or_create_round1_config
+        cfg = get_or_create_round1_config(db)
+        if not cfg.is_finalized:
+            # Clean up dry-run scans and reset initial state for real event
+            reset_round1_live_state(db)
     yield
 
 
