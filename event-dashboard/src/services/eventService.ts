@@ -144,6 +144,7 @@ class EventService {
   private listeners = new Set<() => void>();
   private state: DemoStorageState;
   private cachedLiveCounts: { teamsCount: number; participantsCount: number } | null = null;
+  private liveRound1Records: TeamRound1Record[] = [];
 
   constructor() {
     this.state = this.loadInitialState();
@@ -393,6 +394,10 @@ class EventService {
   }
 
   private saveStateToStorage(state: DemoStorageState): void {
+    // Never persist state into demo localStorage while operating in Live Mode
+    if (isLiveMode()) {
+      return;
+    }
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -1239,28 +1244,105 @@ class EventService {
             this.state.round1Config.checkpointNames = rConfig.checkpoint_names || rConfig.checkpointNames;
           }
         }
-        if (recordsResp.success && recordsResp.data && recordsResp.data.length > 0) {
-          recordsResp.data.forEach((bRec) => {
-            const existing = this.state.round1Records.find((r) => r.teamId === bRec.teamId);
-            if (existing) {
-              if (bRec.miniRounds && bRec.miniRounds.length === 3) {
-                bRec.miniRounds.forEach((bmr, idx) => {
-                  if (existing.miniRounds[idx]) {
-                    existing.miniRounds[idx].startTime = bmr.startTime || null;
-                    existing.miniRounds[idx].completionTime = bmr.completionTime || null;
-                    existing.miniRounds[idx].hintsUsed = bmr.hintsUsed || 0;
-                  }
-                });
+
+        const cpNames = this.state.round1Config.checkpointNames || [
+          'Checkpoint 1 [Location TBD]',
+          'Checkpoint 2 [Location TBD]',
+          'Checkpoint 3 [Location TBD]',
+        ];
+
+        // Strict Live Mode mapping: NEVER use mock records or localStorage demo state.
+        // Purely transform BackendRound1Record[] into clean TeamRound1Record[].
+        if (recordsResp.success && Array.isArray(recordsResp.data) && recordsResp.data.length > 0) {
+          const liveRecords: TeamRound1Record[] = recordsResp.data.map((bRec) => {
+            // Determine teamNumber: from bRec.teamIdentifier (e.g. 'T01' -> 1 or '1001' -> 1001) or lookup
+            let teamNum = 0;
+            if (bRec.teamIdentifier) {
+              const cleaned = bRec.teamIdentifier.replace(/^T0*/i, '');
+              const parsedNum = parseInt(cleaned, 10);
+              teamNum = !isNaN(parsedNum) ? parsedNum : 0;
+            }
+            if (!teamNum) {
+              const matchedTeam = this.state.teams.find((t) => t.id === bRec.teamId);
+              if (matchedTeam) teamNum = matchedTeam.teamNumber;
+            }
+
+            const teamName = bRec.teamName || this.state.teams.find((t) => t.id === bRec.teamId)?.name || bRec.teamId;
+
+            // Map mini-rounds
+            const rawMini = Array.isArray(bRec.miniRounds) ? bRec.miniRounds : [];
+            const mappedMRs: [MiniRoundTiming, MiniRoundTiming, MiniRoundTiming] = ([1, 2, 3] as const).map((num) => {
+              const bmr = rawMini.find((m: any) => m.roundNumber === num) || rawMini[num - 1];
+              const isComp = Boolean(bmr?.isCompleted);
+              const startT = bmr?.startTime || null;
+              const compT = bmr?.completionTime || null;
+
+              let mrStatus: MiniRoundTiming['status'] = 'Not Started';
+              if (isComp) {
+                mrStatus = 'Completed';
+              } else if (startT) {
+                mrStatus = 'In Progress';
               }
-              if (bRec.hiddenCodeRecovered) {
-                this.state.round1Config.hiddenCodeRecovered = true;
-                this.state.round1Config.hiddenCodeRecoveredByTeamId = bRec.teamId;
-                if (bRec.hiddenCodeNotes) {
-                  this.state.round1Config.hiddenCodeNotes = bRec.hiddenCodeNotes;
-                }
+
+              const durSec = isComp && typeof bmr?.durationSeconds === 'number'
+                ? bmr.durationSeconds
+                : (startT && compT ? Math.max(0, Math.round((new Date(compT).getTime() - new Date(startT).getTime()) / 1000)) : null);
+
+              const hints = typeof bmr?.hintsUsed === 'number' ? bmr.hintsUsed : 0;
+              const hintPen = typeof bmr?.hintPenaltySeconds === 'number' ? bmr.hintPenaltySeconds : (hints * this.state.round1Config.penaltyPerHintSeconds);
+              const adjSec = durSec !== null ? durSec + hintPen : null;
+
+              return {
+                miniRoundNumber: num,
+                status: mrStatus,
+                startTime: startT,
+                completionTime: compT,
+                hintsUsed: hints,
+                hintPenaltySeconds: hintPen,
+                durationSeconds: durSec,
+                adjustedSeconds: adjSec,
+                checkpoints: cpNames.map((name, i) => ({
+                  checkpointId: `cp-${num}-${i + 1}`,
+                  name,
+                  arrivalTime: compT,
+                })),
+              } as MiniRoundTiming;
+            }) as [MiniRoundTiming, MiniRoundTiming, MiniRoundTiming];
+
+            if (bRec.hiddenCodeRecovered) {
+              this.state.round1Config.hiddenCodeRecovered = true;
+              this.state.round1Config.hiddenCodeRecoveredByTeamId = bRec.teamId;
+              if (bRec.hiddenCodeNotes) {
+                this.state.round1Config.hiddenCodeNotes = bRec.hiddenCodeNotes;
               }
             }
+
+            return {
+              teamId: bRec.teamId,
+              teamNumber: teamNum,
+              teamName,
+              miniRounds: mappedMRs,
+              totalPenaltySeconds: 0,
+              isComplete: false,
+              qualificationStatus: 'Incomplete',
+            };
           });
+
+          // Run processRound1Standings purely on the newly constructed live records
+          const liveEngine = processRound1Standings(
+            liveRecords,
+            this.state.round1Config.penaltyPerHintSeconds,
+            this.state.round1Config.isFinalized
+          );
+
+          // Update live round 1 records cache without polluting demo state
+          this.liveRound1Records = liveEngine.records;
+
+          return {
+            records: liveEngine.records,
+            config: { ...this.state.round1Config },
+            engine: liveEngine,
+          };
         }
       } catch (err) {
         console.warn('Failed to load Round 1 records from backend in Live Mode:', err);
@@ -1600,9 +1682,10 @@ class EventService {
 
   getEligibleRound2Teams(): Team[] {
     const isR1Finalized = this.state.round1Config.isFinalized;
+    const r1SourceRecords = isLiveMode() ? this.liveRound1Records : this.state.round1Records;
     if (isR1Finalized) {
       // Use official finalized Round 1 qualified teams (Rank <= 16)
-      const qualifiedRecs = this.state.round1Records.filter(
+      const qualifiedRecs = r1SourceRecords.filter(
         (r) => r.rank !== null && r.rank !== undefined && r.rank <= 16
       );
       return qualifiedRecs
@@ -1611,7 +1694,7 @@ class EventService {
     } else {
       // Provisional eligible teams based on current provisional Round 1 standings
       const r1Standings = processRound1Standings(
-        this.state.round1Records,
+        r1SourceRecords,
         this.state.round1Config.penaltyPerHintSeconds,
         false
       );
