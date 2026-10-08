@@ -22,8 +22,8 @@ def seed_round2_ready_roster(db_session):
     db_session.add(EventAccount(login_id="SUPER01", display_name="Super Admin", password_hash=get_password_hash(super_password), role=EventRole.SUPER_ADMIN))
     for number in range(1, 9):
         db_session.add(EventAccount(login_id=f"ADMIN{number:02}", display_name=f"Admin {number}", password_hash=get_password_hash(f"AdminRound2{number:02}"), role=EventRole.ADMIN, location_number=number))
-    qualified_numbers = [1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18]
-    round2_numbers = qualified_numbers + [5, 9, 19]
+    qualified_numbers = [2, 7, 12, 16, 17, 18, 21, 22, 24, 26, 27, 28, 29, 30, 31, 32]
+    round2_numbers = qualified_numbers + [5, 9, 19, 6]
     for rank, team in enumerate([team for team in teams if team.team_number in qualified_numbers], start=1):
         points = 140 - 5 * (rank - 1)
         team.total_score = 400 + points
@@ -37,7 +37,7 @@ def seed_round2_ready_roster(db_session):
     return teams, super_password
 
 
-def test_round2_generates_19_mixed_tables_assigns_admins_and_scores(client, db_session):
+def test_round2_generates_20_mixed_tables_assigns_admins_and_scores(client, db_session):
     teams, super_password = seed_round2_ready_roster(db_session)
     super_headers = login(client, "SUPER01", super_password)
     generated = client.post("/api/v1/r2/control/generate", headers=super_headers)
@@ -60,17 +60,22 @@ def test_round2_generates_19_mixed_tables_assigns_admins_and_scores(client, db_s
     assert statement_count < 30
     overview = overview_response.json()["data"]
     assert overview["generated"] is True
-    assert len(overview["tables"]) == 19
+    assert len(overview["tables"]) == 20
     assert all(len(table["players"]) == 5 for table in overview["tables"])
     assert all(len({player["team_id"] for player in table["players"]}) == 5 for table in overview["tables"])
     team_tables = {}
     for table in overview["tables"]:
         for player in table["players"]:
             team_tables.setdefault(player["team_id"], set()).add(table["table_number"])
-    assert len(team_tables) == 19
+    assert len(team_tables) == 20
     assert all(len(numbers) == 5 for numbers in team_tables.values())
     assert {table["admin_login_id"] for table in overview["tables"]} == {f"ADMIN{i:02}" for i in range(1, 9)}
-    assert all(sum(table["admin_login_id"] == admin for table in overview["tables"]) == (3 if admin in {"ADMIN01", "ADMIN02", "ADMIN03"} else 2) for admin in {f"ADMIN{i:02}" for i in range(1, 9)})
+    assert all(sum(table["admin_login_id"] == admin for table in overview["tables"]) == (3 if admin in {"ADMIN01", "ADMIN02", "ADMIN03", "ADMIN04"} else 2) for admin in {f"ADMIN{i:02}" for i in range(1, 9)})
+    assert min(overview["award_scale"]) == 0
+
+    regenerated = client.post("/api/v1/r2/control/generate", headers=super_headers)
+    assert regenerated.status_code == 200
+    assert regenerated.json()["data"] == {"tables_created": 20, "seats_created": 100, "regenerated": True}
 
     admin_headers = login(client, "ADMIN01", "AdminRound201")
     admin_tables = client.get("/api/v1/r2/admin/tables", headers=admin_headers).json()["data"]["tables"]

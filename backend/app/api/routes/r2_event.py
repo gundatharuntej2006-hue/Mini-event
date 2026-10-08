@@ -18,14 +18,14 @@ from app.models.team import Team
 router = APIRouter(prefix="/r2", tags=["Round 2 Live Cabo"])
 QUALIFIER_COUNT = 16
 # These invited teams join the sixteen Round 1 qualifiers for Round 2.
-EXTRA_TEAM_IDENTIFIERS = ("1005", "1009", "1019")
+EXTRA_TEAM_IDENTIFIERS = ("1005", "1009", "1019", "1006")
 TABLE_COUNT = QUALIFIER_COUNT + len(EXTRA_TEAM_IDENTIFIERS)
 TABLE_SIZE = 5
 WIN_POINTS = 40.0
 LOSS_POINTS = -40.0
 AWARD_START = 80.0
 AWARD_STEP = 5.0
-THREE_TABLE_ADMIN_IDS = frozenset({"ADMIN01", "ADMIN02", "ADMIN03"})
+THREE_TABLE_ADMIN_IDS = frozenset({"ADMIN01", "ADMIN02", "ADMIN03", "ADMIN04"})
 
 
 class TableAssignmentInput(BaseModel):
@@ -75,7 +75,7 @@ def round2_teams(db: Session) -> list[Team]:
         raise HTTPException(status_code=409, detail="One or more invited Round 2 teams are missing from the roster.")
     overlapping = [item for item in EXTRA_TEAM_IDENTIFIERS if by_identifier[item].id in qualifier_ids]
     if overlapping:
-        raise HTTPException(status_code=409, detail=f"Invited team(s) {', '.join('TEAM' + item for item in overlapping)} already qualified in the top 16. Choose a replacement team so Round 2 has 19 unique teams.")
+        raise HTTPException(status_code=409, detail=f"Invited team(s) {', '.join('TEAM' + item for item in overlapping)} already qualified in the top 16. Choose a replacement team so Round 2 has 20 unique teams.")
     return ordered + [by_identifier[item] for item in EXTRA_TEAM_IDENTIFIERS]
 
 
@@ -218,7 +218,7 @@ def overview(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     return {"success": True, "data": {
         "generated": bool(cfg.tables_generated_at), "finalized": cfg.is_finalized,
         "tables": tables_payload(db, tables), "standings": standings(db) if cfg.tables_generated_at else [],
-        "award_scale": [AWARD_START - AWARD_STEP * offset for offset in range(TABLE_COUNT)],
+        "award_scale": [max(0.0, AWARD_START - AWARD_STEP * offset) for offset in range(TABLE_COUNT)],
     }, "message": "Round 2 control loaded."}
 
 
@@ -227,8 +227,18 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     cfg = config(db)
     if cfg.is_finalized:
         raise HTTPException(status_code=409, detail="Round 2 is finalized and cannot be regenerated.")
+    regenerated = bool(cfg.tables_generated_at)
     if cfg.tables_generated_at:
-        raise HTTPException(status_code=409, detail="Round 2 tables already exist. Use the existing assignments.")
+        score_count = db.query(Round2CaboScore).count()
+        if score_count:
+            raise HTTPException(status_code=409, detail="Round 2 already has recorded scores and cannot be regenerated. Clear the scores deliberately before changing tables.")
+        db.query(Round2CaboScore).delete(synchronize_session=False)
+        db.query(Round2CaboSeat).delete(synchronize_session=False)
+        db.query(Round2CaboTable).delete(synchronize_session=False)
+        db.query(Round2TeamAward).delete(synchronize_session=False)
+        cfg.tables_generated_at = None
+        cfg.generated_by = None
+        db.flush()
     teams = round2_teams(db)
     members = {team.id: members_for(team, db) for team in teams}
     admins = db.query(EventAccount).filter(EventAccount.role == EventRole.ADMIN, EventAccount.is_active.is_(True)).order_by(EventAccount.login_id).all()
@@ -241,7 +251,7 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
             tables.append(Round2CaboTable(table_number=table_number, assigned_admin_id=admin.id))
             table_number += 1
     if len(tables) != TABLE_COUNT:
-        raise HTTPException(status_code=409, detail="Admin allocation must provide 19 tables: ADMIN01–ADMIN03 get three each and ADMIN04–ADMIN08 get two each.")
+        raise HTTPException(status_code=409, detail="Admin allocation must provide 20 tables: ADMIN01–ADMIN04 get three each and ADMIN05–ADMIN08 get two each.")
     db.add_all(tables)
     db.flush()
     member_index = {team.id: 0 for team in teams}
@@ -255,9 +265,10 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     db.add_all(seats)
     cfg.tables_generated_at = now()
     cfg.generated_by = account.id
-    audit(db, account, "GENERATE_TABLES", "Generated 19 Round 2 Cabo tables for the 16 qualifiers plus TEAM1005, TEAM1009, and TEAM1019; every table contains five distinct teams.")
+    action = "REGENERATE_TABLES" if regenerated else "GENERATE_TABLES"
+    audit(db, account, action, "Generated 20 Round 2 Cabo tables for the 16 qualifiers plus TEAM1005, TEAM1009, TEAM1019, and TEAM1006 (Circuit Breakers); every table contains five distinct teams.")
     db.commit()
-    return {"success": True, "data": {"tables_created": TABLE_COUNT, "seats_created": len(seats)}, "message": "Nineteen Cabo tables are ready: ADMIN01–ADMIN03 have three tables each; ADMIN04–ADMIN08 have two each."}
+    return {"success": True, "data": {"tables_created": TABLE_COUNT, "seats_created": len(seats), "regenerated": regenerated}, "message": "Twenty Cabo tables are ready: ADMIN01–ADMIN04 have three tables each; ADMIN05–ADMIN08 have two each."}
 
 
 @router.post("/control/assign-admins")
@@ -280,7 +291,7 @@ def assign_admins(payload: AdminAssignmentBatch, account: EventAccount = Depends
         if len(item.table_numbers) != tables_for_admin(admin_id):
             raise HTTPException(status_code=422, detail=f"{admin_id} must be assigned {tables_for_admin(admin_id)} tables.")
         db.query(Round2CaboTable).filter(Round2CaboTable.table_number.in_(item.table_numbers)).update({Round2CaboTable.assigned_admin_id: admin.id}, synchronize_session=False)
-    audit(db, account, "ASSIGN_TABLES", "Updated the 19-table Round 2 allocation: ADMIN01–ADMIN03 have three tables and ADMIN04–ADMIN08 have two.")
+    audit(db, account, "ASSIGN_TABLES", "Updated the 20-table Round 2 allocation: ADMIN01–ADMIN04 have three tables and ADMIN05–ADMIN08 have two.")
     db.commit()
     return {"success": True, "data": {"assigned_tables": TABLE_COUNT}, "message": "Round 2 table-admin assignments saved."}
 
@@ -296,14 +307,14 @@ def apply_rank_awards(account: EventAccount = Depends(require_roles(EventRole.SU
         db.flush()
     ordered = standings(db)
     for index, row in enumerate(ordered, start=1):
-        # Rank awards never become penalties: ranks 17–19 receive zero.
+        # Rank awards never become penalties: ranks 17–20 receive zero.
         points = max(0.0, AWARD_START - AWARD_STEP * (index - 1))
         db.add(Round2TeamAward(team_id=row["team_id"], rank=index, points=points, applied_by=account.id))
         db.flush()
         recompute_team_total(db, row["team_id"])
-    audit(db, account, "APPLY_RANK_AWARDS", "Applied 80, 75, ... 0 Cabo leaderboard awards to the 19 Round 2 teams.")
+    audit(db, account, "APPLY_RANK_AWARDS", "Applied 80, 75, ... 0 Cabo leaderboard awards to the 20 Round 2 teams.")
     db.commit()
-    return {"success": True, "data": {"awards_applied": TABLE_COUNT}, "message": "Round 2 ranking awards applied to all 19 team totals."}
+    return {"success": True, "data": {"awards_applied": TABLE_COUNT}, "message": "Round 2 ranking awards applied to all 20 team totals."}
 
 
 @router.post("/control/finalize")
@@ -319,7 +330,7 @@ def finalize(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     cfg.is_finalized = True
     cfg.finalized_at = now()
     cfg.finalized_by = account.id
-    audit(db, account, "FINALIZE", "Round 2 locked after all 95 player outcomes and ranking awards were recorded.")
+    audit(db, account, "FINALIZE", "Round 2 locked after all 100 player outcomes and ranking awards were recorded.")
     db.commit()
     return {"success": True, "data": {"finalized": True}, "message": "Round 2 is finalized and locked."}
 
