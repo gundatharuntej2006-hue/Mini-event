@@ -80,4 +80,29 @@ input:focus { border-color: #ffb99c; box-shadow: 0 0 0 4px rgba(255,185,156,.14)
 @keyframes drift { to { transform: translate3d(24px, -32px, 0) scale(1.12); } } @keyframes pulse-ring { 50% { transform: scale(1.07); box-shadow: 0 0 0 15px rgba(255,185,156,.04); } } @keyframes spin-slow { to { transform: rotate(360deg); } }
 @media (max-width: 720px) { .round-grid { grid-template-columns: 1fr 1fr; }.landing-hero { padding-top: 62px; } }
 @media (max-width: 370px) { .r2-table-grid { grid-template-columns: 1fr; }.score-row { grid-template-columns: 1fr; } }
+@media (min-width: 900px) {
+  .mobile-page.super-admin-console { width: min(1440px, calc(100% - 64px)); max-width: none; padding: 32px 0 54px; }
+  .super-admin-console .topbar { padding: 0 4px; margin-bottom: 24px; }
+  .super-console-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 28px; align-items: end; padding: 32px; }
+  .super-console-hero .eyebrow, .super-console-hero h1, .super-console-hero p { grid-column: 1; }
+  .super-console-hero h1 { font-size: clamp(3rem, 5vw, 4.7rem); margin-bottom: 14px; }
+  .super-console-hero p { max-width: 620px; margin-bottom: 0; }
+  .super-console-actions { grid-column: 2; grid-row: 1 / span 3; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-end; gap: 9px; max-width: 390px; }
+  .super-console-actions .primary-button, .super-console-actions .icon-refresh, .super-console-actions .danger-button { width: auto; margin: 0; min-height: 45px; }
+  .super-console-actions .primary-button, .super-console-actions .danger-button { padding: 12px 15px; }
+  .super-admin-console .control-summary { width: min(560px, 48%); margin-top: 18px; }
+  .super-team-directory { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; gap: 12px; margin-top: 18px; }
+  .super-team-directory .team-card { min-height: 136px; align-content: start; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+  .super-team-directory .team-card:hover { transform: translateY(-3px); background: rgba(57, 31, 28, .94); }
+  .super-admin-console .override-card { max-width: 720px; }
+  .super-account-console { width: min(1040px, calc(100% - 64px)) !important; }
+  .super-account-card { margin-top: 30px; padding: 36px; }
+  .super-account-card form { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  .super-account-card form label { margin-top: 20px; }
+  .super-account-card form .primary-button { grid-column: 1 / -1; width: auto; justify-self: start; padding-left: 24px; padding-right: 24px; }
+  .r2-super-console .r2-note { width: min(760px, 58%); }
+  .r2-super-console .r2-table-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  .r2-super-console .r2-table-card { min-height: 300px; padding: 18px; }
+  .r2-super-console .r2-standings { max-width: 960px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; } }
