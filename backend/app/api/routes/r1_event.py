@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.security import create_access_token, decode_access_token, verify_password
+from app.core.security import create_access_token, decode_access_token, get_password_hash, verify_password
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
@@ -63,6 +63,14 @@ class ResetInput(BaseModel):
 
 class SecretAgentInput(BaseModel):
     agent_name: str = Field(min_length=2, max_length=120)
+
+
+class PasswordChangeInput(BaseModel):
+    current_super_password: str = Field(min_length=1, max_length=128)
+    target_login_id: str = Field(min_length=3, max_length=40)
+    new_password: str = Field(min_length=8, max_length=128)
+    new_password_confirmation: str = Field(min_length=8, max_length=128)
+    reason: str = Field(min_length=3, max_length=500)
 
 
 def now() -> datetime:
@@ -194,6 +202,9 @@ def record_finish(db: Session, allocation: Round1RouteAllocationModel) -> Round1
     if not team:
         raise HTTPException(status_code=409, detail="Team roster record is missing.")
     qualified = rank <= QUALIFIER_LIMIT
+    # Every team starts at 400; Round 1 finish position adds 140, 135 ... 65.
+    round1_award = 140.0 - 5.0 * (rank - 1) if qualified else 0.0
+    team.total_score = BASE_POINTS + round1_award
     outcome = Round1FinishOutcome(
         team_id=team.id,
         team_identifier=allocation.team_identifier,
@@ -375,6 +386,38 @@ def overview(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
         team = db.query(Team).filter(Team.id == allocation.team_id).first()
         teams.append({"team_identifier": allocation.team_identifier, "team_name": allocation.team_name, "checkpoint": checkpoint, "complete": checkpoint == 4, "attempts": getattr(allocation, f"cp{display_checkpoint}_attempts", 0), "location": getattr(allocation, f"cp{checkpoint}_location", None) if checkpoint < 4 else None, "set": getattr(allocation, f"cp{display_checkpoint}_set"), "last_answer": attempt.submitted_answer if attempt else None, "last_answer_correct": attempt.is_correct if attempt else None, "points": team.total_score if team else 0, "secret_agent_name": selection.agent_name if selection else None, **outcome_data(outcome)})
     return {"success": True, "data": {"started": bool(config.started_at), "qualifier_limit": QUALIFIER_LIMIT, "qualified_count": db.query(func.count(Round1FinishOutcome.id)).filter(Round1FinishOutcome.is_qualified == True).scalar(), "teams": teams, "instagram": "ASYMPTOTES_BMSIT"}, "message": "Control room loaded."}
+
+
+@router.get("/control/accounts")
+def accounts(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Password targets only; password hashes and values never leave the server."""
+    items = db.query(EventAccount).order_by(EventAccount.role, EventAccount.login_id).all()
+    return {"success": True, "data": [
+        {"login_id": item.login_id, "display_name": item.display_name, "role": item.role.value, "is_active": item.is_active}
+        for item in items
+    ], "message": "Login accounts loaded."}
+
+
+@router.post("/control/accounts/password")
+def change_account_password(payload: PasswordChangeInput, account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Super-admin-only password change with current-password confirmation and audit record."""
+    if payload.new_password != payload.new_password_confirmation:
+        raise HTTPException(status_code=400, detail="The two new password entries do not match.")
+    if not verify_password(payload.current_super_password, account.password_hash):
+        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+    target = db.query(EventAccount).filter(EventAccount.login_id == payload.target_login_id.strip().upper()).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Login account not found.")
+    target.password_hash = get_password_hash(payload.new_password)
+    db.add(Round1Override(
+        team_identifier=target.login_id,
+        checkpoint_number=0,
+        action="PASSWORD_CHANGE",
+        reason=f"{payload.reason.strip()} (password value not logged)",
+        performed_by=account.id,
+    ))
+    db.commit()
+    return {"success": True, "data": {"login_id": target.login_id}, "message": f"Password updated for {target.login_id}."}
 
 
 @router.post("/control/start")

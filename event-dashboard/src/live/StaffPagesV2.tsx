@@ -10,7 +10,7 @@ type Station = { location: number; location_name: string; teams: StationTeam[] }
 type ControlTeam = { team_identifier: string; team_name: string; checkpoint: number; complete: boolean; attempts: number; location: number | null; set: string; last_answer: string | null; points: number; secret_agent_name: string | null; rank: number | null; qualified: boolean; completed_at: string | null };
 type Control = { started: boolean; qualifier_limit: number; qualified_count: number; teams: ControlTeam[] };
 
-function Header() { const nav = useNavigate(); return <header className="topbar live-reveal"><Mark/><button onClick={() => { clearSession(); nav('/login'); }} aria-label="Sign out"><LogOut size={18}/></button></header>; }
+function Header() { const nav = useNavigate(); const role = getSession()?.role; const superAdmin = role === 'SUPER_ADMIN'; const [adminRound2, setAdminRound2] = useState(false); useEffect(() => { if (role === 'ADMIN') request<{ available: boolean }>('/r2/admin/tables').then(data => setAdminRound2(data.available)).catch(() => setAdminRound2(false)); }, [role]); return <header className="topbar live-reveal"><Mark/><div className="staff-nav">{superAdmin && <><button className="nav-chip" onClick={() => nav('/round2/control')}>R2</button><button className="nav-chip" onClick={() => nav('/accounts')}>KEY</button></>}{adminRound2 && <button className="nav-chip" onClick={() => nav('/round2/station')}>R2</button>}<button onClick={() => { clearSession(); nav('/login'); }} aria-label="Sign out"><LogOut size={18}/></button></div></header>; }
 const stamp = (value: string | null) => value ? new Date(value).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
 
 export function AdminPage() {

@@ -79,8 +79,8 @@ def test_final_submission_records_rank_points_and_pdf_report(client, db_session)
     outcome = db_session.query(Round1FinishOutcome).one()
     assert outcome.rank == 1
     assert outcome.is_qualified is True
-    assert outcome.points_snapshot == 400
-    assert db_session.query(Team).filter(Team.id == team.id).one().total_score == 400
+    assert outcome.points_snapshot == 540
+    assert db_session.query(Team).filter(Team.id == team.id).one().total_score == 540
     report = client.get("/api/v1/r1/control/report.pdf", headers=super_headers)
     assert report.status_code == 200
     assert report.headers["content-type"].startswith("application/pdf")
