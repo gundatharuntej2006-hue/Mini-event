@@ -16,17 +16,21 @@ from app.models.round2_live import Round2CaboScore, Round2CaboSeat, Round2CaboTa
 from app.models.team import Team
 
 router = APIRouter(prefix="/r2", tags=["Round 2 Live Cabo"])
-TABLE_COUNT = 16
+QUALIFIER_COUNT = 16
+# These invited teams join the sixteen Round 1 qualifiers for Round 2.
+EXTRA_TEAM_IDENTIFIERS = ("1005", "1009", "1019")
+TABLE_COUNT = QUALIFIER_COUNT + len(EXTRA_TEAM_IDENTIFIERS)
 TABLE_SIZE = 5
 WIN_POINTS = 40.0
 LOSS_POINTS = -40.0
 AWARD_START = 80.0
 AWARD_STEP = 5.0
+THREE_TABLE_ADMIN_IDS = frozenset({"ADMIN01", "ADMIN02", "ADMIN03"})
 
 
 class TableAssignmentInput(BaseModel):
     admin_login_id: str = Field(min_length=3, max_length=40)
-    table_numbers: list[int] = Field(min_length=2, max_length=2)
+    table_numbers: list[int] = Field(min_length=2, max_length=3)
 
 
 class AdminAssignmentBatch(BaseModel):
@@ -56,16 +60,27 @@ def config(db: Session) -> Round2LiveConfig:
     return item
 
 
-def qualified_teams(db: Session) -> list[Team]:
+def round2_teams(db: Session) -> list[Team]:
     outcomes = db.query(Round1FinishOutcome).filter(Round1FinishOutcome.is_qualified.is_(True)).order_by(Round1FinishOutcome.rank).all()
-    if len(outcomes) != TABLE_COUNT:
+    if len(outcomes) != QUALIFIER_COUNT:
         raise HTTPException(status_code=409, detail="Round 2 needs exactly 16 qualified Round 1 teams before tables can be generated.")
-    ids = [outcome.team_id for outcome in outcomes]
-    teams = {team.id: team for team in db.query(Team).filter(Team.id.in_(ids)).all()}
-    ordered = [teams[item] for item in ids if item in teams]
-    if len(ordered) != TABLE_COUNT:
+    qualifier_ids = [outcome.team_id for outcome in outcomes]
+    teams = {team.id: team for team in db.query(Team).filter(Team.id.in_(qualifier_ids)).all()}
+    ordered = [teams[item] for item in qualifier_ids if item in teams]
+    if len(ordered) != QUALIFIER_COUNT:
         raise HTTPException(status_code=409, detail="One or more qualified teams are missing from the roster.")
-    return ordered
+    extras = db.query(Team).filter(Team.team_number.in_([int(item) - 1000 for item in EXTRA_TEAM_IDENTIFIERS])).all()
+    by_identifier = {f"{1000 + team.team_number}": team for team in extras}
+    if set(by_identifier) != set(EXTRA_TEAM_IDENTIFIERS):
+        raise HTTPException(status_code=409, detail="One or more invited Round 2 teams are missing from the roster.")
+    overlapping = [item for item in EXTRA_TEAM_IDENTIFIERS if by_identifier[item].id in qualifier_ids]
+    if overlapping:
+        raise HTTPException(status_code=409, detail=f"Invited team(s) {', '.join('TEAM' + item for item in overlapping)} already qualified in the top 16. Choose a replacement team so Round 2 has 19 unique teams.")
+    return ordered + [by_identifier[item] for item in EXTRA_TEAM_IDENTIFIERS]
+
+
+def tables_for_admin(login_id: str) -> int:
+    return 3 if login_id.strip().upper() in THREE_TABLE_ADMIN_IDS else 2
 
 
 def members_for(team: Team, db: Session) -> list[Participant]:
@@ -98,7 +113,10 @@ def table_payload(db: Session, table: Round2CaboTable) -> dict:
 
 def r1_points(db: Session, team_id: str) -> float:
     outcome = db.query(Round1FinishOutcome).filter(Round1FinishOutcome.team_id == team_id).first()
-    return outcome.points_snapshot if outcome else BASE_POINTS
+    if outcome:
+        return outcome.points_snapshot
+    team = db.query(Team).filter(Team.id == team_id).first()
+    return team.total_score if team and team.total_score > 0 else BASE_POINTS
 
 
 def recompute_team_total(db: Session, team_id: str) -> float:
@@ -114,7 +132,7 @@ def recompute_team_total(db: Session, team_id: str) -> float:
 
 
 def standings(db: Session) -> list[dict]:
-    teams = qualified_teams(db)
+    teams = round2_teams(db)
     outcomes = {item.team_id: item for item in db.query(Round1FinishOutcome).filter(Round1FinishOutcome.is_qualified.is_(True)).all()}
     rows = []
     for team in teams:
@@ -126,14 +144,14 @@ def standings(db: Session) -> list[dict]:
             "team_id": team.id,
             "team_identifier": f"TEAM{1000 + team.team_number}",
             "team_name": team.name,
-            "r1_rank": outcomes[team.id].rank,
-            "r1_points": outcomes[team.id].points_snapshot,
+            "r1_rank": outcomes[team.id].rank if team.id in outcomes else None,
+            "r1_points": r1_points(db, team.id),
             "cabo_points": float(base_result or 0.0),
             "rank_award": award.points if award else 0.0,
             "rank": award.rank if award else None,
             "total_points": team.total_score,
         })
-    return sorted(rows, key=lambda item: (-item["cabo_points"], item["r1_rank"]))
+    return sorted(rows, key=lambda item: (-item["cabo_points"], item["r1_rank"] or 9999, item["team_identifier"]))
 
 
 def audit(db: Session, account: EventAccount, action: str, detail: str) -> None:
@@ -158,12 +176,19 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
         raise HTTPException(status_code=409, detail="Round 2 is finalized and cannot be regenerated.")
     if cfg.tables_generated_at:
         raise HTTPException(status_code=409, detail="Round 2 tables already exist. Use the existing assignments.")
-    teams = qualified_teams(db)
+    teams = round2_teams(db)
     members = {team.id: members_for(team, db) for team in teams}
     admins = db.query(EventAccount).filter(EventAccount.role == EventRole.ADMIN, EventAccount.is_active.is_(True)).order_by(EventAccount.login_id).all()
     if len(admins) != 8:
         raise HTTPException(status_code=409, detail="Round 2 needs exactly eight active admin accounts.")
-    tables = [Round2CaboTable(table_number=index + 1, assigned_admin_id=admins[index // 2].id) for index in range(TABLE_COUNT)]
+    tables = []
+    table_number = 1
+    for admin in admins:
+        for _ in range(tables_for_admin(admin.login_id)):
+            tables.append(Round2CaboTable(table_number=table_number, assigned_admin_id=admin.id))
+            table_number += 1
+    if len(tables) != TABLE_COUNT:
+        raise HTTPException(status_code=409, detail="Admin allocation must provide 19 tables: ADMIN01–ADMIN03 get three each and ADMIN04–ADMIN08 get two each.")
     db.add_all(tables)
     db.flush()
     member_index = {team.id: 0 for team in teams}
@@ -177,9 +202,9 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     db.add_all(seats)
     cfg.tables_generated_at = now()
     cfg.generated_by = account.id
-    audit(db, account, "GENERATE_TABLES", "Generated 16 Round 2 Cabo tables with one member from five distinct teams at every table.")
+    audit(db, account, "GENERATE_TABLES", "Generated 19 Round 2 Cabo tables for the 16 qualifiers plus TEAM1005, TEAM1009, and TEAM1019; every table contains five distinct teams.")
     db.commit()
-    return {"success": True, "data": {"tables_created": TABLE_COUNT, "seats_created": len(seats)}, "message": "Sixteen Cabo tables are ready and paired to two tables per admin."}
+    return {"success": True, "data": {"tables_created": TABLE_COUNT, "seats_created": len(seats)}, "message": "Nineteen Cabo tables are ready: ADMIN01–ADMIN03 have three tables each; ADMIN04–ADMIN08 have two each."}
 
 
 @router.post("/control/assign-admins")
@@ -189,16 +214,20 @@ def assign_admins(payload: AdminAssignmentBatch, account: EventAccount = Depends
         raise HTTPException(status_code=409, detail="Round 2 tables must be generated and unlocked before assigning admins.")
     claimed = [number for item in payload.assignments for number in item.table_numbers]
     if sorted(claimed) != list(range(1, TABLE_COUNT + 1)):
-        raise HTTPException(status_code=422, detail="Assign every table exactly once, with two tables per admin.")
+        raise HTTPException(status_code=422, detail="Assign every table exactly once.")
     admins = {item.login_id: item for item in db.query(EventAccount).filter(EventAccount.role == EventRole.ADMIN, EventAccount.is_active.is_(True)).all()}
-    if len({item.admin_login_id.strip().upper() for item in payload.assignments}) != 8:
+    supplied_ids = {item.admin_login_id.strip().upper() for item in payload.assignments}
+    if supplied_ids != set(admins) or len(supplied_ids) != 8:
         raise HTTPException(status_code=422, detail="Use each of the eight admins exactly once.")
     for item in payload.assignments:
-        admin = admins.get(item.admin_login_id.strip().upper())
+        admin_id = item.admin_login_id.strip().upper()
+        admin = admins.get(admin_id)
         if not admin:
             raise HTTPException(status_code=404, detail=f"Admin {item.admin_login_id} was not found.")
+        if len(item.table_numbers) != tables_for_admin(admin_id):
+            raise HTTPException(status_code=422, detail=f"{admin_id} must be assigned {tables_for_admin(admin_id)} tables.")
         db.query(Round2CaboTable).filter(Round2CaboTable.table_number.in_(item.table_numbers)).update({Round2CaboTable.assigned_admin_id: admin.id}, synchronize_session=False)
-    audit(db, account, "ASSIGN_TABLES", "Updated the two-table Round 2 allocation for all eight admins.")
+    audit(db, account, "ASSIGN_TABLES", "Updated the 19-table Round 2 allocation: ADMIN01–ADMIN03 have three tables and ADMIN04–ADMIN08 have two.")
     db.commit()
     return {"success": True, "data": {"assigned_tables": TABLE_COUNT}, "message": "Round 2 table-admin assignments saved."}
 
@@ -214,13 +243,14 @@ def apply_rank_awards(account: EventAccount = Depends(require_roles(EventRole.SU
         db.flush()
     ordered = standings(db)
     for index, row in enumerate(ordered, start=1):
-        points = AWARD_START - AWARD_STEP * (index - 1)
+        # Rank awards never become penalties: ranks 17–19 receive zero.
+        points = max(0.0, AWARD_START - AWARD_STEP * (index - 1))
         db.add(Round2TeamAward(team_id=row["team_id"], rank=index, points=points, applied_by=account.id))
         db.flush()
         recompute_team_total(db, row["team_id"])
-    audit(db, account, "APPLY_RANK_AWARDS", "Applied 80, 75, ... 5 Cabo leaderboard awards to the sixteen qualified teams.")
+    audit(db, account, "APPLY_RANK_AWARDS", "Applied 80, 75, ... 0 Cabo leaderboard awards to the 19 Round 2 teams.")
     db.commit()
-    return {"success": True, "data": {"awards_applied": TABLE_COUNT}, "message": "Round 2 ranking awards applied to team totals."}
+    return {"success": True, "data": {"awards_applied": TABLE_COUNT}, "message": "Round 2 ranking awards applied to all 19 team totals."}
 
 
 @router.post("/control/finalize")
@@ -236,7 +266,7 @@ def finalize(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     cfg.is_finalized = True
     cfg.finalized_at = now()
     cfg.finalized_by = account.id
-    audit(db, account, "FINALIZE", "Round 2 locked after all 80 player outcomes and ranking awards were recorded.")
+    audit(db, account, "FINALIZE", "Round 2 locked after all 95 player outcomes and ranking awards were recorded.")
     db.commit()
     return {"success": True, "data": {"finalized": True}, "message": "Round 2 is finalized and locked."}
 
