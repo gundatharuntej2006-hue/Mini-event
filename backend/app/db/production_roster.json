@@ -914,7 +914,7 @@
   {
     "id": "team-1017",
     "team_number": 17,
-    "name": "Aura 999+",
+    "name": "Sentinel",
     "assigned_table": "Table 17",
     "status": "REGISTERED",
     "current_round": 1,
@@ -923,7 +923,7 @@
     "members": [
       {
         "id": "part-38b6bb8e",
-        "name": "Binit Kumar dash",
+        "name": "Ujjwal Kumar Gupta",
         "email": "binit@gmail.com",
         "usn": "1BY25CS074",
         "phone": "+91 89176 71338",
@@ -932,7 +932,7 @@
       },
       {
         "id": "part-4ff56a8e",
-        "name": "Thushar KS",
+        "name": "Kumar Satyam",
         "email": "thusharks@gmail.com",
         "usn": "1TE25CS315",
         "phone": "+91 95919 97179",
@@ -941,7 +941,7 @@
       },
       {
         "id": "part-544c1bc6",
-        "name": "Likith Reddy",
+        "name": "Arnav Atul",
         "email": "likithreddy@gmail.com",
         "usn": "1BY25CS108",
         "phone": "+91 76749 05203",
@@ -950,7 +950,7 @@
       },
       {
         "id": "part-999c6743",
-        "name": "Mayank Raj",
+        "name": "Nalin Sharma",
         "email": "mayankraj7640204@gmail.com",
         "usn": "1BY25CS177",
         "phone": "7488423699",
@@ -959,7 +959,7 @@
       },
       {
         "id": "part-f6b33b6b",
-        "name": "Chinmay",
+        "name": "Ishan Verma",
         "email": "chinmay@gmail.com",
         "usn": "1TE25CS114",
         "phone": "+91 87921 77479",

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.routes import health, auth, teams, participants, dashboard, settings, rounds, integrations, wallet, code_hunt, secret_agents, r1_event, r2_event
+from app.api.routes import health, auth, teams, participants, dashboard, settings, rounds, integrations, wallet, code_hunt, secret_agents, r1_event, r1_roster, r2_event
 from app.api.rounds.round1 import router as r1_router
 from app.api.rounds.round2 import router as r2_router
 from app.api.rounds.round3 import router as r3_router
@@ -13,6 +13,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(r1_event.router)
+api_router.include_router(r1_roster.router)
 api_router.include_router(r2_event.router)
 api_router.include_router(teams.router)
 api_router.include_router(wallet.router)
