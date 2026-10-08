@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import event
+
 from app.core.security import get_password_hash
 from app.models.core import seed_default_teams
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome
@@ -40,7 +42,23 @@ def test_round2_generates_19_mixed_tables_assigns_admins_and_scores(client, db_s
     super_headers = login(client, "SUPER01", super_password)
     generated = client.post("/api/v1/r2/control/generate", headers=super_headers)
     assert generated.status_code == 200
-    overview = client.get("/api/v1/r2/control/overview", headers=super_headers).json()["data"]
+    statement_count = 0
+
+    def count_statement(*_args):
+        nonlocal statement_count
+        statement_count += 1
+
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        overview_response = client.get("/api/v1/r2/control/overview", headers=super_headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+    assert overview_response.status_code == 200
+    # Keep this endpoint bulk-loaded. The former per-seat queries exceeded 300
+    # statements and timed out against the hosted Supabase database.
+    assert statement_count < 30
+    overview = overview_response.json()["data"]
     assert overview["generated"] is True
     assert len(overview["tables"]) == 19
     assert all(len(table["players"]) == 5 for table in overview["tables"])

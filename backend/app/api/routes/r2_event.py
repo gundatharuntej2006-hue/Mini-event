@@ -90,33 +90,73 @@ def members_for(team: Team, db: Session) -> list[Participant]:
     return members
 
 
-def table_payload(db: Session, table: Round2CaboTable) -> dict:
-    admin = db.query(EventAccount).filter(EventAccount.id == table.assigned_admin_id).first() if table.assigned_admin_id else None
-    seats = db.query(Round2CaboSeat).filter(Round2CaboSeat.table_id == table.id).order_by(Round2CaboSeat.seat_position).all()
-    result = []
+def tables_payload(db: Session, tables: list[Round2CaboTable]) -> list[dict]:
+    """Load all table details in bulk so the live Supabase database is not queried once per seat."""
+    if not tables:
+        return []
+
+    table_ids = [table.id for table in tables]
+    admin_ids = {table.assigned_admin_id for table in tables if table.assigned_admin_id}
+    admins = {
+        item.id: item
+        for item in db.query(EventAccount).filter(EventAccount.id.in_(admin_ids)).all()
+    } if admin_ids else {}
+    seats = db.query(Round2CaboSeat).filter(Round2CaboSeat.table_id.in_(table_ids)).order_by(
+        Round2CaboSeat.table_id, Round2CaboSeat.seat_position
+    ).all()
+    participants = {
+        item.id: item
+        for item in db.query(Participant).filter(Participant.id.in_({seat.participant_id for seat in seats})).all()
+    } if seats else {}
+    teams = {
+        item.id: item
+        for item in db.query(Team).filter(Team.id.in_({seat.team_id for seat in seats})).all()
+    } if seats else {}
+    scores = {
+        item.seat_id: item
+        for item in db.query(Round2CaboScore).filter(Round2CaboScore.seat_id.in_({seat.id for seat in seats})).all()
+    } if seats else {}
+    seats_by_table: dict[str, list[Round2CaboSeat]] = {table.id: [] for table in tables}
     for seat in seats:
-        participant = db.query(Participant).filter(Participant.id == seat.participant_id).first()
-        team = db.query(Team).filter(Team.id == seat.team_id).first()
-        score = db.query(Round2CaboScore).filter(Round2CaboScore.seat_id == seat.id).first()
-        result.append({
-            "participant_id": seat.participant_id,
-            "participant_name": participant.name if participant else "Unknown member",
-            "team_id": seat.team_id,
-            "team_identifier": f"TEAM{1000 + team.team_number}" if team else "Unknown team",
-            "team_name": team.name if team else "Unknown team",
-            "seat_position": seat.seat_position,
-            "outcome": score.outcome if score else None,
-            "base_points": score.base_points if score else None,
+        seats_by_table.setdefault(seat.table_id, []).append(seat)
+
+    payloads = []
+    for table in tables:
+        admin = admins.get(table.assigned_admin_id)
+        players = []
+        for seat in seats_by_table.get(table.id, []):
+            participant = participants.get(seat.participant_id)
+            team = teams.get(seat.team_id)
+            score = scores.get(seat.id)
+            players.append({
+                "participant_id": seat.participant_id,
+                "participant_name": participant.name if participant else "Unknown member",
+                "team_id": seat.team_id,
+                "team_identifier": f"TEAM{1000 + team.team_number}" if team else "Unknown team",
+                "team_name": team.name if team else "Unknown team",
+                "seat_position": seat.seat_position,
+                "outcome": score.outcome if score else None,
+                "base_points": score.base_points if score else None,
+            })
+        payloads.append({
+            "table_number": table.table_number,
+            "admin_login_id": admin.login_id if admin else None,
+            "admin_name": admin.display_name if admin else None,
+            "players": players,
+            "complete": len(players) == TABLE_SIZE and all(item["outcome"] for item in players),
         })
-    return {"table_number": table.table_number, "admin_login_id": admin.login_id if admin else None, "admin_name": admin.display_name if admin else None, "players": result, "complete": len(result) == TABLE_SIZE and all(item["outcome"] for item in result)}
+    return payloads
+
+
+def table_payload(db: Session, table: Round2CaboTable) -> dict:
+    return tables_payload(db, [table])[0]
 
 
 def r1_points(db: Session, team_id: str) -> float:
     outcome = db.query(Round1FinishOutcome).filter(Round1FinishOutcome.team_id == team_id).first()
     if outcome:
         return outcome.points_snapshot
-    team = db.query(Team).filter(Team.id == team_id).first()
-    return team.total_score if team and team.total_score > 0 else BASE_POINTS
+    return BASE_POINTS
 
 
 def recompute_team_total(db: Session, team_id: str) -> float:
@@ -134,22 +174,35 @@ def recompute_team_total(db: Session, team_id: str) -> float:
 def standings(db: Session) -> list[dict]:
     teams = round2_teams(db)
     outcomes = {item.team_id: item for item in db.query(Round1FinishOutcome).filter(Round1FinishOutcome.is_qualified.is_(True)).all()}
+    team_ids = [team.id for team in teams]
+    score_totals = {
+        team_id: float(points or 0.0)
+        for team_id, points in db.query(
+            Round2CaboSeat.team_id,
+            func.coalesce(func.sum(Round2CaboScore.base_points), 0.0),
+        ).outerjoin(
+            Round2CaboScore, Round2CaboScore.seat_id == Round2CaboSeat.id
+        ).filter(Round2CaboSeat.team_id.in_(team_ids)).group_by(Round2CaboSeat.team_id).all()
+    }
+    awards = {
+        item.team_id: item
+        for item in db.query(Round2TeamAward).filter(Round2TeamAward.team_id.in_(team_ids)).all()
+    }
     rows = []
     for team in teams:
-        base_result = db.query(func.coalesce(func.sum(Round2CaboScore.base_points), 0.0)).join(
-            Round2CaboSeat, Round2CaboSeat.id == Round2CaboScore.seat_id
-        ).filter(Round2CaboSeat.team_id == team.id).scalar()
-        award = db.query(Round2TeamAward).filter(Round2TeamAward.team_id == team.id).first()
+        cabo_points = score_totals.get(team.id, 0.0)
+        award = awards.get(team.id)
+        first_round_points = outcomes[team.id].points_snapshot if team.id in outcomes else BASE_POINTS
         rows.append({
             "team_id": team.id,
             "team_identifier": f"TEAM{1000 + team.team_number}",
             "team_name": team.name,
             "r1_rank": outcomes[team.id].rank if team.id in outcomes else None,
-            "r1_points": r1_points(db, team.id),
-            "cabo_points": float(base_result or 0.0),
+            "r1_points": first_round_points,
+            "cabo_points": cabo_points,
             "rank_award": award.points if award else 0.0,
             "rank": award.rank if award else None,
-            "total_points": team.total_score,
+            "total_points": first_round_points + cabo_points + (award.points if award else 0.0),
         })
     return sorted(rows, key=lambda item: (-item["cabo_points"], item["r1_rank"] or 9999, item["team_identifier"]))
 
@@ -164,7 +217,7 @@ def overview(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
     tables = db.query(Round2CaboTable).order_by(Round2CaboTable.table_number).all()
     return {"success": True, "data": {
         "generated": bool(cfg.tables_generated_at), "finalized": cfg.is_finalized,
-        "tables": [table_payload(db, table) for table in tables], "standings": standings(db) if cfg.tables_generated_at else [],
+        "tables": tables_payload(db, tables), "standings": standings(db) if cfg.tables_generated_at else [],
         "award_scale": [AWARD_START - AWARD_STEP * offset for offset in range(TABLE_COUNT)],
     }, "message": "Round 2 control loaded."}
 
@@ -275,7 +328,7 @@ def finalize(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
 def admin_tables(account: EventAccount = Depends(require_roles(EventRole.ADMIN)), db: Session = Depends(get_db)):
     cfg = config(db)
     tables = db.query(Round2CaboTable).filter(Round2CaboTable.assigned_admin_id == account.id).order_by(Round2CaboTable.table_number).all()
-    return {"success": True, "data": {"available": bool(cfg.tables_generated_at and tables), "finalized": cfg.is_finalized, "tables": [table_payload(db, table) for table in tables]}, "message": "Round 2 table assignment loaded."}
+    return {"success": True, "data": {"available": bool(cfg.tables_generated_at and tables), "finalized": cfg.is_finalized, "tables": tables_payload(db, tables)}, "message": "Round 2 table assignment loaded."}
 
 
 @router.post("/admin/tables/{table_number}/scores")
