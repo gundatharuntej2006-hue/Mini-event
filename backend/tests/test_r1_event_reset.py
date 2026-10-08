@@ -1,8 +1,10 @@
 from app.core.security import get_password_hash
 from app.models.core import seed_default_teams
+from app.api.routes.r1_event import event_config, record_finish
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
 from app.models.round1 import Round1RouteAllocationModel
 from app.models.team import Team
+from app.services.round1_service import get_or_create_route_allocations
 
 
 def login(client, login_id: str, password: str) -> dict:
@@ -83,3 +85,30 @@ def test_final_submission_records_rank_points_and_pdf_report(client, db_session)
     assert report.status_code == 200
     assert report.headers["content-type"].startswith("application/pdf")
     assert report.content.startswith(b"%PDF")
+
+
+def test_sixteenth_finisher_deactivates_remaining_participant_accounts(db_session):
+    seed_default_teams(db_session)
+    teams = db_session.query(Team).order_by(Team.team_number).all()
+    for team in teams:
+        db_session.add(EventAccount(
+            login_id=f"TEAM{1000 + team.team_number}", display_name=team.name,
+            password_hash=get_password_hash("TestOnly123"), role=EventRole.PARTICIPANT, team_id=team.id,
+        ))
+    db_session.commit()
+    event_config(db_session)
+    get_or_create_route_allocations(db_session)
+    allocations = db_session.query(Round1RouteAllocationModel).order_by(Round1RouteAllocationModel.team_identifier).all()
+
+    for allocation in allocations[:16]:
+        allocation.cp3_completed = True
+        record_finish(db_session, allocation)
+    db_session.commit()
+
+    outcomes = db_session.query(Round1FinishOutcome).order_by(Round1FinishOutcome.rank).all()
+    accounts = db_session.query(EventAccount).filter(EventAccount.role == EventRole.PARTICIPANT).order_by(EventAccount.login_id).all()
+    assert len(outcomes) == 16
+    assert all(item.is_qualified for item in outcomes)
+    assert [item.rank for item in outcomes] == list(range(1, 17))
+    assert sum(account.is_active for account in accounts) == 16
+    assert sum(not account.is_active for account in accounts) == 16
