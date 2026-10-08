@@ -30,15 +30,18 @@ def seed_round2_ready_roster(db_session):
         team.is_qualified_for_next_round = True
         team.current_round = 2
         db_session.add(Round1FinishOutcome(team_id=team.id, team_identifier=str(1000 + team.team_number), rank=rank, is_qualified=True, completed_at=datetime.now(timezone.utc), points_snapshot=team.total_score))
+    participant_password = "TeamRound2Test987"
     for team in [team for team in teams if team.team_number in round2_numbers]:
         for member in range(1, 6):
             db_session.add(Participant(id=f"part-{team.team_number}-{member}", name=f"Member {team.team_number}-{member}", email=f"member{team.team_number}-{member}@test.local", usn=f"USN{team.team_number:02}{member}", team_id=team.id))
+    participant_team = next(team for team in teams if team.team_number == qualified_numbers[0])
+    db_session.add(EventAccount(login_id=f"TEAM{1000 + participant_team.team_number}", display_name=participant_team.name, password_hash=get_password_hash(participant_password), role=EventRole.PARTICIPANT, team_id=participant_team.id, is_active=False))
     db_session.commit()
-    return teams, super_password
+    return teams, super_password, participant_password
 
 
 def test_round2_generates_20_mixed_tables_assigns_admins_and_scores(client, db_session):
-    teams, super_password = seed_round2_ready_roster(db_session)
+    teams, super_password, participant_password = seed_round2_ready_roster(db_session)
     super_headers = login(client, "SUPER01", super_password)
     generated = client.post("/api/v1/r2/control/generate", headers=super_headers)
     assert generated.status_code == 200
@@ -76,6 +79,16 @@ def test_round2_generates_20_mixed_tables_assigns_admins_and_scores(client, db_s
     regenerated = client.post("/api/v1/r2/control/generate", headers=super_headers)
     assert regenerated.status_code == 200
     assert regenerated.json()["data"] == {"tables_created": 20, "seats_created": 100, "regenerated": True}
+
+    participant_headers = login(client, "TEAM1002", participant_password)
+    assignment = client.get("/api/v1/r2/participant/assignment", headers=participant_headers)
+    assert assignment.status_code == 200
+    participant_data = assignment.json()["data"]
+    assert participant_data["available"] is True
+    assert participant_data["team_identifier"] == "TEAM1002"
+    assert len(participant_data["assignments"]) == 5
+    assert len({item["participant_name"] for item in participant_data["assignments"]}) == 5
+    assert len({item["table_number"] for item in participant_data["assignments"]}) == 5
 
     admin_headers = login(client, "ADMIN01", "AdminRound201")
     admin_tables = client.get("/api/v1/r2/admin/tables", headers=admin_headers).json()["data"]["tables"]

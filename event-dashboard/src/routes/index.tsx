@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from '../live/LoginPage';
-import { ParticipantPage } from '../live/ParticipantPage';
+import { ParticipantEntryPage } from '../live/ParticipantEntryPage';
 import { AdminPage, SuperAdminPage } from '../live/StaffPagesV2';
 import { LandingPage, ResultsPage } from '../live/PublicPages';
 import { AccountManagementPage } from '../live/AccountManagementPage';
@@ -11,8 +11,8 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/play" element={<ParticipantPage />} />
-      <Route path="/scan/:location" element={<ParticipantPage />} />
+      <Route path="/play" element={<ParticipantEntryPage />} />
+      <Route path="/scan/:location" element={<ParticipantEntryPage />} />
       <Route path="/station" element={<AdminPage />} />
       <Route path="/control" element={<SuperAdminPage />} />
       <Route path="/accounts" element={<AccountManagementPage />} />

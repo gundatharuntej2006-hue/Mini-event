@@ -263,6 +263,15 @@ def generate(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN
             member_index[team.id] += 1
             seats.append(Round2CaboSeat(table_id=table.id, participant_id=player.id, team_id=team.id, seat_position=seat_index))
     db.add_all(seats)
+    round2_team_ids = [team.id for team in teams]
+    db.query(EventAccount).filter(
+        EventAccount.role == EventRole.PARTICIPANT,
+        EventAccount.team_id.in_(round2_team_ids),
+    ).update({EventAccount.is_active: True}, synchronize_session=False)
+    db.query(Team).filter(Team.id.in_(round2_team_ids)).update(
+        {Team.current_round: 2, Team.is_qualified_for_next_round: True},
+        synchronize_session=False,
+    )
     cfg.tables_generated_at = now()
     cfg.generated_by = account.id
     action = "REGENERATE_TABLES" if regenerated else "GENERATE_TABLES"
@@ -340,6 +349,37 @@ def admin_tables(account: EventAccount = Depends(require_roles(EventRole.ADMIN))
     cfg = config(db)
     tables = db.query(Round2CaboTable).filter(Round2CaboTable.assigned_admin_id == account.id).order_by(Round2CaboTable.table_number).all()
     return {"success": True, "data": {"available": bool(cfg.tables_generated_at and tables), "finalized": cfg.is_finalized, "tables": tables_payload(db, tables)}, "message": "Round 2 table assignment loaded."}
+
+
+@router.get("/participant/assignment")
+def participant_assignment(account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)), db: Session = Depends(get_db)):
+    """Return only the logged-in team's five member-to-table assignments."""
+    cfg = config(db)
+    if not cfg.tables_generated_at or not account.team_id:
+        return {"success": True, "data": {"available": False, "team_identifier": None, "team_name": account.display_name, "assignments": []}, "message": "Round 2 assignments are not available for this team."}
+    team = db.query(Team).filter(Team.id == account.team_id).first()
+    seats = db.query(Round2CaboSeat, Round2CaboTable).join(
+        Round2CaboTable, Round2CaboTable.id == Round2CaboSeat.table_id
+    ).filter(Round2CaboSeat.team_id == account.team_id).order_by(Round2CaboTable.table_number).all()
+    participant_ids = [seat.participant_id for seat, _table in seats]
+    participants = {
+        item.id: item
+        for item in db.query(Participant).filter(Participant.id.in_(participant_ids)).all()
+    } if participant_ids else {}
+    assignments = [
+        {
+            "participant_id": seat.participant_id,
+            "participant_name": participants[seat.participant_id].name if seat.participant_id in participants else "Unknown member",
+            "table_number": table.table_number,
+        }
+        for seat, table in seats
+    ]
+    return {"success": True, "data": {
+        "available": len(assignments) == TABLE_SIZE,
+        "team_identifier": f"TEAM{1000 + team.team_number}" if team else account.login_id,
+        "team_name": team.name if team else account.display_name,
+        "assignments": assignments,
+    }, "message": "Your team's Round 2 table assignments are ready." if len(assignments) == TABLE_SIZE else "Round 2 assignments are not available for this team."}
 
 
 @router.post("/admin/tables/{table_number}/scores")
