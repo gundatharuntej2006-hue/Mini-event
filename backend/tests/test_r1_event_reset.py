@@ -1,6 +1,6 @@
 from app.core.security import get_password_hash
 from app.models.core import seed_default_teams
-from app.api.routes.r1_event import event_config, record_finish
+from app.api.routes.r1_event import answer_is_correct, event_config, record_finish
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
 from app.models.round1 import Round1RouteAllocationModel
 from app.models.team import Team
@@ -11,6 +11,20 @@ def login(client, login_id: str, password: str) -> dict:
     response = client.post("/api/v1/r1/login", json={"login_id": login_id, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['data']['token']}"}
+
+
+def test_round1_simple_answer_policy():
+    assert answer_is_correct(1, "ODD")
+    assert answer_is_correct(1, "odd")
+    assert answer_is_correct(1, "  OdD  ")
+    assert not answer_is_correct(1, "ODD-42")
+    assert answer_is_correct(2, "42")
+    assert answer_is_correct(2, " 42 ")
+    assert not answer_is_correct(2, "042")
+    assert answer_is_correct(3, "ODD-42")
+    assert answer_is_correct(3, "odd 42")
+    assert answer_is_correct(3, "OdD - 42")
+    assert not answer_is_correct(3, "ODD42")
 
 
 def test_super_admin_reset_requires_confirmation_and_clears_progress(client, db_session):

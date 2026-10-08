@@ -1,6 +1,7 @@
 """Small, mobile-first API surface for the live Treasure Hunt."""
 
 import io
+import re
 import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from app.services.round1_service import get_or_create_route_allocations, reset_r
 router = APIRouter(prefix="/r1", tags=["Round 1 Live Event"])
 bearer = HTTPBearer(auto_error=False)
 
-EXACT_ANSWERS = {1: "ODD", 2: "42", 3: "ODD-42"}
+EXACT_ANSWERS = {1: "ODD", 2: "42", 3: "ODD-42 / ODD 42"}
 QUALIFIER_LIMIT = 16
 BASE_POINTS = 400.0
 LOGIN_WINDOW_SECONDS = 60
@@ -42,7 +43,6 @@ class ScanInput(BaseModel):
 
 
 class AnswerInput(BaseModel):
-    # Intentionally no normalisation: capitals, spaces, and hyphens are exact.
     answer: str = Field(min_length=1, max_length=255)
 
 
@@ -75,6 +75,17 @@ class PasswordChangeInput(BaseModel):
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def answer_is_correct(checkpoint: int, submitted_answer: str) -> bool:
+    """Round 1's deliberately simple, case-insensitive answer policy."""
+    answer = submitted_answer.strip().upper()
+    if checkpoint == 1:
+        return answer == "ODD"
+    if checkpoint == 2:
+        return answer == "42"
+    # The final code needs both fragments, separated by a dash or whitespace.
+    return re.fullmatch(r"ODD(?:[-\s]+)42", answer) is not None
 
 
 def guard_login_rate(login_id: str) -> None:
@@ -336,7 +347,7 @@ def answer(payload: AnswerInput, account: EventAccount = Depends(require_roles(E
     if not has_scanned(db, allocation, checkpoint, location):
         raise HTTPException(status_code=403, detail="Scan your active location QR before entering an answer.")
 
-    exact = payload.answer == EXACT_ANSWERS[checkpoint]
+    exact = answer_is_correct(checkpoint, payload.answer)
     new_attempts = attempts + 1
     db.add(Round1CheckpointAttemptModel(
         id=f"att-{uuid.uuid4().hex[:18]}", team_identifier=allocation.team_identifier, team_id=allocation.team_id,
@@ -352,7 +363,7 @@ def answer(payload: AnswerInput, account: EventAccount = Depends(require_roles(E
             record_finish(db, allocation)
     db.commit()
     state = participant_state(db, account)
-    message = "Correct. Your next clue is now available." if exact and checkpoint < 3 else "Your time has been recorded. Please check Instagram for results." if exact else "That exact answer was not accepted. Check capitals, spaces, and hyphens."
+    message = "Correct. Your next clue is now available." if exact and checkpoint < 3 else "Your time has been recorded. Please check Instagram for results." if exact else "That answer was not accepted. Use the required code; capital letters do not matter."
     return {"success": True, "data": {"correct": exact, "state": state, "outcome": outcome_data(finish_outcome(db, account.team_id)) if exact and checkpoint == 3 else None}, "message": message}
 
 
