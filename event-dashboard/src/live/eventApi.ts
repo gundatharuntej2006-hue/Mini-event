@@ -16,7 +16,10 @@ export function clearSession() { localStorage.removeItem(sessionKey); }
 
 export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const session = getSession();
-  const response = await fetch(`${apiBase}/api/v1/r1${path}`, {
+  // Round 1 calls use short paths such as /control/overview. Round 2 calls
+  // already include their /r2 namespace and must not be nested below /r1.
+  const apiPath = path.startsWith('/r2/') ? `/api/v1${path}` : `/api/v1/r1${path}`;
+  const response = await fetch(`${apiBase}${apiPath}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
