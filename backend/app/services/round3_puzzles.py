@@ -8,7 +8,8 @@ performs the authoritative comparison and scoring on the server.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class Puzzle:
     answers: tuple[str, ...]
     answer_label: str
     visual_kind: str = "cards"
+    is_quirky: bool = False
 
 
 def normalize_answer(value: str) -> str:
@@ -100,11 +102,12 @@ _NAMES = (
 
 
 def _puzzle(table: int, index: int, title: str, eyebrow: str, story: str, prompt: str,
-            display: tuple[str, ...], answers: tuple[str, ...], answer_label: str) -> Puzzle:
+            display: tuple[str, ...], answers: tuple[str, ...], answer_label: str,
+            *, is_quirky: bool = False, key_prefix: str = "G") -> Puzzle:
     return Puzzle(
-        key=f"{table}G{index:02d}", title=title, eyebrow=eyebrow, story=story,
+        key=f"{table}{key_prefix}{index:02d}", title=title, eyebrow=eyebrow, story=story,
         prompt=prompt, display=display, answers=answers, answer_label=answer_label,
-        visual_kind=_VISUAL_KINDS[table],
+        visual_kind=_VISUAL_KINDS[table], is_quirky=is_quirky,
     )
 
 
@@ -385,7 +388,7 @@ def _quick_puzzles(count: int) -> tuple[Puzzle, ...]:
             total = friends * pieces_each
             items.append(_puzzle(8, number, f"Emergency Pizza Split #{number}", "QUICK THINK / FAIR SHARE",
                 "Every friend receives exactly the same number of slices.", "How many slices does each friend get?",
-                (f"{total} SLICES", f"{friends} FRIENDS", "NO LEFTOVERS"), (str(pieces_each),), "Slices each"))
+                (f"{total} SLICES", f"{friends} FRIENDS", "NO LEFTOVERS"), (str(pieces_each),), "Slices each", is_quirky=True))
         elif mode == 1:
             younger_then = 7 + i % 7
             years_ago = 4 + i % 4
@@ -393,20 +396,70 @@ def _quick_puzzles(count: int) -> tuple[Puzzle, ...]:
             answer = younger_then + years_ago
             items.append(_puzzle(8, number, f"Security Age Check #{number}", "QUICK THINK / AGE",
                 f"{years_ago} years ago, Ravi was twice Mina's age. Ravi is {older_now} now.", "How old is Mina now?",
-                (f"RAVI NOW: {older_now}", f"{years_ago} YEARS AGO: RAVI = 2 × MINA"), (str(answer),), "Mina's age"))
+                (f"RAVI NOW: {older_now}", f"{years_ago} YEARS AGO: RAVI = 2 × MINA"), (str(answer),), "Mina's age", is_quirky=True))
         elif mode == 2:
             twenties = 1 + (i % 8)
             tens = 10 - twenties
             total = twenties * 20 + tens * 10
             items.append(_puzzle(8, number, f"Cash Counter #{number}", "QUICK THINK / NOTES",
                 "A cashier uses exactly 10 notes, all either ₹10 or ₹20.", "How many ₹20 notes were used?",
-                (f"TOTAL: ₹{total}", "10 NOTES", "ONLY ₹10 AND ₹20"), (str(twenties),), "Number of ₹20 notes"))
+                (f"TOTAL: ₹{total}", "10 NOTES", "ONLY ₹10 AND ₹20"), (str(twenties),), "Number of ₹20 notes", is_quirky=True))
         else:
             prompt, answer = trick_bank[(i // 4) % len(trick_bank)]
             items.append(_puzzle(8, number, f"Trapdoor Question #{number}", "QUICK THINK / WORD TRAP",
                 "Read the wording carefully. Speed is useful; assumptions are not.", prompt,
-                ("NO CALCULATOR NEEDED", "THE WORDING IS THE CLUE"), (answer,), "Final answer"))
+                ("NO CALCULATOR NEEDED", "THE WORDING IS THE CLUE"), (answer,), "Final answer", is_quirky=True))
     return tuple(items)
+
+
+_QUIRKY_BANK: dict[int, tuple[tuple[str, str, str, tuple[str, ...], str], ...]] = {
+    1: (
+        ("Dosa Family", "Two fathers and two sons share three dosas, and each person gets one.", "How many people are there?", ("Everyone receives exactly one dosa.",), "3"),
+        ("Calendar Ambush", "The day after tomorrow is Monday.", "What day is today?", ("Move backward two days from Monday.",), "Saturday"),
+        ("Sock Drawer", "A dark drawer contains black and white socks.", "How many socks guarantee a matching-colour pair?", ("Only two colours exist.",), "3"),
+        ("Samosa Machine", "Five machines make five samosas in five minutes.", "How long do 100 machines need to make 100 samosas?", ("Every machine works at the same rate.",), "5"),
+        ("Bat and Ball", "A bat and ball cost ₹110. The bat costs ₹100 more than the ball.", "What does the ball cost?", ("BAT = BALL + ₹100",), "5"),
+        ("Three Switches", "Three switches control one bulb in a closed room. You may enter the room once.", "What extra clue identifies the switch after using two switches?", ("A bulb can be on, off, or recently warmed.",), "Heat"),
+        ("Heavy Marble", "One of eight identical-looking marbles is heavier.", "Minimum balance-scale weighings needed to guarantee finding it?", ("A weighing has three outcomes.",), "2"),
+        ("Thirty Rupees", "Two coins total ₹30. One of the coins is not ₹10.", "What is the other coin?", ("Only one coin was said not to be ₹10.",), "₹10"),
+        ("Clock Strikes", "A clock takes 5 seconds to strike 6 times.", "How long does it take to strike 12 times?", ("Six strikes contain five equal gaps.",), "11"),
+        ("Ravi's Doctors", "Three doctors say Ravi is their brother. Ravi says he has no brothers.", "Who are the doctors?", ("Ravi's statement can still be true.",), "Sisters"),
+    ),
+    2: (
+        ("Look and Say", "Each term describes the digits in the term before it.", "What follows 1, 11, 21, 1211?", ("one 1; two 1s; one 2 one 1",), "111221"),
+        ("Month Initials", "J, F, M, A, M, J, J, A", "Which initial comes next?", ("Read calendar months in order.",), "S"),
+        ("Square Steps", "1, 4, 9, 16", "Which number comes next?", ("1², 2², 3², 4²",), "25"),
+        ("Number Words", "O, T, T, F, F", "Which letter comes next?", ("Initials of one, two, three…",), "S"),
+        ("Almost Double", "2, 3, 5, 9, 17", "Which number comes next?", ("Double, then subtract one.",), "33"),
+        ("Alphabet Squeeze", "AZ, BY, CX", "Which pair comes next?", ("One side rises while the other falls.",), "DW"),
+        ("Growing Multiplier", "3, 6, 18, 72", "Which number comes next?", ("Multiply by 2, then 3, then 4…",), "360"),
+        ("Week Code", "Monday is 1 and Tuesday is 2.", "What is Sunday?", ("Continue the weekday order.",), "7"),
+        ("Letter Gaps", "A, C, F, J, O", "Which letter comes next?", ("The jumps are +2, +3, +4, +5…",), "U"),
+        ("Divide by Three", "81, 27, 9, 3", "Which number comes next?", ("Each term is one third of the previous term.",), "1"),
+    ),
+    3: (
+        ("One-Letter Envelope", "It begins with E, ends with E, and contains one letter.", "What is it?", ("The letter can be posted.",), "Envelope"),
+        ("Keys Without Locks", "It has keys but no locks, space but no room.", "What is it?", ("You may be using one now.",), "Keyboard"),
+        ("Make It Shorter", "Add two letters to the word SHORT.", "What new word describes the result?", ("SHORT + two letters",), "Shorter"),
+        ("Queue Vanishing", "Remove four letters from a five-letter word and its pronunciation stays the same.", "Which word?", ("People may stand in one.",), "Queue"),
+        ("Invisible Reply", "It speaks without a mouth and answers without thinking.", "What is it?", ("It repeats what it hears.",), "Echo"),
+        ("Many Teeth", "It has many teeth but cannot bite.", "What is it?", ("It is used on hair.",), "Comb"),
+        ("Corner Traveller", "It travels around the world while staying in one corner.", "What is it?", ("It rides on an envelope.",), "Stamp"),
+        ("One Eye", "It has one eye but cannot see.", "What is it?", ("Thread passes through its eye.",), "Needle"),
+        ("Wetter While Drying", "It gets wetter while it dries something else.", "What is it?", ("Usually found near a washbasin.",), "Towel"),
+        ("Used By Others", "It belongs to you, but other people use it more than you do.", "What is it?", ("People say it to get your attention.",), "Name"),
+    ),
+}
+
+
+def _quirky_puzzles(table: int) -> tuple[Puzzle, ...]:
+    return tuple(
+        _puzzle(
+            table, index, title, "QUIRKY / READ TWICE", story, prompt, display,
+            (answer,), "Choose the best answer", is_quirky=True, key_prefix="Q",
+        )
+        for index, (title, story, prompt, display, answer) in enumerate(_QUIRKY_BANK.get(table, ()), start=1)
+    )
 
 
 _GENERATORS = {
@@ -420,15 +473,25 @@ _GENERATORS = {
     8: _quick_puzzles,
 }
 
-# 35 puzzles at stations 1–3 and 34 at stations 4–8: exactly 275.
-_TARGET_COUNTS = {1: 35, 2: 35, 3: 35, 4: 34, 5: 34, 6: 34, 7: 34, 8: 34}
-PUZZLES: dict[int, tuple[Puzzle, ...]] = {
-    table: _BASE_PUZZLES[table] + _GENERATORS[table](_TARGET_COUNTS[table] - len(_BASE_PUZZLES[table]))
-    for table in range(1, 9)
-}
+# Fifty questions per station. Exactly eighty of the four hundred (20%) are
+# clearly tagged quirky questions; the remainder are visual logic/word puzzles.
+_TARGET_COUNTS = {table: 50 for table in range(1, 9)}
 
-assert sum(len(items) for items in PUZZLES.values()) == 275
-assert len({puzzle.key for items in PUZZLES.values() for puzzle in items}) == 275
+
+def _build_table(table: int) -> tuple[Puzzle, ...]:
+    base = _BASE_PUZZLES[table]
+    if table == 8:
+        base = tuple(replace(puzzle, is_quirky=True) for puzzle in base)
+    quirky = _quirky_puzzles(table)
+    generated_count = _TARGET_COUNTS[table] - len(base) - len(quirky)
+    return base + _GENERATORS[table](generated_count) + quirky
+
+
+PUZZLES: dict[int, tuple[Puzzle, ...]] = {table: _build_table(table) for table in range(1, 9)}
+
+assert sum(len(items) for items in PUZZLES.values()) == 400
+assert len({puzzle.key for items in PUZZLES.values() for puzzle in items}) == 400
+assert sum(puzzle.is_quirky for items in PUZZLES.values() for puzzle in items) == 80
 
 _PUZZLE_INDEX = {puzzle.key: puzzle for items in PUZZLES.values() for puzzle in items}
 
@@ -474,6 +537,7 @@ def _choice_kind(value: str) -> str:
     return "word"
 
 
+@lru_cache(maxsize=None)
 def multiple_choice_options(puzzle: Puzzle) -> tuple[str, ...]:
     """Build four deterministic options without exposing which one is valid."""
     accepted = {normalize_answer(item) for item in puzzle.answers}
@@ -581,6 +645,7 @@ def public_payload(puzzle: Puzzle) -> dict:
         "display": list(puzzle.display),
         "options": list(multiple_choice_options(puzzle)),
         "answer_label": puzzle.answer_label,
+        "quirky": puzzle.is_quirky,
         "visual_kind": puzzle.visual_kind if puzzle.visual_kind != "cards" else _VISUAL_KINDS[int(puzzle.key[0])],
     }
 

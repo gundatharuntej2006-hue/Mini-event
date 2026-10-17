@@ -992,7 +992,7 @@ export function Round3SuperPage() {
   });
   const [correction, setCorrection] = useState({
     team_identifier: "",
-    delta: "",
+    points: "",
     reason: "",
   });
   const [qualifyingCount, setQualifyingCount] = useState("6");
@@ -1373,9 +1373,15 @@ export function Round3SuperPage() {
                   <Sparkles size={26} />
                   <b>Question bank</b>
                   <span>
-                    {data?.questions.used ?? 0}/{data?.questions.total ?? 275}{" "}
+                    {data?.questions.used ?? 0}/{data?.questions.total ?? 400}{" "}
                     permanently used · 75 seconds
                   </span>
+                  <ArrowUpRight size={16} />
+                </button>
+                <button onClick={() => navigate("/round3/demo")}>
+                  <Zap size={26} />
+                  <b>Safe demo session</b>
+                  <span>Practice the 75-second flow with zero database writes</span>
                   <ArrowUpRight size={16} />
                 </button>
                 <button onClick={() => setSection("TEAMS")}>
@@ -2012,8 +2018,9 @@ export function Round3SuperPage() {
                 </span>
                 <h2>Every point accounted for.</h2>
                 <p>
-                  Verify opening figures before start. During the round, use a
-                  reasoned correction; the ledger records every adjustment.
+                  Verify opening figures before start. You can set an exact
+                  total before or during the round; every live change is saved
+                  in the private audit ledger.
                 </p>
               </div>
               <div className="r3-team-grid">
@@ -2119,30 +2126,31 @@ export function Round3SuperPage() {
                   event.preventDefault();
                   if (
                     await act(
-                      "/r3-live/control/teams/adjust",
-                      { ...correction, delta: Number(correction.delta) },
-                      "Audited point correction saved.",
+                      "/r3-live/control/teams/set-balance",
+                      { ...correction, points: Number(correction.points) },
+                      "Exact team total saved.",
                     )
                   )
                     setCorrection({
                       team_identifier: "",
-                      delta: "",
+                      points: "",
                       reason: "",
                     });
                 }}
               >
                 <span className="r3-kicker">AUDITED SUPER ADMIN ACTION</span>
-                <h3>Correct a live balance</h3>
+                <h3>Set an exact team total</h3>
                 <p>
-                  Positive points credit a team; negative points deduct. A
-                  reason is saved in their private ledger.
+                  Enter the total the team should have. Before start this edits
+                  the opening balance; after start the difference is recorded
+                  as an audited correction.
                 </p>
                 <div className="r3-admin-fields">
                   <label>
                     Team
                     <select
                       required
-                      disabled={!data?.started || busy}
+                      disabled={busy || data?.qualification.finalized}
                       value={correction.team_identifier}
                       onChange={(event) =>
                         setCorrection({
@@ -2163,17 +2171,18 @@ export function Round3SuperPage() {
                     </select>
                   </label>
                   <label>
-                    Points ±
+                    Exact total
                     <input
                       required
                       type="number"
                       step="0.01"
-                      disabled={!data?.started || busy}
-                      value={correction.delta}
+                      min="0"
+                      disabled={busy || data?.qualification.finalized}
+                      value={correction.points}
                       onChange={(event) =>
                         setCorrection({
                           ...correction,
-                          delta: event.target.value,
+                          points: event.target.value,
                         })
                       }
                     />
@@ -2183,7 +2192,7 @@ export function Round3SuperPage() {
                     <input
                       required
                       minLength={5}
-                      disabled={!data?.started || busy}
+                      disabled={busy || data?.qualification.finalized}
                       value={correction.reason}
                       onChange={(event) =>
                         setCorrection({
@@ -2195,9 +2204,9 @@ export function Round3SuperPage() {
                   </label>
                   <button
                     className="r3-button peach"
-                    disabled={!data?.started || busy}
+                    disabled={busy || data?.qualification.finalized}
                   >
-                    Record correction
+                    Save exact total
                   </button>
                 </div>
               </form>

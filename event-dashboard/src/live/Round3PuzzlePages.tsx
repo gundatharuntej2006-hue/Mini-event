@@ -4,6 +4,7 @@ import {
   ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -19,6 +20,7 @@ import {
   Sparkles,
   Timer,
   Users,
+  Volume2,
   Wallet,
   XCircle,
   Zap,
@@ -127,6 +129,41 @@ const points = (value: number | null | undefined) =>
     ? value.toLocaleString("en-IN", { maximumFractionDigits: 2 })
     : "—";
 
+function playAuctionBell() {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioContextClass) return;
+  const context = new AudioContextClass();
+  const now = context.currentTime;
+  [660, 990, 1320].forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, now);
+    gain.gain.setValueAtTime(0.0001, now + index * 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.18 / (index + 1), now + 0.025 + index * 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.15 + index * 0.08);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(now + index * 0.04);
+    oscillator.stop(now + 1.3 + index * 0.08);
+  });
+  window.setTimeout(() => void context.close(), 1700);
+}
+
+function speakAuctionRelease(title: string) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const message = new SpeechSynthesisUtterance(
+    `Attention. Auction item released. ${title}. Bidding is now open.`,
+  );
+  message.rate = 0.88;
+  message.pitch = 0.82;
+  message.volume = 1;
+  window.speechSynthesis.speak(message);
+}
+
 function Countdown({
   until,
   onEnd,
@@ -163,9 +200,11 @@ function Countdown({
 function Shell({
   children,
   signout = false,
+  back = "/station",
 }: {
   children: ReactNode;
   signout?: boolean;
+  back?: string;
 }) {
   const navigate = useNavigate();
   const leave = async () => {
@@ -186,7 +225,7 @@ function Shell({
             <i /> ROUND 03 / AUTOMATED FLOOR
           </span>
           <button
-            onClick={signout ? leave : () => navigate("/station")}
+            onClick={signout ? leave : () => navigate(back)}
             aria-label={signout ? "Sign out" : "Back"}
           >
             {signout ? <LogOut size={18} /> : <ArrowLeft size={18} />}
@@ -195,6 +234,83 @@ function Shell({
         {children}
       </main>
     </LiveShell>
+  );
+}
+
+type DemoPuzzle = Puzzle & { answers: string[]; quirky?: boolean };
+type DemoBank = {
+  total: number;
+  game_seconds: number;
+  tables: { table_number: number; station_name: string; puzzles: DemoPuzzle[] }[];
+};
+
+export function Round3PuzzleDemoPage() {
+  const navigate = useNavigate();
+  const [bank, setBank] = useState<DemoBank | null>(null);
+  const [index, setIndex] = useState(0);
+  const [selected, setSelected] = useState("");
+  const [deadline, setDeadline] = useState<string | null>(null);
+  const [result, setResult] = useState<boolean | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (getSession()?.role !== "SUPER_ADMIN") {
+      navigate("/login", { replace: true });
+      return;
+    }
+    request<DemoBank>("/r3-live/control/puzzle-bank")
+      .then(setBank)
+      .catch((problem) => setError(errorText(problem)));
+  }, []);
+  const puzzles = useMemo(
+    () => bank?.tables.flatMap((table) => table.puzzles) || [],
+    [bank],
+  );
+  const puzzle = puzzles[index % Math.max(1, puzzles.length)];
+  const start = (next = index) => {
+    setIndex(next % Math.max(1, puzzles.length));
+    setSelected("");
+    setResult(null);
+    setDeadline(new Date(Date.now() + 75000).toISOString());
+  };
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    <Shell back="/round3/control">
+      <section className="station-header">
+        <div>
+          <span className="puzzle-kicker"><Sparkles size={14} /> SAFE ORGANIZER DEMO</span>
+          <h1>Practice <em>station</em></h1>
+          <p>No points, attempts, question usage, or live queues are saved here.</p>
+        </div>
+        <div><small>QUESTION BANK</small><strong>{bank?.total || "—"}</strong></div>
+      </section>
+      <Alert error={error} notice={result === true ? "Correct — demo only." : result === false ? "Incorrect or timed out — demo only." : ""} />
+      {!puzzle || !deadline ? (
+        <section className="station-wait">
+          <Sparkles />
+          <h2>Run a harmless practice session.</h2>
+          <p>This previews the real 75-second MCQ flow without touching production scores.</p>
+          <button disabled={!puzzles.length} onClick={() => start(0)}>Start demo</button>
+        </section>
+      ) : (
+        <section className="station-puzzle">
+          <header>
+            <div><span>{puzzle.eyebrow}</span><h2>{puzzle.title}</h2></div>
+            <div><small>DEMO TIME</small><Countdown until={deadline} onEnd={() => setResult(false)} /></div>
+          </header>
+          <div className="puzzle-brief">
+            <p>{puzzle.story}</p>
+            <PuzzleVisual puzzle={puzzle} />
+            <div className="puzzle-display">{puzzle.display.map((line, lineIndex) => <div key={lineIndex}><span>{String(lineIndex + 1).padStart(2, "0")}</span><b>{line}</b></div>)}</div>
+            <h3>{puzzle.prompt}</h3>
+          </div>
+          <div className="answer-lock">
+            <div className="answer-options" role="radiogroup">{puzzle.options.map((option, optionIndex) => <button key={option} type="button" role="radio" aria-checked={selected === option} className={selected === option ? "selected" : ""} disabled={result !== null} onClick={() => setSelected(option)}><span>{String.fromCharCode(65 + optionIndex)}</span><b>{option}</b></button>)}</div>
+            {result === null ? <button disabled={!selected} onClick={() => setResult(puzzle.answers.some((answer) => normalize(answer) === normalize(selected)))}>Lock demo option <LockKeyhole size={19} /></button> : <button onClick={() => start(index + 1)}>Next demo question <RefreshCw size={18} /></button>}
+          </div>
+        </section>
+      )}
+      <footer className="puzzle-footer">DEMO ONLY <span>ZERO DATABASE WRITES</span></footer>
+    </Shell>
   );
 }
 
@@ -294,6 +410,10 @@ export function Round3PuzzleParticipantPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [auctionAudio, setAuctionAudio] = useState(
+    () => window.localStorage.getItem("r3-auction-audio") === "on",
+  );
+  const previousLotStatus = useRef<Map<string, string> | null>(null);
   const load = (quiet = false) =>
     request<ParticipantState>("/r3-live/participant/state")
       .then(setData)
@@ -309,6 +429,24 @@ export function Round3PuzzleParticipantPage() {
     const timer = window.setInterval(() => void load(true), 2500);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!data?.lots) return;
+    const current = new Map(data.lots.map((lot) => [lot.id, lot.status]));
+    if (previousLotStatus.current && auctionAudio) {
+      const released = data.lots.filter(
+        (lot) =>
+          lot.status === "LIVE" &&
+          previousLotStatus.current?.get(lot.id) !== "LIVE",
+      );
+      released.forEach((lot, index) => {
+        window.setTimeout(() => {
+          playAuctionBell();
+          window.setTimeout(() => speakAuctionRelease(lot.title), 850);
+        }, index * 2600);
+      });
+    }
+    previousLotStatus.current = current;
+  }, [data?.lots, auctionAudio]);
   async function post(path: string, body?: unknown, success = "Updated.") {
     setBusy(true);
     setError("");
@@ -389,7 +527,7 @@ export function Round3PuzzleParticipantPage() {
           <Users />
           <span>
             <small>LIVE ASSIGNMENTS</small>
-            <b>{active.length} / 3</b>
+            <b>{active.length} / 2</b>
           </span>
         </div>
         <div>
@@ -412,6 +550,29 @@ export function Round3PuzzleParticipantPage() {
           onClick={() => setView("AUCTION")}
         >
           <Gavel size={17} /> Clue auction
+        </button>
+        <button
+          className={auctionAudio ? "audio-on" : ""}
+          onClick={() => {
+            const enabled = !auctionAudio;
+            setAuctionAudio(enabled);
+            window.localStorage.setItem(
+              "r3-auction-audio",
+              enabled ? "on" : "off",
+            );
+            if (enabled) {
+              playAuctionBell();
+              window.setTimeout(
+                () => speakAuctionRelease("Audio alerts enabled"),
+                650,
+              );
+            } else if ("speechSynthesis" in window) {
+              window.speechSynthesis.cancel();
+            }
+          }}
+          title="Browsers require one tap before auction audio can play"
+        >
+          <Volume2 size={17} /> {auctionAudio ? "Audio on" : "Enable audio"}
         </button>
       </nav>
       {view === "MISSIONS" ? (
@@ -446,12 +607,16 @@ export function Round3PuzzleParticipantPage() {
             </div>
             <button
               className="puzzle-primary"
-              disabled={!member || !data?.open || busy || active.length >= 3}
+              disabled={!member || !data?.open || busy || active.length >= 2}
               onClick={() => void assign()}
             >
               {busy ? "Scanning stations…" : "Assign an available table"}{" "}
               <MapPin size={18} />
             </button>
+            <small className="answer-note">
+              Up to three team devices may stay logged in, but only two players
+              can hold table assignments at the same time.
+            </small>
             <div className="cooldown-rule">
               <LockKeyhole size={19} />
               <span>

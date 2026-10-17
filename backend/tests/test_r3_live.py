@@ -33,20 +33,21 @@ def reveal_code(client, headers, attempt_id):
     return code
 
 
-def test_puzzle_bank_has_275_server_validated_questions():
+def test_puzzle_bank_has_400_server_validated_questions():
     assert {table: len(items) for table, items in PUZZLES.items()} == {
-        1: 35, 2: 35, 3: 35, 4: 34, 5: 34, 6: 34, 7: 34, 8: 34,
+        table: 50 for table in range(1, 9)
     }
     puzzles = [puzzle for items in PUZZLES.values() for puzzle in items]
-    assert len(puzzles) == 275
-    assert len({puzzle.key for puzzle in puzzles}) == 275
+    assert len(puzzles) == 400
+    assert len({puzzle.key for puzzle in puzzles}) == 400
+    assert sum(puzzle.is_quirky for puzzle in puzzles) == 80
     for puzzle in puzzles:
         assert puzzle.title and puzzle.story and puzzle.prompt and puzzle.display
         assert is_correct(puzzle, puzzle.answers[0])
         assert not is_correct(puzzle, "")
         public = public_payload(puzzle)
         assert "answers" not in public
-        assert len(public["options"]) >= 4
+        assert len(public["options"]) == 4
         assert len({item.casefold() for item in public["options"]}) == len(public["options"])
         assert sum(is_correct(puzzle, option) for option in public["options"]) == 1
         assert public["visual_kind"] in {
@@ -82,7 +83,7 @@ def test_private_setup_and_auction_game_flow(client, db_session, monkeypatch):
     assert client.get("/api/v1/r3-live/control/puzzle-bank", headers=team_headers).status_code == 403
     private_bank = client.get("/api/v1/r3-live/control/puzzle-bank", headers=super_headers)
     assert private_bank.status_code == 200, private_bank.json()
-    assert private_bank.json()["data"]["total"] == 275
+    assert private_bank.json()["data"]["total"] == 400
     assert private_bank.json()["data"]["game_seconds"] == 75
     assert private_bank.json()["data"]["tables"][0]["puzzles"][0]["answers"] == ["divya"]
     private = client.get("/api/v1/r3-live/participant/state", headers=team_headers)

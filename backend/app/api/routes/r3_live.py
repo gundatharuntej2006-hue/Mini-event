@@ -52,6 +52,22 @@ STATION_NAMES = (
     "Alibi Logic", "Pattern Decoder", "Wordplay Trap", "Spatial Scramble",
     "Deduction Desk", "Observation Vault", "Sequence Signal", "Quick-Thinking Lock",
 )
+MAX_ACTIVE_TEAM_ASSIGNMENTS = 2
+
+# Confirmed Day 2 attendance roster. This changes participant display records
+# only; team login IDs, password hashes, scores and account activation are not
+# touched. A deployment before the round starts safely reconciles these names.
+ROUND3_ROSTER_OVERRIDES = {
+    24: ("Diganth Sairam Kothari", "D Venkatesh Kumar", "Anirudh CR", "Samarth Sudesh Shenoy"),
+    17: ("Arnav Atul", "Ujjwal Kumar Gupta", "Kumar Satyam", "Ishan Verma", "Nalin Sharma"),
+    7: ("Divyansh Mishra", "Namish Goyal", "Naman Kashyap", "Kartik Sahni", "Saanvi Pawar"),
+    31: ("Kokil Reddy", "Vishwas Skandhan", "Shashank", "Sujan"),
+    32: ("Varnit Gupta", "Parasmani", "Divyansh Kumar Singh", "Archit Kumar", "Ayush Kumar Yadav"),
+    2: ("Sai Nikhil Meda", "Rohit Gudage", "G Avinash Reddy", "N Soha", "Risha S Rao"),
+    26: ("Dinesh R", "Aditi Y A", "Trisha Kadur", "Varsha H V", "Purvi Reddy H"),
+    18: ("D Mithun", "Rakshan M", "M S Pranay", "Harsha D Y", "Vaageesha Theertha"),
+    16: ("Kavya Sahu", "J Benito Nathanael", "Pranav Rakshith M", "Kushishree Suresh", "Shreyaa N D"),
+}
 
 
 def utcnow() -> datetime:
@@ -65,6 +81,50 @@ def as_utc(value: datetime) -> datetime:
 def normalize_final_code(value: str) -> bool:
     """For the later legal-round gate only; not used to enter Round 3."""
     return re.sub(r"\s+", "", value).casefold() == "oddecho"
+
+
+def _person_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def sync_round3_rosters(db: Session) -> None:
+    """Reconcile confirmed attendees without changing any login credentials."""
+    for team_number, desired_names in ROUND3_ROSTER_OVERRIDES.items():
+        team = db.query(Team).filter(Team.team_number == team_number).first()
+        if not team:
+            continue
+        current = db.query(Participant).filter(Participant.team_id == team.id).order_by(
+            Participant.created_at, Participant.id
+        ).all()
+        unused = current[:]
+        assignments: list[tuple[Participant, str]] = []
+        for desired in desired_names:
+            desired_key = _person_key(desired)
+            match = next((person for person in unused if _person_key(person.name) == desired_key), None)
+            if match is None:
+                first = desired_key[:4]
+                match = next((person for person in unused if _person_key(person.name).startswith(first)), None)
+            if match is None and unused:
+                match = unused[0]
+            if match is None:
+                # Current selected teams all have enough existing participant
+                # records, but keep this path safe for a later roster addition.
+                suffix = uuid.uuid4().hex[:10]
+                match = Participant(
+                    name=desired,
+                    email=f"r3-{team_number}-{suffix}@event.local",
+                    usn=f"R3-{team_number}-{suffix}",
+                    team_id=team.id,
+                )
+                db.add(match)
+            else:
+                unused.remove(match)
+            assignments.append((match, desired))
+        for person, desired in assignments:
+            person.name = desired
+            person.team_id = team.id
+        for person in unused:
+            person.team_id = None
 
 
 class OpeningPointsInput(BaseModel):
@@ -96,6 +156,12 @@ class DealerReassignmentInput(BaseModel):
 class BalanceAdjustmentInput(BaseModel):
     team_identifier: str
     delta: float = Field(allow_inf_nan=False, ge=-100000, le=100000)
+    reason: str = Field(min_length=5, max_length=200)
+
+
+class BalanceSetInput(BaseModel):
+    team_identifier: str
+    points: float = Field(ge=0, le=100000, allow_inf_nan=False)
     reason: str = Field(min_length=5, max_length=200)
 
 
@@ -354,6 +420,7 @@ def ensure_setup(db: Session) -> None:
         # Upgrade an earlier, unstarted preview setup in place. Production data
         # is never rewritten after the round has started.
         if not config(db).starts_at:
+            sync_round3_rosters(db)
             for table in db.query(Round3DealerTable).order_by(Round3DealerTable.table_number).all():
                 table.game_mode = "ONLINE"
                 if "awaiting organizer choice" in table.game_name.casefold():
@@ -391,12 +458,13 @@ def ensure_setup(db: Session) -> None:
             game_name=STATION_NAMES[number - 1],
             admin_id=admins[number - 1].id if len(admins) >= number else None,
             is_enabled=False,
-            max_points=20,
+            max_points=50,
         ))
     for level, count in ((1, 3), (2, 2)):
         for number in range(1, count + 1):
             db.add(Round3AuctionLot(level=level, token_number=number, title=f"Level {level} clue token {number}", description="Case clue details pending organizer approval.", opening_bid=0))
     qualification_rule(db)
+    sync_round3_rosters(db)
     db.commit()
 
 
@@ -408,11 +476,39 @@ def control_overview(account: EventAccount = Depends(require_roles(EventRole.SUP
     tables = db.query(Round3DealerTable).order_by(Round3DealerTable.table_number).all()
     lots = db.query(Round3AuctionLot).order_by(Round3AuctionLot.level, Round3AuctionLot.token_number).all()
     rule = qualification_rule(db)
-    ranked = sorted(rows, key=lambda item: (-balance(db, item[0]), item[1].name.casefold(), item[1].team_number))
+    ledger_totals = {
+        team_id: float(total or 0)
+        for team_id, total in db.query(
+            Round3LiveLedger.team_id, func.sum(Round3LiveLedger.delta)
+        ).group_by(Round3LiveLedger.team_id).all()
+    }
+    balances = {
+        row.team_id: round(float(row.opening_points) + ledger_totals.get(row.team_id, 0), 2)
+        for row, _team in rows
+    }
+    member_counts = {
+        team_id: count
+        for team_id, count in db.query(Participant.team_id, func.count(Participant.id))
+        .filter(Participant.team_id.in_([row.team_id for row, _team in rows]))
+        .group_by(Participant.team_id).all()
+    }
+    played_counts = {
+        team_id: count
+        for team_id, count in db.query(
+            Round3GameAttempt.team_id,
+            func.count(func.distinct(Round3GameAttempt.participant_id)),
+        ).filter(Round3GameAttempt.status == "COMPLETE")
+        .group_by(Round3GameAttempt.team_id).all()
+    }
+    admins_by_id = {
+        admin.id: admin
+        for admin in db.query(EventAccount).filter(EventAccount.role == EventRole.ADMIN).all()
+    }
+    ranked = sorted(rows, key=lambda item: (-balances[item[0].team_id], item[1].name.casefold(), item[1].team_number))
     qualified_ids = {item.team_id for item in db.query(Round3QualifiedTeam).all()}
     cutoff_tie = bool(
         rule.qualifying_count < len(ranked)
-        and balance(db, ranked[rule.qualifying_count - 1][0]) == balance(db, ranked[rule.qualifying_count][0])
+        and balances[ranked[rule.qualifying_count - 1][0].team_id] == balances[ranked[rule.qualifying_count][0].team_id]
     )
     rank_by_team = {row.team_id: index + 1 for index, (row, _team) in enumerate(ranked)}
     return {"success": True, "data": {
@@ -420,17 +516,15 @@ def control_overview(account: EventAccount = Depends(require_roles(EventRole.SUP
         "ends_at": as_utc(cfg.ends_at).isoformat() if cfg.ends_at else None,
         "teams": [{
             "team_identifier": f"TEAM{1000 + team.team_number}", "team_name": team.name,
-            "opening_points": row.opening_points, "balance": balance(db, row),
-            "members": db.query(Participant).filter(Participant.team_id == team.id).count(),
-            "played": db.query(func.count(func.distinct(Round3GameAttempt.participant_id))).filter(
-                Round3GameAttempt.team_id == team.id, Round3GameAttempt.status == "COMPLETE"
-            ).scalar(),
+            "opening_points": row.opening_points, "balance": balances[row.team_id],
+            "members": member_counts.get(team.id, 0),
+            "played": played_counts.get(team.id, 0),
             "rank": rank_by_team[row.team_id],
             "projected_qualified": rank_by_team[row.team_id] <= rule.qualifying_count,
             "qualified": row.team_id in qualified_ids,
         } for row, team in rows],
         "tables": [{"number": t.table_number, "room": t.room_number, "mode": t.game_mode, "game_name": t.game_name, "max_points": t.max_points, "enabled": t.is_enabled,
-                    "admin": db.get(EventAccount, t.admin_id).login_id if t.admin_id and db.get(EventAccount, t.admin_id) else None} for t in tables],
+                    "admin": admins_by_id[t.admin_id].login_id if t.admin_id in admins_by_id else None} for t in tables],
         "admins": [{"login_id": admin.login_id, "display_name": admin.display_name, "is_active": admin.is_active}
                    for admin in db.query(EventAccount).filter(EventAccount.role == EventRole.ADMIN).order_by(EventAccount.login_id).all()],
         "lots": [lot_payload(db, lot) for lot in lots],
@@ -503,6 +597,7 @@ def set_opening_points(payload: OpeningPointsInput, account: EventAccount = Depe
     if not row:
         raise HTTPException(404, "This is not one of the thirteen selected teams.")
     row.opening_points = payload.points
+    team.total_score = payload.points
     db.commit()
     return {"success": True, "data": {"team_identifier": payload.team_identifier, "opening_points": row.opening_points}, "message": "Opening points updated before the round starts."}
 
@@ -527,6 +622,43 @@ def adjust_team_balance(payload: BalanceAdjustmentInput, account: EventAccount =
     sync_team_total(db, row.team_id)
     db.commit()
     return {"success": True, "data": {"balance": balance(db, row)}, "message": "Audited team balance correction saved."}
+
+
+@router.post("/control/teams/set-balance")
+def set_team_balance(payload: BalanceSetInput, account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Set an exact team total while retaining an auditable correction ledger."""
+    ensure_setup(db)
+    rule = qualification_rule(db)
+    if rule.finalized_at:
+        raise HTTPException(409, "Points are locked after Round 4 qualifiers are finalized.")
+    identifier = payload.team_identifier.strip().upper()
+    number_text = identifier.removeprefix("TEAM")
+    team = db.query(Team).filter(Team.team_number == int(number_text) - 1000).first() if number_text.isdigit() else None
+    row = db.get(Round3LiveTeam, team.id) if team else None
+    if not row:
+        raise HTTPException(404, "This is not one of the thirteen selected teams.")
+    db.query(Round3LiveTeam).filter(Round3LiveTeam.team_id == row.team_id).with_for_update().one()
+    cfg = config(db)
+    if not cfg.starts_at:
+        row.opening_points = payload.points
+        team.total_score = payload.points
+        db.commit()
+        return {"success": True, "data": {"balance": payload.points}, "message": "Exact opening total saved."}
+    current = balance(db, row)
+    delta = round(payload.points - current, 2)
+    if payload.points < held_bids(db, row.team_id):
+        raise HTTPException(409, "The new total cannot be lower than points held in leading bids.")
+    if delta:
+        db.add(Round3LiveLedger(
+            team_id=row.team_id,
+            delta=delta,
+            category="ADMIN_CORRECTION",
+            description=f"Organizer set exact total to {payload.points:g}: {payload.reason.strip()}",
+            reference_id=f"set-balance-{uuid.uuid4().hex}",
+        ))
+        sync_team_total(db, row.team_id)
+    db.commit()
+    return {"success": True, "data": {"balance": balance(db, row)}, "message": "Exact team total saved with an audit entry."}
 
 
 @router.get("/control/teams/{team_identifier}")
@@ -833,8 +965,8 @@ def assign_station(payload: SpinInput, account: EventAccount = Depends(require_r
     participant = db.get(Participant, payload.participant_id)
     if not participant or participant.team_id != row.team_id:
         raise HTTPException(403, "Select a member of your own team.")
-    # Three team logins may hold three simultaneous reservations, but the same
-    # member cannot be sent to two tables at once.
+    # Three devices may remain logged in, but only two players from one team
+    # may occupy stations at the same time. The third device can follow/bid.
     db.query(Round3LiveTeam).filter(Round3LiveTeam.team_id == row.team_id).with_for_update().one()
     # Serialize question assignment so concurrent devices cannot reserve the
     # same one-use question.
@@ -843,8 +975,8 @@ def assign_station(payload: SpinInput, account: EventAccount = Depends(require_r
         Round3GameAttempt.team_id == row.team_id,
         Round3GameAttempt.status.in_(["RESERVED", "ACTIVE"]),
     ).all()
-    if len(active) >= 3:
-        raise HTTPException(409, "Your team already has three live station assignments.")
+    if len(active) >= MAX_ACTIVE_TEAM_ASSIGNMENTS:
+        raise HTTPException(409, "Your team already has two live station assignments. The third login can follow the auction or team status.")
     if any(item.participant_id == participant.id for item in active):
         raise HTTPException(409, "This member already has a live station assignment.")
     tables = db.query(Round3DealerTable).filter(Round3DealerTable.is_enabled.is_(True)).order_by(Round3DealerTable.table_number).all()
