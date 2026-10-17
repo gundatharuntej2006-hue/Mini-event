@@ -1538,7 +1538,7 @@ export function Round3SuperPage() {
                           <input
                             type="number"
                             min="1"
-                            max="99"
+                            max="9999"
                             disabled={data.started}
                             value={draft?.room || ""}
                             onChange={(event) =>
@@ -2158,7 +2158,7 @@ export function Round3SuperPage() {
                           required
                           type="number"
                           min="1"
-                          max="99"
+                          max="9999"
                           value={tablesDraft[table.number]?.room || ""}
                           onChange={(event) =>
                             setTablesDraft((current) => ({

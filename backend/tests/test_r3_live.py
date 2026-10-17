@@ -66,6 +66,7 @@ def ready(client, db):
     overview = client.get("/api/v1/r3-live/control/overview", headers=super_headers)
     assert overview.status_code == 200, overview.json()
     assert len(overview.json()["data"]["teams"]) == 13
+    assert [table["room"] for table in overview.json()["data"]["tables"]] == list(range(101, 109))
     return team, other, super_headers
 
 

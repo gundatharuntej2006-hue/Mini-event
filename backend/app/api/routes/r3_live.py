@@ -75,7 +75,7 @@ class TableInput(BaseModel):
     game_name: str = Field(min_length=3, max_length=100)
     max_points: float = Field(gt=0, le=100, allow_inf_nan=False)
     is_enabled: bool = True
-    room_number: int | None = Field(default=None, ge=1, le=99)
+    room_number: int | None = Field(default=None, ge=1, le=9999)
     game_mode: Literal["ONLINE", "OFFLINE"] | None = None
     admin_login_id: str | None = None
     table_number: int | None = Field(default=None, ge=1, le=99)
@@ -89,7 +89,7 @@ class AdminInput(BaseModel):
 
 class DealerReassignmentInput(BaseModel):
     admin_login_id: str = Field(min_length=7, max_length=20)
-    room_number: int = Field(ge=1, le=99)
+    room_number: int = Field(ge=1, le=9999)
 
 
 class BalanceAdjustmentInput(BaseModel):
@@ -376,7 +376,7 @@ def ensure_setup(db: Session) -> None:
         admins.append(admin)
     for number in range(1, 9):
         db.add(Round3DealerTable(
-            table_number=number, room_number=1 if number <= 4 else 2,
+            table_number=number, room_number=100 + number,
             game_mode="ONLINE",
             game_name=STATION_NAMES[number - 1],
             admin_id=admins[number - 1].id if len(admins) >= number else None,
