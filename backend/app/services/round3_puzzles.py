@@ -1,7 +1,8 @@
 """Server-side puzzle bank for the automated Round 3 stations.
 
-Answers never leave this module.  The browser receives only the public puzzle
-payload and the API compares a normalized submission on the server.
+The complete accepted-answer set never leaves this module. The browser receives
+four shuffled choices without being told which one is valid, and the API still
+performs the authoritative comparison and scoring on the server.
 """
 
 from __future__ import annotations
@@ -432,6 +433,128 @@ assert len({puzzle.key for items in PUZZLES.values() for puzzle in items}) == 27
 _PUZZLE_INDEX = {puzzle.key: puzzle for items in PUZZLES.values() for puzzle in items}
 
 
+def _choice_label(puzzle: Puzzle, value: str) -> str:
+    """Turn an accepted server answer into a readable button label."""
+    title = puzzle.title.casefold()
+    if "mirror clock" in title or "timestamp" in title or "cctv" in title:
+        clock = next((item for item in puzzle.answers if ":" in item), None)
+        if clock:
+            return clock
+    if "wrong labels" in title or "samosa switch" in title:
+        normalized = normalize_answer(value)
+        if normalized in {"spicy", "sweet", "sealed", "open"}:
+            return f"{normalized.title()} Only"
+    text = value.strip()
+    replacements = (
+        (r"^auto(\d+)$", r"Auto \1"),
+        (r"^room(\d+)$", r"Room \1"),
+        (r"^floor(\d+)$", r"Floor \1"),
+        (r"^rs(\d+)$", r"₹\1"),
+        (r"^(\d+)(north|south|east|west)$", r"\1 \2"),
+    )
+    for pattern, replacement in replacements:
+        if re.fullmatch(pattern, text, flags=re.IGNORECASE):
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+            break
+    if any(character.isalpha() for character in text):
+        text = text.title() if " " in text or text.isalpha() else text.upper()
+    return text
+
+
+def _choice_kind(value: str) -> str:
+    normalized = normalize_answer(value)
+    if normalized.isdigit():
+        return "number"
+    if any(direction in normalized for direction in ("north", "south", "east", "west")):
+        return "direction"
+    if any(character.isdigit() for character in normalized):
+        return "code"
+    if len(value.split()) > 1:
+        return "phrase"
+    return "word"
+
+
+def multiple_choice_options(puzzle: Puzzle) -> tuple[str, ...]:
+    """Build four deterministic options without exposing which one is valid."""
+    accepted = {normalize_answer(item) for item in puzzle.answers}
+    correct = _choice_label(puzzle, puzzle.answers[0])
+    candidates: list[str] = []
+
+    title = puzzle.title.casefold()
+    if "auto-rickshaw" in title:
+        candidates.extend(("Auto 1", "Auto 2", "Auto 3", "Auto 4"))
+    elif "wrong labels" in title or "samosa switch" in title:
+        for line in puzzle.display[:3]:
+            label = line.strip().title()
+            candidates.append(label if label.casefold() == "mixed" or label.casefold().endswith(" only") else f"{label} Only")
+        candidates.append("Empty")
+    elif "cinema seat" in title:
+        match = re.fullmatch(r"([A-Z])(\d+)", correct.upper())
+        if match:
+            letter, number = match.groups()
+            position = ord(letter) - 64
+            candidates.extend((
+                f"{chr(64 + max(1, position - 1))}{number}",
+                f"{chr(64 + min(26, position + 1))}{number}",
+                f"{letter}{max(1, int(number) - 1)}",
+                f"{letter}{int(number) + 1}",
+            ))
+    elif "timestamp" in title or "cctv" in title:
+        candidates.extend(line for line in puzzle.display if re.fullmatch(r"\d{1,2}:\d{2}", line))
+    elif "clone id" in title:
+        candidates.extend(line for line in puzzle.display if re.fullmatch(r"[A-Z0-9]{4}", line))
+    elif "mirror clock" in title and ":" in correct:
+        hour_text, minute_text = correct.split(":", 1)
+        total = (int(hour_text) % 12) * 60 + int(minute_text)
+        for offset in (10, -10, 20, -20):
+            option_total = (total + offset) % (12 * 60)
+            hour = (option_total // 60) or 12
+            candidates.append(f"{hour:02d}:{option_total % 60:02d}")
+    elif normalize_answer(correct).isdigit():
+        value = int(normalize_answer(correct))
+        offsets = (1, -1, 2, -2, 5, 10, 11)
+        candidates.extend(str(value + offset) for offset in offsets if value + offset >= 0)
+    elif _choice_kind(correct) == "direction":
+        match = re.search(r"\d+", correct)
+        distance = f"{match.group()} " if match else ""
+        candidates.extend(f"{distance}{direction.title()}" for direction in ("North", "East", "South", "West"))
+    elif normalize_answer(correct) in {name.casefold() for name in _NAMES}:
+        current = next((index for index, name in enumerate(_NAMES) if name.casefold() == normalize_answer(correct)), 0)
+        candidates.extend(_NAMES[(current + step) % len(_NAMES)] for step in range(1, 7))
+    elif normalize_answer(correct).endswith("only"):
+        candidates.extend(("Spicy Only", "Sweet Only", "Sealed Only", "Open Only", "Mixed"))
+
+    table = int(puzzle.key[0])
+    same_kind: list[str] = []
+    other_kind: list[str] = []
+    for other in PUZZLES[table]:
+        if other.key == puzzle.key:
+            continue
+        label = _choice_label(other, other.answers[0])
+        (same_kind if _choice_kind(label) == _choice_kind(correct) else other_kind).append(label)
+    candidates.extend(same_kind)
+    candidates.extend(other_kind)
+    candidates.extend(("None Of These", "Cannot Be Determined", "Both A And B", "Not Enough Evidence"))
+
+    distractors: list[str] = []
+    seen = set(accepted)
+    for candidate in candidates:
+        normalized = normalize_answer(candidate)
+        if not normalized or normalized in seen:
+            continue
+        distractors.append(candidate)
+        seen.add(normalized)
+        if len(distractors) == 3:
+            break
+    if len(distractors) != 3:  # defensive: every published puzzle must have four choices
+        raise ValueError(f"Could not generate four unique options for {puzzle.key}")
+
+    options = distractors[:]
+    insertion_index = sum((index + 1) * ord(character) for index, character in enumerate(puzzle.key)) % 4
+    options.insert(insertion_index, correct)
+    return tuple(options)
+
+
 def puzzle_for(table_number: int, sequence: int) -> Puzzle:
     choices = PUZZLES.get(table_number)
     if not choices:
@@ -456,6 +579,7 @@ def public_payload(puzzle: Puzzle) -> dict:
         "story": puzzle.story,
         "prompt": puzzle.prompt,
         "display": list(puzzle.display),
+        "options": list(multiple_choice_options(puzzle)),
         "answer_label": puzzle.answer_label,
         "visual_kind": puzzle.visual_kind if puzzle.visual_kind != "cards" else _VISUAL_KINDS[int(puzzle.key[0])],
     }

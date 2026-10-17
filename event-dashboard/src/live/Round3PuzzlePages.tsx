@@ -40,6 +40,7 @@ type Puzzle = {
   story: string;
   prompt: string;
   display: string[];
+  options: string[];
   answer_label: string;
   visual_kind:
     | "logic"
@@ -645,6 +646,9 @@ export function Round3PuzzleStationPage() {
     return () => window.clearInterval(timer);
   }, []);
   const attempt = data?.attempts?.[0];
+  useEffect(() => {
+    setAnswer("");
+  }, [attempt?.id]);
   const deadline = useMemo(
     () =>
       attempt?.started_at
@@ -817,23 +821,33 @@ export function Round3PuzzleStationPage() {
             <h3>{attempt.puzzle?.prompt}</h3>
           </div>
           <form className="answer-lock" onSubmit={submit}>
-            <label>
-              {attempt.puzzle?.answer_label || "Your answer"}
-              <input
-                autoFocus
-                autoComplete="off"
-                value={answer}
-                onChange={(event) => setAnswer(event.target.value)}
-                placeholder="Type the final answer"
-              />
-            </label>
+            <div
+              className="answer-options"
+              role="radiogroup"
+              aria-label={attempt.puzzle?.answer_label || "Choose one answer"}
+            >
+              {attempt.puzzle?.options.map((option, index) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={answer === option}
+                  className={answer === option ? "selected" : ""}
+                  disabled={busy}
+                  onClick={() => setAnswer(option)}
+                >
+                  <span>{String.fromCharCode(65 + index)}</span>
+                  <b>{option}</b>
+                </button>
+              ))}
+            </div>
             <button disabled={busy || !answer.trim()}>
-              Lock answer <LockKeyhole size={19} />
+              Lock selected option <LockKeyhole size={19} />
             </button>
           </form>
           <small className="answer-note">
-            Case, spaces and punctuation are ignored. One submission locks the
-            result.
+            Tap one option, check it once, then lock it. One submission records
+            the result and points automatically.
           </small>
         </section>
       )}

@@ -162,6 +162,7 @@ type BankPuzzle = {
   story: string;
   prompt: string;
   display: string[];
+  options: string[];
   answers: string[];
   answer_label: string;
   visual_kind: string;
@@ -1491,8 +1492,9 @@ export function Round3SuperPage() {
                 <h2>{bank?.total ?? "275"} puzzles, ready.</h2>
                 <p>
                   Only super admins can open this catalogue. Participant and
-                  station browsers never receive an answer until the server has
-                  validated their locked submission.
+                  station browsers receive four choices, but never the private
+                  accepted-answer set or any indication of which choice is
+                  correct. The server validates and scores the locked option.
                 </p>
               </div>
               <div className="r3-bank-toolbar">
@@ -1538,6 +1540,7 @@ export function Round3SuperPage() {
                           puzzle.title,
                           puzzle.prompt,
                           ...puzzle.display,
+                          ...puzzle.options,
                           ...puzzle.answers,
                         ]
                           .join(" ")
@@ -1561,6 +1564,11 @@ export function Round3SuperPage() {
                             ))}
                           </ul>
                           <h4>{puzzle.prompt}</h4>
+                          <ol>
+                            {puzzle.options.map((option) => (
+                              <li key={option}>{option}</li>
+                            ))}
+                          </ol>
                           <aside>
                             <small>
                               ACCEPTED ANSWER

@@ -46,6 +46,9 @@ def test_puzzle_bank_has_275_server_validated_questions():
         assert not is_correct(puzzle, "")
         public = public_payload(puzzle)
         assert "answers" not in public
+        assert len(public["options"]) >= 4
+        assert len({item.casefold() for item in public["options"]}) == len(public["options"])
+        assert sum(is_correct(puzzle, option) for option in public["options"]) == 1
         assert public["visual_kind"] in {
             "logic", "pattern", "word", "spatial", "deduction", "observation", "sequence", "quick",
         }
