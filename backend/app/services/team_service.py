@@ -45,7 +45,7 @@ def serialize_team(team: Team, include_private_info: bool = True) -> TeamRespons
         status=team.status,
         current_round=team.current_round,
         is_qualified_for_next_round=team.is_qualified_for_next_round,
-        total_score=team.total_score,
+        total_score=None,
         assigned_table=team.assigned_table,
         created_at=team.created_at,
     )

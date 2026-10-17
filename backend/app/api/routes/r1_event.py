@@ -4,7 +4,7 @@ import io
 import re
 import uuid
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Literal
 
@@ -18,6 +18,7 @@ from app.core.security import create_access_token, decode_access_token, get_pass
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
+from app.models.round3_live import Round3LiveConfig, Round3LiveTeam, Round3TeamSession
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
 from app.models.team import Team, TeamStatus
 from app.services.round1_service import get_or_create_route_allocations, reset_round1_live_state
@@ -28,6 +29,9 @@ bearer = HTTPBearer(auto_error=False)
 EXACT_ANSWERS = {1: "ODD", 2: "42", 3: "ODD-42 / ODD 42"}
 QUALIFIER_LIMIT = 16
 BASE_POINTS = 400.0
+# A wrong submission is recorded for verification and costs points. Keep this
+# server-side: participant browsers must never calculate scores.
+WRONG_ANSWER_DEDUCTION = 5.0
 LOGIN_WINDOW_SECONDS = 60
 LOGIN_MAX_ATTEMPTS = 8
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
@@ -115,6 +119,7 @@ def current_account(
         if account.role == EventRole.PARTICIPANT:
             raise HTTPException(status_code=403, detail="Round 1 has ended for this team. Please see Instagram for results.")
         raise HTTPException(status_code=401, detail="Your account is not active.")
+    account._event_jti = payload.get("jti")
     return account
 
 
@@ -195,6 +200,21 @@ def finish_outcome(db: Session, team_id: str | None) -> Round1FinishOutcome | No
     return db.query(Round1FinishOutcome).filter(Round1FinishOutcome.team_id == team_id).first()
 
 
+def wrong_answer_count(db: Session, team_id: str | None) -> int:
+    """Count the immutable incorrect-submission log for a team's R1 score."""
+    if not team_id:
+        return 0
+    return int(db.query(func.count(Round1CheckpointAttemptModel.id)).filter(
+        Round1CheckpointAttemptModel.team_id == team_id,
+        Round1CheckpointAttemptModel.is_correct.is_(False),
+    ).scalar() or 0)
+
+
+def round1_points(db: Session, team_id: str | None, rank_award: float = 0.0) -> float:
+    """Calculate points from the auditable answer log, including rank rewards."""
+    return max(0.0, BASE_POINTS - wrong_answer_count(db, team_id) * WRONG_ANSWER_DEDUCTION + rank_award)
+
+
 def outcome_data(outcome: Round1FinishOutcome | None) -> dict:
     if not outcome:
         return {"rank": None, "qualified": False, "completed_at": None}
@@ -213,9 +233,10 @@ def record_finish(db: Session, allocation: Round1RouteAllocationModel) -> Round1
     if not team:
         raise HTTPException(status_code=409, detail="Team roster record is missing.")
     qualified = rank <= QUALIFIER_LIMIT
-    # Every team starts at 400; Round 1 finish position adds 140, 135 ... 65.
+    # Every team starts at 400; incorrect submissions cost 5 each and finish
+    # position adds 140, 135 ... 65 for the first sixteen teams.
     round1_award = 140.0 - 5.0 * (rank - 1) if qualified else 0.0
-    team.total_score = BASE_POINTS + round1_award
+    team.total_score = round1_points(db, team.id, round1_award)
     outcome = Round1FinishOutcome(
         team_id=team.id,
         team_identifier=allocation.team_identifier,
@@ -279,7 +300,24 @@ def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
         if account.role == EventRole.PARTICIPANT:
             return {"success": True, "data": {"redirect": "instagram"}, "message": "Round 1 has ended for this team. Please see Instagram for results."}
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
-    token = create_access_token(account.id, account.role.value)
+    session_id = None
+    if account.role == EventRole.PARTICIPANT and account.team_id:
+        r3 = db.get(Round3LiveConfig, 1)
+        if r3 and r3.starts_at and not r3.closed_at and db.get(Round3LiveTeam, account.team_id):
+            # Locking the team row makes the three-browser limit atomic on PostgreSQL.
+            db.query(Round3LiveTeam).filter(Round3LiveTeam.team_id == account.team_id).with_for_update().one()
+            cutoff = now() - timedelta(minutes=3)
+            active = db.query(Round3TeamSession).filter(
+                Round3TeamSession.team_id == account.team_id,
+                Round3TeamSession.signed_out_at.is_(None),
+                Round3TeamSession.last_seen_at >= cutoff,
+            ).count()
+            if active >= 3:
+                raise HTTPException(status_code=409, detail="Your team already has three active devices. Sign out on one device or wait three minutes.")
+            session_id = uuid.uuid4().hex
+            db.add(Round3TeamSession(jti=session_id, team_id=account.team_id))
+            db.commit()
+    token = create_access_token(account.id, account.role.value, session_id=session_id)
     return {"success": True, "data": {"token": token, "role": account.role.value, "display_name": account.display_name}, "message": "Signed in."}
 
 
@@ -361,9 +399,15 @@ def answer(payload: AnswerInput, account: EventAccount = Depends(require_roles(E
         if checkpoint == 3:
             db.flush()
             record_finish(db, allocation)
+    else:
+        # Keep the live super-admin view accurate before a team reaches the
+        # finish line. record_finish recomputes from this immutable log.
+        team = db.query(Team).filter(Team.id == allocation.team_id).with_for_update().first()
+        if team:
+            team.total_score = round1_points(db, team.id)
     db.commit()
     state = participant_state(db, account)
-    message = "Correct. Your next clue is now available." if exact and checkpoint < 3 else "Your time has been recorded. Please check Instagram for results." if exact else "That answer was not accepted. Use the required code; capital letters do not matter."
+    message = "Correct. Your next clue is now available." if exact and checkpoint < 3 else "Your time has been recorded. Please check Instagram for results." if exact else "That answer was not accepted. 5 points were deducted; use the required code and try again."
     return {"success": True, "data": {"correct": exact, "state": state, "outcome": outcome_data(finish_outcome(db, account.team_id)) if exact and checkpoint == 3 else None}, "message": message}
 
 

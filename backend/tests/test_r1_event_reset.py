@@ -27,6 +27,43 @@ def test_round1_simple_answer_policy():
     assert not answer_is_correct(3, "ODD42")
 
 
+def test_wrong_answer_deducts_five_points_and_qr_rejects_the_wrong_location(client, db_session):
+    seed_default_teams(db_session)
+    team = db_session.query(Team).filter(Team.team_number == 1).one()
+    super_password = "SuperPenaltyTest987"
+    participant_password = "ParticipantPenaltyTest987"
+    db_session.add_all([
+        EventAccount(login_id="SUPER01", display_name="Super Admin 1", password_hash=get_password_hash(super_password), role=EventRole.SUPER_ADMIN),
+        EventAccount(login_id="TEAM1001", display_name=team.name, password_hash=get_password_hash(participant_password), role=EventRole.PARTICIPANT, team_id=team.id),
+    ])
+    db_session.commit()
+
+    super_headers = login(client, "SUPER01", super_password)
+    participant_headers = login(client, "TEAM1001", participant_password)
+    assert client.post("/api/v1/r1/control/start", headers=super_headers).status_code == 200
+    assert client.post("/api/v1/r1/participant/secret-agent", headers=participant_headers, json={"agent_name": "Agent One"}).status_code == 200
+
+    allocation = db_session.query(Round1RouteAllocationModel).filter(Round1RouteAllocationModel.team_id == team.id).one()
+    wrong_location = 2 if allocation.cp1_location == 1 else 1
+    rejected = client.post("/api/v1/r1/participant/scan", headers=participant_headers, json={"location": wrong_location})
+    assert rejected.status_code == 403
+    assert "not your active location" in rejected.json()["detail"]
+    assert client.post("/api/v1/r1/participant/scan", headers=participant_headers, json={"location": allocation.cp1_location}).status_code == 200
+
+    wrong = client.post("/api/v1/r1/participant/answer", headers=participant_headers, json={"answer": "not-the-code"})
+    assert wrong.status_code == 200
+    assert wrong.json()["data"]["correct"] is False
+    assert db_session.query(Team).filter(Team.id == team.id).one().total_score == 395
+
+    # Finalisation recomputes from the immutable attempt log, so it never
+    # accidentally restores the five points deducted above.
+    allocation.cp1_completed = True
+    allocation.cp2_completed = True
+    allocation.cp3_completed = True
+    outcome = record_finish(db_session, allocation)
+    assert outcome.points_snapshot == 535
+
+
 def test_super_admin_reset_requires_confirmation_and_clears_progress(client, db_session):
     seed_default_teams(db_session)
     team = db_session.query(Team).filter(Team.team_number == 1).one()

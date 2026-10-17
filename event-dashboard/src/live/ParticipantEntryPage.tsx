@@ -15,10 +15,12 @@ export function ParticipantEntryPage() {
 
   useEffect(() => {
     if (getSession()?.role !== 'PARTICIPANT') { navigate('/login', { replace: true }); return; }
-    request<Round2Assignment>('/r2/participant/assignment')
-      .then(setRound2)
-      .catch(() => setRound2(null))
-      .finally(() => setChecking(false));
+    request('/r3-live/participant/state').then(() => navigate('/round3/play', { replace: true }))
+      .catch(error => {
+        if (error instanceof Error && error.message.includes('sign in again')) { clearSession(); navigate('/login', { replace: true }); return; }
+        return request<Round2Assignment>('/r2/participant/assignment')
+          .then(setRound2).catch(() => setRound2(null)).finally(() => setChecking(false));
+      });
   }, []);
 
   if (checking) return <LiveShell><main className="mobile-page"><div className="load-card live-reveal">Checking your current round...</div></main></LiveShell>;

@@ -22,8 +22,8 @@ export function LoginPage() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to sign in.'); } finally { setLoading(false); }
   }
   return <LiveShell><main className="auth-page"><Mark /><section className="auth-card live-reveal">
-    <div className="eyebrow"><KeyRound size={14} /> ROUND 01 · TREASURE HUNT</div>
-    <h1>Find the <span>unseen.</span></h1><p>Use the event ID and password provided to your team or event staff.</p>
+    <div className="eyebrow"><KeyRound size={14} /> ASYMPTOTES · EVENT ACCESS</div>
+    <h1>Enter the <span>event.</span></h1><p>One event ID connects you to your current round. Use the credentials provided to your team or event staff.</p>
     <form onSubmit={submit}>
       <label>Event ID<input autoCapitalize="characters" autoCorrect="off" value={loginId} onChange={e => setLoginId(e.target.value.toUpperCase())} placeholder="TEAM1001" required /></label>
       <label>Password<div className="input-icon"><LockKeyhole size={17}/><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" required /></div></label>

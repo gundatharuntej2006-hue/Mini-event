@@ -63,7 +63,9 @@ class TeamResponse(BaseModel):
     status: TeamStatus
     current_round: int = Field(default=1, serialization_alias="currentRound")
     is_qualified_for_next_round: bool = Field(default=False, serialization_alias="isQualifiedForNextRound")
-    total_score: float = Field(default=0.0, serialization_alias="totalScore")
+    # The live score is private: only the team-scoped Round 3 endpoint or
+    # super-admin control may reveal it, not this legacy public roster API.
+    total_score: Optional[float] = Field(default=None, serialization_alias="totalScore")
     assigned_table: Optional[str] = Field(default=None, serialization_alias="assignedTable")
     created_at: datetime = Field(serialization_alias="createdAt")
 

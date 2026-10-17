@@ -26,7 +26,8 @@ def get_password_hash(password: str) -> str:
 def create_access_token(
     subject: Union[str, Any],
     role: str,
-    expires_delta: Optional[timedelta] = None
+    expires_delta: Optional[timedelta] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Create a signed JWT access token."""
     now = datetime.now(timezone.utc)
@@ -41,6 +42,8 @@ def create_access_token(
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
     }
+    if session_id:
+        to_encode["jti"] = session_id
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 

@@ -1,6 +1,11 @@
 from app.models.user import User, UserRole
 from app.models.event_account import EventAccount, EventRole, Round1Override, Round1FinishOutcome, Round1SecretAgentSelection
 from app.models.round2_live import Round2CaboScore, Round2CaboSeat, Round2CaboTable, Round2LiveAudit, Round2LiveConfig, Round2TeamAward
+from app.models.round3_live import (
+    Round3LiveConfig, Round3LiveTeam, Round3DealerTable, Round3GameAttempt,
+    Round3LiveLedger, Round3AuctionLot, Round3AuctionBid, Round3TeamSession,
+    Round3PuzzleUse, Round3QualificationRule, Round3QualifiedTeam,
+)
 from app.models.team import Team, TeamStatus
 from app.models.participant import Participant, ParticipantRole
 from app.models.event_settings import EventSettings
