@@ -41,6 +41,8 @@ def test_puzzle_bank_has_400_server_validated_questions():
     assert len(puzzles) == 400
     assert len({puzzle.key for puzzle in puzzles}) == 400
     assert sum(puzzle.is_quirky for puzzle in puzzles) == 80
+    assert sum(puzzle.is_simple for puzzle in puzzles) == 180
+    assert sum(not puzzle.is_simple and not puzzle.is_quirky for puzzle in puzzles) == 140
     for puzzle in puzzles:
         assert puzzle.title and puzzle.story and puzzle.prompt and puzzle.display
         assert is_correct(puzzle, puzzle.answers[0])

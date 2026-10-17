@@ -24,6 +24,7 @@ class Puzzle:
     answer_label: str
     visual_kind: str = "cards"
     is_quirky: bool = False
+    is_simple: bool = False
 
 
 def normalize_answer(value: str) -> str:
@@ -476,6 +477,7 @@ _GENERATORS = {
 # Fifty questions per station. Exactly eighty of the four hundred (20%) are
 # clearly tagged quirky questions; the remainder are visual logic/word puzzles.
 _TARGET_COUNTS = {table: 50 for table in range(1, 9)}
+_SIMPLE_COUNTS = {1: 26, 2: 26, 3: 26, 4: 26, 5: 26, 6: 25, 7: 25, 8: 0}
 
 
 def _build_table(table: int) -> tuple[Puzzle, ...]:
@@ -484,7 +486,15 @@ def _build_table(table: int) -> tuple[Puzzle, ...]:
         base = tuple(replace(puzzle, is_quirky=True) for puzzle in base)
     quirky = _quirky_puzzles(table)
     generated_count = _TARGET_COUNTS[table] - len(base) - len(quirky)
-    return base + _GENERATORS[table](generated_count) + quirky
+    items = base + _GENERATORS[table](generated_count) + quirky
+    simple_remaining = _SIMPLE_COUNTS[table]
+    result: list[Puzzle] = []
+    for puzzle in items:
+        if simple_remaining and not puzzle.is_quirky:
+            puzzle = replace(puzzle, is_simple=True)
+            simple_remaining -= 1
+        result.append(puzzle)
+    return tuple(result)
 
 
 PUZZLES: dict[int, tuple[Puzzle, ...]] = {table: _build_table(table) for table in range(1, 9)}
@@ -492,6 +502,8 @@ PUZZLES: dict[int, tuple[Puzzle, ...]] = {table: _build_table(table) for table i
 assert sum(len(items) for items in PUZZLES.values()) == 400
 assert len({puzzle.key for items in PUZZLES.values() for puzzle in items}) == 400
 assert sum(puzzle.is_quirky for items in PUZZLES.values() for puzzle in items) == 80
+assert sum(puzzle.is_simple for items in PUZZLES.values() for puzzle in items) == 180
+assert not any(puzzle.is_simple and puzzle.is_quirky for items in PUZZLES.values() for puzzle in items)
 
 _PUZZLE_INDEX = {puzzle.key: puzzle for items in PUZZLES.values() for puzzle in items}
 
@@ -646,6 +658,7 @@ def public_payload(puzzle: Puzzle) -> dict:
         "options": list(multiple_choice_options(puzzle)),
         "answer_label": puzzle.answer_label,
         "quirky": puzzle.is_quirky,
+        "difficulty": "QUIRKY" if puzzle.is_quirky else "SIMPLE" if puzzle.is_simple else "STANDARD",
         "visual_kind": puzzle.visual_kind if puzzle.visual_kind != "cards" else _VISUAL_KINDS[int(puzzle.key[0])],
     }
 
