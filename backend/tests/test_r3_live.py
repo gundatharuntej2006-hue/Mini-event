@@ -4,6 +4,7 @@ from app.core.security import get_password_hash
 from app.models.core import seed_default_teams
 from app.models.event_account import EventAccount, EventRole
 from app.models.participant import Participant
+from app.models.progression import AuditLog
 from app.models.round3_live import (
     Round3AuctionLot, Round3GameAttempt, Round3LiveConfig, Round3LiveTeam,
     Round3TeamSession, Round3PuzzleUse, Round3QualifiedTeam,
@@ -139,6 +140,88 @@ def test_private_setup_and_auction_game_flow(client, db_session, monkeypatch):
     assert loser_lot["clue_text"] is None
     assert db_session.get(Team, team.id).total_score == 1365
     assert "winner_team_id" not in after["team"]
+
+
+def test_super_admin_reset_requires_double_password_and_preserves_setup(client, db_session):
+    team, _, super_headers = ready(client, db_session)
+    protected = {
+        "password": "SuperTest987",
+        "password_confirmation": "DifferentPassword987",
+        "confirmed": True,
+        "reason": "Testing complete",
+    }
+    mismatch = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)
+    assert mismatch.status_code == 400
+    protected["password_confirmation"] = protected["password"] = "WrongPassword987"
+    wrong = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)
+    assert wrong.status_code == 401
+    protected["password_confirmation"] = protected["password"] = "SuperTest987"
+    protected["confirmed"] = False
+    unconfirmed = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)
+    assert unconfirmed.status_code == 400
+
+    for number in range(1, 9):
+        response = client.post(
+            f"/api/v1/r3-live/control/tables/{number}",
+            headers=super_headers,
+            json={
+                "game_name": f"Reset-proof game {number}",
+                "max_points": 20,
+                "is_enabled": True,
+                "room_number": 150 if number == 1 else 100 + number,
+            },
+        )
+        assert response.status_code == 200, response.json()
+    assert client.post("/api/v1/r3-live/control/start", headers=super_headers).status_code == 200
+    team_headers = login(client, "TEAM1017", "TeamTest987")
+    attempt = client.post(
+        "/api/v1/r3-live/participant/assign",
+        headers=team_headers,
+        json={"participant_id": "part-17"},
+    )
+    assert attempt.status_code == 200, attempt.json()
+    assert db_session.query(Round3GameAttempt).count() == 1
+    assert db_session.query(Round3PuzzleUse).count() == 1
+
+    lot = db_session.query(Round3AuctionLot).filter(
+        Round3AuctionLot.level == 1, Round3AuctionLot.token_number == 1
+    ).one()
+    configured = client.post(
+        f"/api/v1/r3-live/control/lots/{lot.id}/configure",
+        headers=super_headers,
+        json={
+            "opening_bid": 5,
+            "description": "Preserved public clue teaser",
+            "clue_text": "Preserved private clue text",
+        },
+    )
+    assert configured.status_code == 200, configured.json()
+    assert client.post(f"/api/v1/r3-live/control/lots/{lot.id}/open", headers=super_headers).status_code == 200
+    assert client.post(
+        f"/api/v1/r3-live/participant/lots/{lot.id}/bid",
+        headers=team_headers,
+        json={"amount": 10},
+    ).status_code == 200
+
+    protected["confirmed"] = True
+    reset = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)
+    assert reset.status_code == 200, reset.json()
+    assert reset.json()["data"]["cleared"]["attempts"] == 1
+    assert db_session.query(Round3GameAttempt).count() == 0
+    assert db_session.query(Round3PuzzleUse).count() == 0
+    assert db_session.query(Round3TeamSession).count() == 0
+    assert db_session.get(Team, team.id).total_score == 1370
+    audit = db_session.query(AuditLog).filter(AuditLog.action == "ROUND3_RESET_TO_SETUP").one()
+    assert audit.details["reason"] == "Testing complete"
+
+    overview = client.get("/api/v1/r3-live/control/overview", headers=super_headers).json()["data"]
+    assert overview["started"] is False
+    assert overview["questions"]["used"] == 0
+    assert overview["tables"][0]["room"] == 150
+    assert overview["tables"][0]["game_name"] == "Reset-proof game 1"
+    assert overview["lots"][0]["status"] == "DRAFT"
+    assert overview["lots"][0]["description"] == "Preserved public clue teaser"
+    assert overview["lots"][0]["clue_text"] == "Preserved private clue text"
 
 
 def test_three_active_team_logins_and_code_normalization(client, db_session):

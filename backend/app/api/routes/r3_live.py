@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.routes.r1_event import current_account, require_roles
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, verify_password
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventRole
 from app.models.participant import Participant
@@ -27,6 +27,7 @@ from app.models.round3_live import (
     Round3PuzzleUse, Round3QualificationRule, Round3QualifiedTeam,
 )
 from app.models.team import Team
+from app.services.audit_service import log_audit_event
 from app.services.round3_puzzles import PUZZLES, is_correct, public_payload, puzzle_by_key
 
 router = APIRouter(prefix="/r3-live", tags=["Round 3 Live Market"])
@@ -127,6 +128,15 @@ class BidInput(BaseModel):
 
 class QualificationCountInput(BaseModel):
     qualifying_count: int = Field(ge=1, le=13)
+
+
+class ResetInput(BaseModel):
+    # Match the protected Round 1 reset flow: duplicate password plus a
+    # separate explicit confirmation from the browser warning.
+    password: str = Field(min_length=1, max_length=128)
+    password_confirmation: str = Field(min_length=1, max_length=128)
+    confirmed: bool
+    reason: str = Field(min_length=3, max_length=500)
 
 
 def config(db: Session) -> Round3LiveConfig:
@@ -661,6 +671,76 @@ def close_round(account: EventAccount = Depends(require_roles(EventRole.SUPER_AD
         expire_and_promote(db, table)
     db.commit()
     return {"success": True, "data": {"closed": True}, "message": "Round 3 closed; standings remain private to super admins."}
+
+
+@router.post("/control/reset")
+def reset_round(payload: ResetInput, account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
+    """Return Round 3 to setup while preserving its roster and configuration."""
+    if not payload.confirmed:
+        raise HTTPException(400, "Explicit reset confirmation is required.")
+    if payload.password != payload.password_confirmation:
+        raise HTTPException(400, "The two password entries do not match.")
+    if not verify_password(payload.password, account.password_hash):
+        raise HTTPException(401, "Super admin password confirmation failed.")
+
+    ensure_setup(db)
+    cfg = db.query(Round3LiveConfig).filter(Round3LiveConfig.id == 1).with_for_update().one()
+    counts = {
+        "attempts": db.query(Round3GameAttempt).count(),
+        "puzzles": db.query(Round3PuzzleUse).count(),
+        "bids": db.query(Round3AuctionBid).count(),
+        "ledger_entries": db.query(Round3LiveLedger).count(),
+        "sessions": db.query(Round3TeamSession).count(),
+        "qualifiers": db.query(Round3QualifiedTeam).count(),
+    }
+
+    # Delete dependent rows before attempts/lots so PostgreSQL foreign keys
+    # remain satisfied. Static questions, selected teams and station setup stay.
+    db.query(Round3PuzzleUse).delete(synchronize_session=False)
+    db.query(Round3AuctionBid).delete(synchronize_session=False)
+    db.query(Round3LiveLedger).delete(synchronize_session=False)
+    db.query(Round3GameAttempt).delete(synchronize_session=False)
+    db.query(Round3TeamSession).delete(synchronize_session=False)
+    db.query(Round3QualifiedTeam).delete(synchronize_session=False)
+
+    for lot in db.query(Round3AuctionLot).all():
+        lot.status = "DRAFT"
+        lot.opened_at = None
+        lot.closed_at = None
+        lot.winner_team_id = None
+        lot.winning_bid = None
+
+    rule = qualification_rule(db)
+    rule.finalized_at = None
+    rule.finalized_by = None
+    cfg.starts_at = None
+    cfg.ends_at = None
+    cfg.closed_at = None
+
+    # Round 3 owns the live total after it starts. Restore every selected team
+    # to its verified opening balance and keep it eligible for this round.
+    for snapshot in db.query(Round3LiveTeam).all():
+        team = db.get(Team, snapshot.team_id)
+        if team:
+            team.total_score = snapshot.opening_points
+            team.is_qualified_for_next_round = True
+
+    log_audit_event(
+        db,
+        action="ROUND3_RESET_TO_SETUP",
+        round_number=3,
+        entity_type="round3_live",
+        entity_id="ALL_TEAMS",
+        actor_id=account.id,
+        actor_role=account.role,
+        details={"reason": payload.reason.strip(), "cleared": counts},
+    )
+    db.commit()
+    return {
+        "success": True,
+        "data": {"started": False, "cleared": counts},
+        "message": "Round 3 has been reset. Teams, opening points, station assignments, room numbers and auction clue configuration are preserved.",
+    }
 
 
 @router.post("/control/lots/{lot_id}/configure")

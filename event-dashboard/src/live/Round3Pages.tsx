@@ -16,12 +16,14 @@ import {
   Plus,
   Radio,
   RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   Sparkles,
   Timer,
   Users,
   Wallet,
+  X,
   Zap,
 } from "lucide-react";
 import gsap from "gsap";
@@ -993,6 +995,11 @@ export function Round3SuperPage() {
     reason: "",
   });
   const [qualifyingCount, setQualifyingCount] = useState("6");
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirmation, setResetPasswordConfirmation] =
+    useState("");
+  const [resetReason, setResetReason] = useState("");
   const load = (reset = false) =>
     request<Control>("/r3-live/control/overview")
       .then((item) => {
@@ -1067,6 +1074,37 @@ export function Round3SuperPage() {
       return false;
     } finally {
       setBusy(false);
+    }
+  }
+  async function resetRound(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (resetPassword !== resetPasswordConfirmation) {
+      setError("The two reset password entries do not match.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "Are you absolutely sure? This clears every Round 3 attempt, used question, auction bid, point change, timer and qualification result. This cannot be undone.",
+      )
+    )
+      return;
+    const reset = await act(
+      "/r3-live/control/reset",
+      {
+        password: resetPassword,
+        password_confirmation: resetPasswordConfirmation,
+        confirmed: true,
+        reason: resetReason,
+      },
+      "Round 3 was reset to setup. Rooms, station assignments, opening points and auction clue configuration were preserved.",
+    );
+    if (reset) {
+      setResetOpen(false);
+      setResetPassword("");
+      setResetPasswordConfirmation("");
+      setResetReason("");
     }
   }
   const liveCount =
@@ -1170,10 +1208,85 @@ export function Round3SuperPage() {
                 Close &amp; settle
               </button>
             )}
+            <button
+              className="r3-button danger"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setResetOpen(true);
+                setError("");
+                setNotice("");
+              }}
+            >
+              <RotateCcw size={15} /> Reset round
+            </button>
           </div>
         </div>
       </section>
       <Alert error={error} notice={notice} />
+      {resetOpen && (
+        <section className="r3-panel-box r3-reset-panel" data-r3-reveal>
+          <button
+            className="r3-reset-close"
+            type="button"
+            onClick={() => setResetOpen(false)}
+            aria-label="Close Round 3 reset form"
+          >
+            <X size={17} />
+          </button>
+          <span className="r3-kicker">
+            <RotateCcw size={14} /> DESTRUCTIVE ACTION / SUPER ADMIN ONLY
+          </span>
+          <h3>Reset all of Round 3?</h3>
+          <p>
+            This clears attempts, queues, used-question records, bids, Round 3
+            point changes, the timer and qualification results. The 13 teams,
+            opening points, rooms 101–108, station assignments and configured
+            auction clues remain available for a clean restart.
+          </p>
+          <form onSubmit={resetRound}>
+            <div className="r3-dealer-fields">
+              <label className="r3-full">
+                Reason for reset
+                <input
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  placeholder="Testing complete"
+                  value={resetReason}
+                  onChange={(event) => setResetReason(event.target.value)}
+                />
+              </label>
+              <label>
+                Enter your password
+                <input
+                  required
+                  type="password"
+                  autoComplete="current-password"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                />
+              </label>
+              <label>
+                Enter your password again
+                <input
+                  required
+                  type="password"
+                  autoComplete="current-password"
+                  value={resetPasswordConfirmation}
+                  onChange={(event) =>
+                    setResetPasswordConfirmation(event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <button className="r3-button danger r3-reset-submit" disabled={busy}>
+              <RotateCcw size={16} />
+              {busy ? "Resetting Round 3…" : "Permanently reset Round 3"}
+            </button>
+          </form>
+        </section>
+      )}
       <section className="r3-metrics r3-super-metrics" data-r3-reveal>
         <div>
           <Users size={18} />
