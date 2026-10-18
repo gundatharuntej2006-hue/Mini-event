@@ -1,10 +1,15 @@
 """Small, mobile-first API surface for the live Treasure Hunt."""
 
+import asyncio
+import hashlib
+import hmac
 import io
 import re
 import uuid
 from collections import defaultdict, deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from time import monotonic
 from typing import Literal
 
@@ -15,6 +20,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, decode_access_token, get_password_hash, verify_password
+from app.core.config import settings
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
@@ -35,6 +41,55 @@ WRONG_ANSWER_DEDUCTION = 5.0
 LOGIN_WINDOW_SECONDS = 60
 LOGIN_MAX_ATTEMPTS = 8
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
+
+# Password verification is intentionally isolated from FastAPI's shared worker
+# pool. A simultaneous event-day login burst must not consume every worker and
+# block health checks, bids, station updates, or the super-admin controls.
+_password_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="event-login")
+_password_work_lock = Lock()
+_password_inflight: dict[tuple[str, str, str], Future[bool]] = {}
+_password_cache: dict[tuple[str, str, str], tuple[float, bool]] = {}
+PASSWORD_CACHE_SECONDS = 30
+
+
+def _password_key(account: EventAccount, password: str) -> tuple[str, str, str]:
+    """Create a non-reversible key so identical concurrent checks share work."""
+    fingerprint = hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        password.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return account.id, account.password_hash, fingerprint
+
+
+async def verify_event_password(account: EventAccount, password: str) -> bool:
+    """Verify on a small dedicated pool and coalesce duplicate team logins."""
+    key = _password_key(account, password)
+    current = monotonic()
+    with _password_work_lock:
+        # Opportunistic cleanup keeps the short-lived cache bounded.
+        expired = [item for item, (until, _) in _password_cache.items() if until <= current]
+        for item in expired:
+            _password_cache.pop(item, None)
+        cached = _password_cache.get(key)
+        if cached:
+            return cached[1]
+        future = _password_inflight.get(key)
+        owner = future is None
+        if owner:
+            future = _password_executor.submit(verify_password, password, account.password_hash)
+            _password_inflight[key] = future
+
+    try:
+        result = await asyncio.wrap_future(future)
+    finally:
+        if owner:
+            with _password_work_lock:
+                _password_inflight.pop(key, None)
+    if owner:
+        with _password_work_lock:
+            _password_cache[key] = (monotonic() + PASSWORD_CACHE_SECONDS, result)
+    return result
 
 
 class LoginInput(BaseModel):
@@ -291,10 +346,18 @@ def participant_state(db: Session, account: EventAccount) -> dict:
 
 
 @router.post("/login")
-def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
+async def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
     guard_login_rate(payload.login_id)
     account = db.query(EventAccount).filter(EventAccount.login_id == payload.login_id.strip().upper()).first()
-    if not account or not verify_password(payload.password, account.password_hash):
+    if not account:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    # End the read transaction before awaiting bcrypt. Otherwise every queued
+    # login holds a PostgreSQL connection for tens of seconds and can starve
+    # bids, station laptops, health checks, and super-admin operations.
+    db.expunge(account)
+    db.commit()
+    if not await verify_event_password(account, payload.password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
     if not account.is_active:
         if account.role == EventRole.PARTICIPANT:
@@ -303,7 +366,10 @@ def login(payload: LoginInput, request: Request, db: Session = Depends(get_db)):
     session_id = None
     if account.role == EventRole.PARTICIPANT and account.team_id:
         r3 = db.get(Round3LiveConfig, 1)
-        if r3 and r3.starts_at and not r3.closed_at and db.get(Round3LiveTeam, account.team_id):
+        # Prepare the device session as soon as the selected team signs in.
+        # Starting Round 3 must not invalidate an already authenticated device
+        # or force the whole venue through bcrypt at the same instant.
+        if r3 and not r3.closed_at and db.get(Round3LiveTeam, account.team_id):
             # Locking the team row makes the three-browser limit atomic on PostgreSQL.
             db.query(Round3LiveTeam).filter(Round3LiveTeam.team_id == account.team_id).with_for_update().one()
             cutoff = now() - timedelta(minutes=3)

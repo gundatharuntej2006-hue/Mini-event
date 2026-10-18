@@ -242,14 +242,20 @@ def eligible(db: Session, account: EventAccount) -> Round3LiveTeam:
     if not row or not row.is_eligible:
         raise HTTPException(403, "This team is not in the thirteen-team Round 3 field.")
     cfg = config(db)
-    if cfg.starts_at and not cfg.closed_at:
-        session_id = getattr(account, "_event_jti", None)
-        session = db.get(Round3TeamSession, session_id) if session_id else None
-        if not session or session.team_id != row.team_id or session.signed_out_at:
-            raise HTTPException(401, "Please sign in again to enter the live round.")
-        if as_utc(session.last_seen_at) < utcnow() - timedelta(minutes=3):
-            raise HTTPException(401, "This device session expired. Please sign in again.")
-        session.last_seen_at = utcnow()
+    session_id = getattr(account, "_event_jti", None)
+    session = db.get(Round3TeamSession, session_id) if session_id else None
+    if session_id and (not session or session.team_id != row.team_id or session.signed_out_at):
+        raise HTTPException(401, "This device was signed out. Please sign in again.")
+    if cfg.starts_at and not cfg.closed_at and not session:
+        raise HTTPException(401, "Please sign in once to enter the live round.")
+    if session:
+        # A valid JWT remains usable for the whole event day. Touch the device
+        # once per minute so the three-active-device admission check remains
+        # accurate without turning every participant poll into a database write.
+        current = utcnow()
+        if as_utc(session.last_seen_at) < current - timedelta(minutes=1):
+            session.last_seen_at = current
+            db.commit()
     return row
 
 

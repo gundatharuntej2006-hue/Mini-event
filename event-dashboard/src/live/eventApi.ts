@@ -12,7 +12,7 @@ function delay(ms: number) {
  * becoming healthy. Recover transparently for safe requests instead of
  * exposing the browser's unhelpful "Failed to fetch" message to the event.
  */
-async function fetchWithRecovery(url: string, init: RequestInit, canRetry: boolean): Promise<Response> {
+async function fetchWithRecovery(url: string, init: RequestInit, canRetry: boolean, timeoutMs = 20_000): Promise<Response> {
   const attempts = canRetry ? retryDelaysMs.length : 1;
   let lastError: unknown;
 
@@ -20,7 +20,7 @@ async function fetchWithRecovery(url: string, init: RequestInit, canRetry: boole
     if (retryDelaysMs[attempt]) await delay(retryDelaysMs[attempt]);
 
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
       window.clearTimeout(timeoutId);
@@ -74,7 +74,11 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
 export async function signIn(loginId: string, password: string): Promise<LoginResult> {
   const response = await fetchWithRecovery(`${apiBase}/api/v1/r1/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login_id: loginId, password }),
-  }, true);
+  // Never automatically replay a password POST. During a venue-wide login
+  // burst the first request can still be completing after the browser aborts;
+  // retries amplify CPU load and can consume duplicate team-device sessions.
+  // A longer single attempt gives the server's bounded verifier time to finish.
+  }, false, 90_000);
   const json = await response.json().catch(() => null);
   if (!response.ok || !json?.success) throw new Error(json?.message || 'Incorrect ID or password.');
   if (json.data.redirect === 'instagram') return { redirect: 'instagram', message: json.message || 'Round 1 has ended for this team.' };

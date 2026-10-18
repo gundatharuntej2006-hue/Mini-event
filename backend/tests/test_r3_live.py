@@ -1,3 +1,6 @@
+import asyncio
+import time
+import uuid
 from datetime import timedelta, timezone
 
 from app.core.security import get_password_hash
@@ -11,6 +14,7 @@ from app.models.round3_live import (
 )
 from app.models.team import Team
 from app.api.routes.r3_live import normalize_final_code, utcnow
+from app.api.routes import r1_event
 from app.api.routes.r1_event import _login_attempts
 from app.services.round3_puzzles import PUZZLES, is_correct, public_payload
 
@@ -245,6 +249,52 @@ def test_three_active_team_logins_and_code_normalization(client, db_session):
     assert normalize_final_code("odd echo")
     assert normalize_final_code("OdDeChO")
     assert not normalize_final_code("ODD-ECHO")
+
+
+def test_prestart_team_login_remains_valid_when_round_starts(client, db_session):
+    ready(client, db_session)
+    prestart_headers = login(client, "TEAM1017", "TeamTest987")
+    assert db_session.query(Round3TeamSession).count() == 1
+
+    super_headers = login(client, "SUPER01", "SuperTest987")
+    for number in range(1, 9):
+        response = client.post(
+            f"/api/v1/r3-live/control/tables/{number}", headers=super_headers,
+            json={"game_name": f"Game {number}", "max_points": 20, "is_enabled": True},
+        )
+        assert response.status_code == 200, response.json()
+    assert client.post("/api/v1/r3-live/control/start", headers=super_headers).status_code == 200
+
+    # The token issued before start already carries its device session. No
+    # venue-wide re-login is required when the super admin opens the round.
+    state = client.get("/api/v1/r3-live/participant/state", headers=prestart_headers)
+    assert state.status_code == 200, state.json()
+    assert db_session.query(Round3TeamSession).count() == 1
+
+
+def test_simultaneous_same_team_password_checks_share_one_bcrypt_job(monkeypatch):
+    calls = 0
+
+    def fake_verify(_password, _password_hash):
+        nonlocal calls
+        calls += 1
+        time.sleep(0.1)
+        return True
+
+    monkeypatch.setattr(r1_event, "verify_password", fake_verify)
+    account = EventAccount(
+        id=f"concurrency-{uuid.uuid4().hex}", login_id="TEAM1999",
+        display_name="Concurrency probe", password_hash="unique-test-hash",
+        role=EventRole.PARTICIPANT,
+    )
+
+    async def verify_together():
+        return await asyncio.gather(*[
+            r1_event.verify_event_password(account, "SamePassword123") for _ in range(12)
+        ])
+
+    assert asyncio.run(verify_together()) == [True] * 12
+    assert calls == 1
 
 
 def test_custom_dealer_assignment_and_admin_creation(client, db_session):
