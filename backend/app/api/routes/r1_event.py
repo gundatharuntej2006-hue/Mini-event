@@ -23,7 +23,7 @@ from app.core.security import create_access_token, decode_access_token, get_pass
 from app.core.config import settings
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
-from app.models.event_account import EventAccount, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
+from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
 from app.models.round3_live import Round3LiveConfig, Round3LiveTeam, Round3TeamSession
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
 from app.models.team import Team, TeamStatus
@@ -61,6 +61,18 @@ def _password_key(account: EventAccount, password: str) -> tuple[str, str, str]:
         hashlib.sha256,
     ).hexdigest()
     return account.id, account.password_hash, fingerprint
+
+
+def _persistent_verifier(account_id: str, password: str) -> str:
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        f"{account_id}\0{password}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _password_hash_digest(password_hash: str) -> str:
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()
 
 
 async def verify_event_password(account: EventAccount, password: str) -> bool:
@@ -354,13 +366,36 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
     if not account:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    stored_verifier = db.get(EventPasswordVerifier, account.id)
+    verifier_is_current = bool(
+        stored_verifier
+        and stored_verifier.password_hash_digest == _password_hash_digest(account.password_hash)
+    )
+    fast_password_valid = bool(
+        verifier_is_current
+        and hmac.compare_digest(stored_verifier.verifier, _persistent_verifier(account.id, payload.password))
+    )
+    # A current verifier can reject a typo immediately. If it is absent or
+    # stale (for example after a shell password update), bcrypt remains the
+    # source of truth and refreshes the verifier after success.
+    fast_password_rejected = verifier_is_current and not fast_password_valid
     # End the read transaction before awaiting bcrypt. Otherwise every queued
     # login holds a PostgreSQL connection for tens of seconds and can starve
     # bids, station laptops, health checks, and super-admin operations.
     db.expunge(account)
     db.commit()
-    if not await verify_event_password(account, payload.password):
+    password_valid = fast_password_valid or (
+        not fast_password_rejected and await verify_event_password(account, payload.password)
+    )
+    if not password_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    if not verifier_is_current:
+        db.merge(EventPasswordVerifier(
+            account_id=account.id,
+            verifier=_persistent_verifier(account.id, payload.password),
+            password_hash_digest=_password_hash_digest(account.password_hash),
+        ))
+        db.commit()
     if not account.is_active:
         if account.role == EventRole.PARTICIPANT:
             return {"success": True, "data": {"redirect": "instagram"}, "message": "Round 1 has ended for this team. Please see Instagram for results."}
@@ -532,6 +567,11 @@ def change_account_password(payload: PasswordChangeInput, account: EventAccount 
     if not target:
         raise HTTPException(status_code=404, detail="Login account not found.")
     target.password_hash = get_password_hash(payload.new_password)
+    db.merge(EventPasswordVerifier(
+        account_id=target.id,
+        verifier=_persistent_verifier(target.id, payload.new_password),
+        password_hash_digest=_password_hash_digest(target.password_hash),
+    ))
     db.add(Round1Override(
         team_identifier=target.login_id,
         checkpoint_number=0,

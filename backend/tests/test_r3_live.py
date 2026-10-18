@@ -5,7 +5,7 @@ from datetime import timedelta, timezone
 
 from app.core.security import get_password_hash
 from app.models.core import seed_default_teams
-from app.models.event_account import EventAccount, EventRole
+from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 from app.models.participant import Participant
 from app.models.progression import AuditLog
 from app.models.round3_live import (
@@ -295,6 +295,26 @@ def test_simultaneous_same_team_password_checks_share_one_bcrypt_job(monkeypatch
 
     assert asyncio.run(verify_together()) == [True] * 12
     assert calls == 1
+
+
+def test_successful_login_persists_fast_verifier_across_cache_restart(client, db_session, monkeypatch):
+    ready(client, db_session)
+    assert client.post(
+        "/api/v1/r1/login", json={"login_id": "TEAM1017", "password": "TeamTest987"},
+    ).status_code == 200
+    account = db_session.query(EventAccount).filter(EventAccount.login_id == "TEAM1017").one()
+    assert db_session.get(EventPasswordVerifier, account.id) is not None
+
+    with r1_event._password_work_lock:
+        r1_event._password_cache.clear()
+    monkeypatch.setattr(
+        r1_event, "verify_password",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("bcrypt should not run")),
+    )
+    repeated = client.post(
+        "/api/v1/r1/login", json={"login_id": "TEAM1017", "password": "TeamTest987"},
+    )
+    assert repeated.status_code == 200, repeated.json()
 
 
 def test_custom_dealer_assignment_and_admin_creation(client, db_session):

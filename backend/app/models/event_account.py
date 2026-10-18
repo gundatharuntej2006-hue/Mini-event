@@ -30,6 +30,20 @@ class EventAccount(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class EventPasswordVerifier(Base):
+    """Peppered fast verifier created only after bcrypt proves the password."""
+
+    __tablename__ = "event_password_verifiers"
+
+    account_id: Mapped[str] = mapped_column(String(40), ForeignKey("event_accounts.id"), primary_key=True)
+    verifier: Mapped[str] = mapped_column(String(64), nullable=False)
+    password_hash_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+
+
 class Round1Override(Base):
     __tablename__ = "round1_overrides"
 
