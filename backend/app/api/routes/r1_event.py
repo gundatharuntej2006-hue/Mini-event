@@ -45,11 +45,12 @@ _login_attempts: dict[str, deque[float]] = defaultdict(deque)
 # Password verification is intentionally isolated from FastAPI's shared worker
 # pool. A simultaneous event-day login burst must not consume every worker and
 # block health checks, bids, station updates, or the super-admin controls.
-_password_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="event-login")
+_password_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="event-login")
 _password_work_lock = Lock()
 _password_inflight: dict[tuple[str, str, str], Future[bool]] = {}
 _password_cache: dict[tuple[str, str, str], tuple[float, bool]] = {}
-PASSWORD_CACHE_SECONDS = 30
+PASSWORD_SUCCESS_CACHE_SECONDS = 8 * 60 * 60
+PASSWORD_FAILURE_CACHE_SECONDS = 10
 
 
 def _password_key(account: EventAccount, password: str) -> tuple[str, str, str]:
@@ -88,7 +89,8 @@ async def verify_event_password(account: EventAccount, password: str) -> bool:
                 _password_inflight.pop(key, None)
     if owner:
         with _password_work_lock:
-            _password_cache[key] = (monotonic() + PASSWORD_CACHE_SECONDS, result)
+            ttl = PASSWORD_SUCCESS_CACHE_SECONDS if result else PASSWORD_FAILURE_CACHE_SECONDS
+            _password_cache[key] = (monotonic() + ttl, result)
     return result
 
 
