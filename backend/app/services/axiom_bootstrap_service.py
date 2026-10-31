@@ -42,11 +42,15 @@ def provision_axiom_accounts(db: Session) -> dict:
     super_account = db.query(EventAccount).filter(
         EventAccount.login_id == super_data["login_id"]
     ).first()
+    super_account_existed = super_account is not None
     if not super_account:
         super_account = EventAccount(login_id=super_data["login_id"])
         db.add(super_account)
     super_account.display_name = super_data["display_name"]
-    super_account.password_hash = super_data["password_hash"]
+    # The first Axiom migration replaces the old event credential. Later roster
+    # versions must preserve a password the super admin changed in the portal.
+    if state is None or not super_account_existed:
+        super_account.password_hash = super_data["password_hash"]
     super_account.role = EventRole.SUPER_ADMIN
     super_account.team_id = None
     super_account.location_number = None
@@ -63,11 +67,15 @@ def provision_axiom_accounts(db: Session) -> dict:
         approved_emails.add(email)
 
         account = db.query(EventAccount).filter(EventAccount.login_id == login_id).first()
+        account_created = account is None
         if not account:
             account = EventAccount(login_id=login_id)
             db.add(account)
+        profile = None if account_created else db.get(AxiomProfile, account.id)
+        should_apply_initial_password = account_created or not profile or profile.must_change_password
+        if should_apply_initial_password:
+            account.password_hash = person["password_hash"]
         account.display_name = person["name"].strip()
-        account.password_hash = person["password_hash"]
         account.role = EventRole.PARTICIPANT
         account.team_id = None
         account.location_number = None
@@ -78,16 +86,15 @@ def provision_axiom_accounts(db: Session) -> dict:
             EventPasswordVerifier.account_id == account.id
         ).delete(synchronize_session=False)
 
-        profile = db.get(AxiomProfile, account.id)
         if not profile:
             profile = AxiomProfile(account_id=account.id)
             db.add(profile)
+            profile.role_choice = AxiomRoleChoice.PENDING
+            profile.must_change_password = True
         profile.full_name = person["name"].strip()
         profile.college_email = email
         profile.roster_type = AxiomRosterType(person["roster_type"])
-        profile.role_choice = AxiomRoleChoice.PENDING
         profile.is_program_active = True
-        profile.must_change_password = True
 
     # Anyone removed from the approved Axiom roster remains in historical
     # event records but has no current programme access.

@@ -1,4 +1,4 @@
-from app.core.security import create_access_token, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.axiom import AxiomProfile, AxiomRosterType
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 from app.models.user import User
@@ -100,3 +100,30 @@ def test_axiom_member_can_replace_initial_password(client, db_session):
     assert verify_password("AxiomFuture42", account.password_hash)
     assert not verify_password("9030847016", account.password_hash)
     assert db_session.get(AxiomProfile, account.id).must_change_password is False
+
+
+def test_later_roster_version_preserves_user_changed_passwords(monkeypatch, db_session):
+    import app.services.axiom_bootstrap_service as bootstrap_service
+
+    provision_axiom_accounts(db_session)
+    member = db_session.query(EventAccount).filter(
+        EventAccount.login_id == "24UG1BYAI038@BMSIT.IN"
+    ).one()
+    member.password_hash = get_password_hash("MemberChanged42")
+    member_profile = db_session.get(AxiomProfile, member.id)
+    member_profile.must_change_password = False
+
+    super01 = db_session.query(EventAccount).filter(EventAccount.login_id == "SUPER01").one()
+    super01.password_hash = get_password_hash("SuperChanged42")
+    db_session.commit()
+
+    next_roster = load_axiom_roster()
+    next_roster["version"] = "axiom-roster-future-version"
+    monkeypatch.setattr(bootstrap_service, "load_axiom_roster", lambda: next_roster)
+    provision_axiom_accounts(db_session)
+
+    db_session.refresh(member)
+    db_session.refresh(super01)
+    assert verify_password("MemberChanged42", member.password_hash)
+    assert verify_password("SuperChanged42", super01.password_hash)
+    assert db_session.get(AxiomProfile, member.id).must_change_password is False
