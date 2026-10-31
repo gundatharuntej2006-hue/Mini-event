@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.routes.r1_event import current_account, require_roles
+from app.core.security import get_password_hash, verify_password
 from app.db.session import get_db
 from app.models.axiom import (
     AxiomProblemStatement,
@@ -17,7 +18,7 @@ from app.models.axiom import (
     AxiomRosterType,
     AxiomStatementStatus,
 )
-from app.models.event_account import EventAccount, EventRole
+from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
@@ -40,6 +41,12 @@ class StatementInput(BaseModel):
     project_context: str = Field(min_length=20, max_length=2400)
     helpful_skills: str = Field(default="", max_length=600)
     submit: bool = False
+
+
+class SelfPasswordChangeInput(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=72)
+    new_password_confirmation: str = Field(min_length=8, max_length=72)
 
 
 def now_ist() -> datetime:
@@ -65,6 +72,37 @@ def statement_data(statement: AxiomProblemStatement | None) -> dict | None:
         "helpful_skills": statement.helpful_skills,
         "status": statement.status.value,
         "submitted_at": statement.submitted_at.isoformat() if statement.submitted_at else None,
+    }
+
+
+@router.post("/password")
+def change_own_password(
+    payload: SelfPasswordChangeInput,
+    account: EventAccount = Depends(current_account),
+    db: Session = Depends(get_db),
+):
+    """Let an active Axiom account replace its initial credential safely."""
+    if account.role != EventRole.SUPER_ADMIN:
+        profile_for(db, account)
+    if payload.new_password != payload.new_password_confirmation:
+        raise HTTPException(status_code=400, detail="The two new password entries do not match.")
+    if not verify_password(payload.current_password, account.password_hash):
+        raise HTTPException(status_code=401, detail="Your current password is incorrect.")
+    if verify_password(payload.new_password, account.password_hash):
+        raise HTTPException(status_code=400, detail="Choose a new password that is different from your current password.")
+
+    account.password_hash = get_password_hash(payload.new_password)
+    db.query(EventPasswordVerifier).filter(
+        EventPasswordVerifier.account_id == account.id
+    ).delete(synchronize_session=False)
+    profile = db.get(AxiomProfile, account.id)
+    if profile:
+        profile.must_change_password = False
+    db.commit()
+    return {
+        "success": True,
+        "data": {"login_id": account.login_id},
+        "message": "Password changed. Use the new password for every future login.",
     }
 
 

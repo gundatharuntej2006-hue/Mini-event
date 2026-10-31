@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight, Atom, BookOpen, CalendarClock, Check, ChevronRight,
   CircleDot, Clock3, FileText, FlaskConical, History, LogOut, Orbit,
-  ShieldCheck, Sparkles, Users, X,
+  ShieldCheck, Sparkles, Users, X, LockKeyhole,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
@@ -40,6 +40,46 @@ function AxiomLogo() {
 function AxiomHeader({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
   return <header className={`ax-header ${compact ? 'compact' : ''}`}><button className="ax-brand-button" onClick={() => navigate('/')}><AxiomLogo/></button><nav><button onClick={() => navigate('/past-events')}><History size={15}/> Past events</button>{getSession() && <button onClick={() => { clearSession(); navigate('/login'); }}><LogOut size={15}/> Sign out</button>}</nav></header>;
+}
+
+function PasswordPanel() {
+  const navigate = useNavigate();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  async function changePassword(event: FormEvent) {
+    event.preventDefault();
+    setError(''); setMessage('');
+    if (newPassword !== confirmation) { setError('The two new passwords do not match.'); return; }
+    setBusy(true);
+    try {
+      await request('/axiom/password', 'POST', {
+        current_password: currentPassword,
+        new_password: newPassword,
+        new_password_confirmation: confirmation,
+      });
+      setMessage('Password changed. Sign in again using your new password.');
+      setTimeout(() => { clearSession(); navigate('/login', { replace: true }); }, 1200);
+    } catch (item) { setError(item instanceof Error ? item.message : 'Could not change the password.'); }
+    finally { setBusy(false); }
+  }
+
+  return <section className="ax-password-panel">
+    <div className="ax-section-title"><div><span>SECURITY</span><h2>Make this account yours.</h2></div><p>Your new password replaces the initial phone-number credential and becomes the only valid password for future logins.</p></div>
+    <form onSubmit={changePassword}>
+      <label>Current password<input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} required/></label>
+      <label>New password<input type="password" autoComplete="new-password" minLength={8} maxLength={72} value={newPassword} onChange={event => setNewPassword(event.target.value)} required/></label>
+      <label>Confirm new password<input type="password" autoComplete="new-password" minLength={8} maxLength={72} value={confirmation} onChange={event => setConfirmation(event.target.value)} required/></label>
+      <button className="ax-primary compact" disabled={busy}><LockKeyhole size={16}/>{busy ? 'Changing…' : 'Change password'}</button>
+    </form>
+    <small>Use at least eight characters. Passwords are stored only as secure hashes.</small>
+    {error && <div className="ax-alert"><X size={16}/>{error}</div>}
+    {message && <div className="ax-password-success"><Check size={16}/>{message}</div>}
+  </section>;
 }
 
 export function AxiomLandingPage() {
@@ -138,6 +178,7 @@ export function AxiomDashboardPage() {
 
     {data.role_choice === 'PARTICIPANT' && isCandidate && <section className="ax-member-wait"><div><Clock3/><span>PARTICIPANT PATH CONFIRMED</span></div><h2>Your project choices begin next.</h2><p>Submitted problems will be released together after the mentor window closes. Three complete preferences give the matching system the best chance to place you within your choices.</p></section>}
     {data.role_choice === 'OPTED_OUT' && <section className="ax-member-wait quiet"><div><Check/><span>DECISION RECORDED</span></div><h2>You have opted out of this cycle.</h2><p>Your club access remains safe, but you will not be included in Project Axiom team formation this semester.</p></section>}
+    <PasswordPanel/>
   </main>;
 }
 
@@ -147,7 +188,7 @@ export function AxiomControlPage() {
   const [error, setError] = useState('');
   useEffect(() => { request<ControlOverview>('/axiom/control/overview').then(setData).catch(item => setError(item.message)); }, []);
   const ready = useMemo(() => data?.people.filter(person => person.role_choice !== 'PENDING').length || 0, [data]);
-  return <main className="ax-site ax-dashboard"><AxiomBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck size={13}/> CLUB COUNCIL CONTROL</div><h1>Project Axiom <em>overview.</em></h1><p>One roster, transparent decisions and a reviewable path to every final team.</p></div><button className="ax-secondary" onClick={() => navigate('/')}>Public page</button></section>{error && <div className="ax-alert"><X/>{error}</div>}{data && <><section className="ax-stat-grid"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>DECISIONS RECEIVED</small><b>{ready}</b><span>of {data.mentor_candidates} candidates</span></div><div><small>CONFIRMED MENTORS</small><b>{data.choices.MENTOR || 0}</b><span>projects expected</span></div><div><small>STATEMENTS READY</small><b>{data.submitted_statements}</b><span>submitted</span></div></section><section className="ax-roster"><div className="ax-section-title"><div><span>LIVE ROSTER</span><h2>People and decisions</h2></div><p>Archisha Gupta is not included. Legacy event accounts remain paused.</p></div><div className="ax-roster-table">{data.people.map(person => <article key={person.email}><div className="ax-avatar">{person.name.split(' ').slice(0,2).map(part => part[0]).join('')}</div><div><b>{person.name}</b><small>{person.email}</small></div><span>{person.roster_type === 'MENTOR_CANDIDATE' ? 'CANDIDATE' : 'MEMBER'}</span><em className={person.role_choice.toLowerCase()}>{person.role_choice.replace('_', ' ')}</em></article>)}</div></section></>}</main>;
+  return <main className="ax-site ax-dashboard"><AxiomBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck size={13}/> CLUB COUNCIL CONTROL</div><h1>Project Axiom <em>overview.</em></h1><p>One roster, transparent decisions and a reviewable path to every final team.</p></div><button className="ax-secondary" onClick={() => navigate('/')}>Public page</button></section>{error && <div className="ax-alert"><X/>{error}</div>}{data && <><section className="ax-stat-grid"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>DECISIONS RECEIVED</small><b>{ready}</b><span>of {data.mentor_candidates} candidates</span></div><div><small>CONFIRMED MENTORS</small><b>{data.choices.MENTOR || 0}</b><span>projects expected</span></div><div><small>STATEMENTS READY</small><b>{data.submitted_statements}</b><span>submitted</span></div></section><section className="ax-roster"><div className="ax-section-title"><div><span>LIVE ROSTER</span><h2>People and decisions</h2></div><p>Archisha Gupta is not included. Legacy event accounts remain paused.</p></div><div className="ax-roster-table">{data.people.map(person => <article key={person.email}><div className="ax-avatar">{person.name.split(' ').slice(0,2).map(part => part[0]).join('')}</div><div><b>{person.name}</b><small>{person.email}</small></div><span>{person.roster_type === 'MENTOR_CANDIDATE' ? 'CANDIDATE' : 'MEMBER'}</span><em className={person.role_choice.toLowerCase()}>{person.role_choice.replace('_', ' ')}</em></article>)}</div></section><PasswordPanel/></>}</main>;
 }
 
 export function PastEventsPage() {

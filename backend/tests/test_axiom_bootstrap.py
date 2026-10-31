@@ -1,4 +1,4 @@
-from app.core.security import verify_password
+from app.core.security import create_access_token, verify_password
 from app.models.axiom import AxiomProfile, AxiomRosterType
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 from app.models.user import User
@@ -76,3 +76,27 @@ def test_provisioning_is_idempotent(db_session):
     assert second["applied"] is False
     assert db_session.query(AxiomProfile).count() == 24
     assert db_session.query(EventPasswordVerifier).count() == 0
+
+
+def test_axiom_member_can_replace_initial_password(client, db_session):
+    provision_axiom_accounts(db_session)
+    account = db_session.query(EventAccount).filter(
+        EventAccount.login_id == "24UG1BYAI038@BMSIT.IN"
+    ).one()
+    token = create_access_token(subject=account.id, role=account.role.value)
+
+    response = client.post(
+        "/api/v1/axiom/password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "9030847016",
+            "new_password": "AxiomFuture42",
+            "new_password_confirmation": "AxiomFuture42",
+        },
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(account)
+    assert verify_password("AxiomFuture42", account.password_hash)
+    assert not verify_password("9030847016", account.password_hash)
+    assert db_session.get(AxiomProfile, account.id).must_change_password is False
