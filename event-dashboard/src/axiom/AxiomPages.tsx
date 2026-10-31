@@ -8,6 +8,7 @@ import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
+import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -30,6 +31,25 @@ type ControlOverview = {
   total: number; mentor_candidates: number; members: number; submitted_statements: number; preference_count: number;
   choices: Record<string, number>; matching_preview: MatchingTeam[];
   people: { name: string; email: string; roster_type: string; role_choice: string }[];
+};
+
+type SkyMode = 'auto' | 'morning' | 'afternoon' | 'evening' | 'night';
+type SkyPhase = Exclude<SkyMode, 'auto'>;
+const SKY_MODES: Array<{ value: SkyMode; label: string }> = [
+  { value: 'auto', label: 'Auto · IST' }, { value: 'morning', label: 'Morning' },
+  { value: 'afternoon', label: 'Afternoon' }, { value: 'evening', label: 'Evening' }, { value: 'night', label: 'Night' },
+];
+const getIndiaMinutes = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0);
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0);
+  return hour * 60 + minute;
+};
+const getSkyClock = (mode: SkyMode): { phase: SkyPhase; minutes: number } => {
+  const previewMinutes: Record<SkyPhase, number> = { morning: 7 * 60 + 15, afternoon: 13 * 60 + 30, evening: 18 * 60, night: 22 * 60 };
+  const minutes = mode === 'auto' ? getIndiaMinutes() : previewMinutes[mode];
+  const phase: SkyPhase = mode !== 'auto' ? mode : minutes >= 330 && minutes < 720 ? 'morning' : minutes >= 720 && minutes < 990 ? 'afternoon' : minutes >= 990 && minutes < 1155 ? 'evening' : 'night';
+  return { phase, minutes };
 };
 
 const formatDeadline = (value: string) => new Intl.DateTimeFormat('en-IN', {
@@ -195,7 +215,7 @@ function PasswordPanel() {
   </section>;
 }
 
-function NightSkyCanvas() {
+function NightSkyCanvas({ mode }: { mode: SkyMode }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -203,6 +223,7 @@ function NightSkyCanvas() {
     if (!canvas || !context) return;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0;
+    let skyClock = getSkyClock(mode); let lastClockUpdate = 0;
     let nextMeteor = performance.now() + 1400 + Math.random() * 4200;
     let meteor: { started: number; x: number; y: number; dx: number; dy: number; length: number; duration: number; brightness: number; twin: boolean } | null = null;
     let nextImpact = performance.now() + 4000 + Math.random() * 3000;
@@ -262,6 +283,54 @@ function NightSkyCanvas() {
       nextMeteor = time + 8500 + Math.random() * 4500;
     };
 
+    const paintSun = (x: number, y: number, radius: number, warmth: number, alpha = 1) => {
+      const halo = context.createRadialGradient(x, y, 0, x, y, radius * 7.5);
+      halo.addColorStop(0, `rgba(255,250,214,${alpha * .92})`);
+      halo.addColorStop(.13, `rgba(255,${Math.round(224 - warmth * 42)},${Math.round(145 - warmth * 52)},${alpha * .54})`);
+      halo.addColorStop(.48, `rgba(255,134,70,${alpha * .12})`);
+      halo.addColorStop(1, 'rgba(255,110,40,0)');
+      context.fillStyle = halo; context.beginPath(); context.arc(x, y, radius * 7.5, 0, Math.PI * 2); context.fill();
+      context.fillStyle = `rgba(255,${Math.round(245 - warmth * 35)},${Math.round(194 - warmth * 73)},${alpha})`;
+      context.shadowBlur = radius * 1.8; context.shadowColor = 'rgba(255,209,116,.72)';
+      context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill(); context.shadowBlur = 0;
+    };
+
+    const paintCloud = (x: number, y: number, scale: number, alpha: number) => {
+      context.save(); context.translate(x, y); context.scale(scale, scale);
+      const cloud = context.createLinearGradient(0, -18, 0, 16);
+      cloud.addColorStop(0, `rgba(255,255,255,${alpha})`); cloud.addColorStop(1, `rgba(206,225,239,${alpha * .42})`);
+      context.fillStyle = cloud;
+      [[-28, 5, 21], [-9, -5, 27], [16, -1, 23], [34, 8, 17], [2, 11, 35]].forEach(([cloudX, cloudY, cloudRadius]) => {
+        context.beginPath(); context.arc(cloudX, cloudY, cloudRadius, 0, Math.PI * 2); context.fill();
+      });
+      context.restore();
+    };
+
+    const paintBirdFlock = (time: number, direction: number, evening = false) => {
+      const progress = (time * (evening ? .000023 : .000028) + (evening ? .38 : .08)) % 1;
+      const leadX = (direction > 0 ? -.14 + progress * 1.28 : 1.14 - progress * 1.28) * width;
+      const leadY = (evening ? .29 : .24) * height + Math.sin(progress * Math.PI * 2) * 12;
+      const birds = [[0, 0], [-22, -12], [-22, 12], [-45, -23], [-45, 23], [-70, -31], [-70, 31]];
+      context.strokeStyle = evening ? 'rgba(35,30,46,.72)' : 'rgba(43,63,78,.66)'; context.lineWidth = 1.35;
+      birds.forEach(([birdX, birdY], index) => {
+        const x = leadX + birdX * direction; const y = leadY + birdY;
+        const flap = Math.sin(time * .012 + index * 1.7) * 2.4;
+        context.beginPath(); context.moveTo(x - 5, y + flap); context.quadraticCurveTo(x - 2, y - 3, x, y); context.quadraticCurveTo(x + 2, y - 3, x + 5, y - flap); context.stroke();
+      });
+    };
+
+    const paintAfternoonBalloon = (time: number) => {
+      const progress = (time * .000017 + .21) % 1;
+      const x = (-.1 + progress * 1.2) * width; const y = (.24 + Math.sin(progress * Math.PI * 2) * .035) * height;
+      const scale = width < 700 ? .72 : 1;
+      context.save(); context.translate(x, y); context.scale(scale, scale);
+      const balloon = context.createLinearGradient(-12, -22, 15, 20);
+      balloon.addColorStop(0, 'rgba(252,237,191,.95)'); balloon.addColorStop(.48, 'rgba(218,91,66,.95)'); balloon.addColorStop(1, 'rgba(107,49,81,.92)');
+      context.fillStyle = balloon; context.beginPath(); context.ellipse(0, 0, 15, 21, 0, 0, Math.PI * 2); context.fill();
+      context.strokeStyle = 'rgba(75,46,48,.65)'; context.lineWidth = 1; context.beginPath(); context.moveTo(-9, 16); context.lineTo(-4, 27); context.moveTo(9, 16); context.lineTo(4, 27); context.stroke();
+      context.fillStyle = 'rgba(70,48,35,.86)'; context.fillRect(-5, 27, 10, 6); context.restore();
+    };
+
     const buildField = () => {
       ratio = Math.min(window.devicePixelRatio || 1, 1.5);
       width = window.innerWidth; height = window.innerHeight;
@@ -285,18 +354,53 @@ function NightSkyCanvas() {
     const draw = (time: number) => {
       if (!reduceMotion && time - lastPaint < 33) { frame = window.requestAnimationFrame(draw); return; }
       lastPaint = time;
+      if (time - lastClockUpdate > 30000) { skyClock = getSkyClock(mode); lastClockUpdate = time; }
+      const { phase, minutes } = skyClock;
+      const palettes: Record<SkyPhase, [string, string, string, string]> = {
+        night: ['#01030b', '#030b1c', '#07182d', '#102d4b'],
+        morning: ['#1b4168', '#5e99c4', '#b9d8e7', '#f7c78d'],
+        afternoon: ['#1679bd', '#37a0dd', '#81c7e8', '#d7eef7'],
+        evening: ['#111a3a', '#50385e', '#b85d65', '#f3a15f'],
+      };
+      const palette = palettes[phase];
       const sky = context.createLinearGradient(0, 0, 0, height);
-      sky.addColorStop(0, '#01030b'); sky.addColorStop(.34, '#030b1c'); sky.addColorStop(.68, '#07182d'); sky.addColorStop(1, '#102d4b');
+      sky.addColorStop(0, palette[0]); sky.addColorStop(.34, palette[1]); sky.addColorStop(.7, palette[2]); sky.addColorStop(1, palette[3]);
       context.fillStyle = sky; context.fillRect(0, 0, width, height);
       const glow = context.createRadialGradient(width * .52, height * .62, 0, width * .52, height * .62, Math.max(width, height) * .82);
-      glow.addColorStop(0, 'rgba(28,76,126,.18)'); glow.addColorStop(.55, 'rgba(9,31,64,.07)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+      glow.addColorStop(0, phase === 'night' ? 'rgba(28,76,126,.18)' : phase === 'evening' ? 'rgba(255,151,96,.18)' : 'rgba(255,239,203,.12)');
+      glow.addColorStop(.55, phase === 'night' ? 'rgba(9,31,64,.07)' : 'rgba(255,205,148,.04)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
       context.fillStyle = glow; context.fillRect(0, 0, width, height);
       const horizon = context.createLinearGradient(0, height * .68, 0, height);
-      horizon.addColorStop(0, 'rgba(20,53,86,0)'); horizon.addColorStop(1, 'rgba(54,91,119,.12)');
+      horizon.addColorStop(0, 'rgba(20,53,86,0)'); horizon.addColorStop(1, phase === 'night' ? 'rgba(54,91,119,.12)' : phase === 'evening' ? 'rgba(255,157,92,.24)' : 'rgba(239,246,248,.16)');
       context.fillStyle = horizon; context.fillRect(0, height * .68, width, height * .32);
 
+      if (phase === 'morning') {
+        const morningProgress = Math.min(1, Math.max(0, (minutes - 330) / 390));
+        paintSun(width * (.06 + morningProgress * .18), height * (.91 - Math.sin(morningProgress * Math.PI * .5) * .47), width < 700 ? 14 : 21, .28, .94);
+        const drift = (time * .000007) % 1;
+        paintCloud((-.2 + drift * 1.4) * width, height * .36, width < 700 ? .62 : .9, .34);
+        paintCloud((1.12 - drift * .8) * width, height * .51, width < 700 ? .46 : .68, .24);
+        paintBirdFlock(time, 1);
+      } else if (phase === 'afternoon') {
+        const afternoonProgress = Math.min(1, Math.max(0, (minutes - 720) / 270));
+        paintSun(width * (.57 + afternoonProgress * .22), height * (.17 + afternoonProgress * .08), width < 700 ? 13 : 20, 0, .82);
+        const drift = (time * .000005) % 1;
+        paintCloud((-.18 + drift * 1.45) * width, height * .42, width < 700 ? .72 : 1.08, .57);
+        paintCloud((.92 - drift * .75) * width, height * .22, width < 700 ? .5 : .78, .42);
+        paintCloud((.25 + drift * .62) * width, height * .66, width < 700 ? .42 : .64, .31);
+        paintAfternoonBalloon(time);
+      } else if (phase === 'evening') {
+        const eveningProgress = Math.min(1, Math.max(0, (minutes - 990) / 165));
+        paintSun(width * (.76 + eveningProgress * .12), height * (.63 + eveningProgress * .12), width < 700 ? 15 : 23, .88, 1 - eveningProgress * .22);
+        const drift = (time * .000006) % 1;
+        paintCloud((-.15 + drift * 1.3) * width, height * .47, width < 700 ? .58 : .88, .24);
+        paintBirdFlock(time, -1, true);
+      }
+
       const travel = scrollProgress * 1.65;
+      const starVisibility = phase === 'night' ? 1 : phase === 'evening' ? .22 : phase === 'morning' ? .035 : 0;
       stars.forEach((star) => {
+        if (starVisibility <= 0) return;
         const zoom = 1 + travel * star.depth * 1.15;
         const x = width * (.5 + (star.x - .5) * zoom);
         const yUnit = (star.y + travel * (.12 + star.depth * .28)) % 1.18 - .09;
@@ -307,20 +411,20 @@ function NightSkyCanvas() {
         const [red, green, blue] = star.tone;
         if (star.glow) {
           const halo = context.createRadialGradient(x, y, 0, x, y, radius * 4.8);
-          halo.addColorStop(0, `rgba(${red},${green},${blue},${Math.max(.12, twinkle * .28)})`);
+          halo.addColorStop(0, `rgba(${red},${green},${blue},${Math.max(.12, twinkle * .28) * starVisibility})`);
           halo.addColorStop(1, `rgba(${red},${green},${blue},0)`);
           context.fillStyle = halo; context.beginPath(); context.arc(x, y, radius * 4.8, 0, Math.PI * 2); context.fill();
         }
         context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2);
-        context.fillStyle = `rgba(${red},${green},${blue},${Math.max(.18, twinkle)})`; context.fill();
+        context.fillStyle = `rgba(${red},${green},${blue},${Math.max(.18, twinkle) * starVisibility})`; context.fill();
       });
 
-      if (!reduceMotion && !impact && time >= nextImpact) launchImpact(time);
+      if (!reduceMotion && phase === 'night' && !impact && time >= nextImpact) launchImpact(time);
 
-      if (!reduceMotion && !impact && !meteor && time >= nextMeteor) {
+      if (!reduceMotion && phase === 'night' && !impact && !meteor && time >= nextMeteor) {
         launchMeteor(time);
       }
-      if (meteor) {
+      if (phase === 'night' && meteor) {
         const age = (time - meteor.started) / meteor.duration;
         if (age >= 1) { meteor = null; nextMeteor = time + 1800 + Math.random() * 8200; }
         else {
@@ -339,7 +443,7 @@ function NightSkyCanvas() {
         }
       }
 
-      if (!reduceMotion) flights.forEach((flight, index) => {
+      if (!reduceMotion && phase === 'night') flights.forEach((flight, index) => {
         if (time < flight.delayUntil) return;
         flight.x += flight.speed * flight.direction;
         if ((flight.direction > 0 && flight.x > 1.22) || (flight.direction < 0 && flight.x < -.22)) {
@@ -365,7 +469,7 @@ function NightSkyCanvas() {
         context.shadowBlur = 0;
       });
 
-      if (impact) {
+      if (phase === 'night' && impact) {
         const activeImpact = impact;
         const age = (time - activeImpact.started) / 2800;
         if (age >= 1) {
@@ -415,16 +519,23 @@ function NightSkyCanvas() {
     window.addEventListener('resize', buildField); window.addEventListener('scroll', updateScroll, { passive: true });
     frame = window.requestAnimationFrame(draw);
     return () => { window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); };
-  }, []);
+  }, [mode]);
   return <canvas ref={canvasRef} className="ax-night-canvas" aria-hidden="true"/>;
 }
 
 export function AxiomLandingPage() {
   const navigate = useNavigate();
-  return <main className="ax-sky-home">
-    <NightSkyCanvas/>
-    <header className="ax-sky-header"><span>ASYMPTOTES · BMSIT</span><button onClick={() => navigate('/login')}>Enter workspace <ArrowRight size={16}/></button></header>
-    <section className="ax-sky-intro"><div><span>PROJECT AXIOM</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A private research and product initiative for the people building Asymptotes from within.</p><button onClick={() => navigate('/login')}>Enter Project Axiom <ArrowRight size={17}/></button></div><small>SCROLL THROUGH THE NIGHT</small></section>
+  const [skyMode, setSkyMode] = useState<SkyMode>('auto');
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => { const timer = window.setInterval(() => setClockTick((tick) => tick + 1), 30000); return () => window.clearInterval(timer); }, []);
+  const skyClock = useMemo(() => getSkyClock(skyMode), [skyMode, clockTick]);
+  const indiaTime = useMemo(() => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' }).format(new Date()), [clockTick]);
+  return <main className="ax-sky-home" data-sky-phase={skyClock.phase}>
+    <NightSkyCanvas mode={skyMode}/>
+    <div className="ax-earth-wrap" aria-hidden="true"><div className="ax-earth-globe"><div className="ax-earth-map" style={{ backgroundImage: `url(${earthTexture})` }}/></div></div>
+    <header className="ax-sky-header"><span>ASYMPTOTES · BMSIT</span><div><small>{skyMode === 'auto' ? `${indiaTime} IST` : `${skyClock.phase} preview`}</small><button onClick={() => navigate('/login')}>Enter workspace <ArrowRight size={16}/></button></div></header>
+    <nav className="ax-sky-modes" aria-label="Sky time"><span>SKY</span>{SKY_MODES.map((option) => <button key={option.value} className={skyMode === option.value ? 'active' : ''} aria-pressed={skyMode === option.value} onClick={() => setSkyMode(option.value)}>{option.label}</button>)}</nav>
+    <section className="ax-sky-intro"><div><span>PROJECT AXIOM</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A private research and product initiative for the people building Asymptotes from within.</p><button onClick={() => navigate('/login')}>Enter Project Axiom <ArrowRight size={17}/></button></div><small>SCROLL THROUGH THE SKY</small></section>
     <div className="ax-sky-distance" aria-hidden="true"/>
   </main>;
 }
