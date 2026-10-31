@@ -22,9 +22,9 @@ from app.models.event_account import EventAccount, EventRole
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
 IST = ZoneInfo("Asia/Kolkata")
-MENTOR_DECISION_DEADLINE = datetime(2026, 10, 27, 18, 0, tzinfo=IST)
-STATEMENT_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
-PREFERENCE_DEADLINE = datetime(2026, 11, 5, 18, 0, tzinfo=IST)
+MENTOR_DECISION_DEADLINE = datetime(2026, 10, 31, 18, 0, tzinfo=IST)
+STATEMENT_DEADLINE = datetime(2026, 11, 2, 15, 0, tzinfo=IST)
+PREFERENCE_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
 
 
 class RoleChoiceInput(BaseModel):
@@ -118,7 +118,7 @@ def choose_role(
     if profile.roster_type != AxiomRosterType.MENTOR_CANDIDATE:
         raise HTTPException(status_code=403, detail="Only mentor candidates make this decision.")
     if now_ist() > MENTOR_DECISION_DEADLINE:
-        raise HTTPException(status_code=409, detail="The mentor decision window closed on 27 October at 6:00 PM IST.")
+        raise HTTPException(status_code=409, detail="The mentor decision window closed on 31 October at 6:00 PM IST.")
     if not payload.confirmed:
         raise HTTPException(status_code=400, detail="Please confirm your final selection.")
     profile.role_choice = AxiomRoleChoice(payload.choice)
@@ -136,7 +136,7 @@ def save_statement(
     if profile.role_choice != AxiomRoleChoice.MENTOR:
         raise HTTPException(status_code=403, detail="Choose the mentor role before creating a problem statement.")
     if now_ist() > STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 3 November at 6:00 PM IST.")
+        raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 2 November at 3:00 PM IST.")
     statement = db.query(AxiomProblemStatement).filter(
         AxiomProblemStatement.mentor_account_id == account.id
     ).first()
