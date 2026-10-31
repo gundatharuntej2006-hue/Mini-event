@@ -195,7 +195,134 @@ function PasswordPanel() {
   </section>;
 }
 
+function NightSkyCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0;
+    let nextMeteor = performance.now() + 1800 + Math.random() * 2600;
+    let meteor: { started: number; x: number; y: number; length: number; angle: number } | null = null;
+    type Star = { x: number; y: number; depth: number; radius: number; phase: number; pulse: number; tone: [number, number, number]; glow: boolean };
+    type Flight = { x: number; y: number; speed: number; phase: number; direction: number; scale: number; bank: number };
+    let stars: Star[] = []; let flights: Flight[] = [];
+
+    const buildField = () => {
+      ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      width = window.innerWidth; height = window.innerHeight;
+      canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+      canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      const count = width < 700 ? 125 : 220;
+      const starTones: Array<[number, number, number]> = [[217, 232, 255], [244, 247, 255], [255, 239, 211], [203, 222, 255]];
+      stars = Array.from({ length: count }, () => ({
+        x: Math.random(), y: Math.random(), depth: .15 + Math.random() * .85,
+        radius: .28 + Math.pow(Math.random(), 2.6) * 1.95, phase: Math.random() * Math.PI * 2, pulse: .24 + Math.random() * .68,
+        tone: starTones[Math.floor(Math.random() * starTones.length)], glow: Math.random() > .91,
+      }));
+      flights = [
+        { x: -.15, y: .28, speed: .0051, phase: 0, direction: 1, scale: 1.18, bank: -.025 },
+        { x: 1.15, y: .62, speed: .0038, phase: 2.4, direction: -1, scale: .96, bank: .018 },
+        { x: -.3, y: .78, speed: .0031, phase: 4.7, direction: 1, scale: .82, bank: -.012 },
+      ];
+    };
+    const updateScroll = () => {
+      const available = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+      scrollProgress = Math.min(1, Math.max(0, window.scrollY / available));
+    };
+    const draw = (time: number) => {
+      if (!reduceMotion && time - lastPaint < 33) { frame = window.requestAnimationFrame(draw); return; }
+      lastPaint = time;
+      const sky = context.createLinearGradient(0, 0, 0, height);
+      sky.addColorStop(0, '#01030b'); sky.addColorStop(.34, '#030b1c'); sky.addColorStop(.68, '#07182d'); sky.addColorStop(1, '#102d4b');
+      context.fillStyle = sky; context.fillRect(0, 0, width, height);
+      const glow = context.createRadialGradient(width * .52, height * .62, 0, width * .52, height * .62, Math.max(width, height) * .82);
+      glow.addColorStop(0, 'rgba(28,76,126,.18)'); glow.addColorStop(.55, 'rgba(9,31,64,.07)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+      context.fillStyle = glow; context.fillRect(0, 0, width, height);
+      const horizon = context.createLinearGradient(0, height * .68, 0, height);
+      horizon.addColorStop(0, 'rgba(20,53,86,0)'); horizon.addColorStop(1, 'rgba(54,91,119,.12)');
+      context.fillStyle = horizon; context.fillRect(0, height * .68, width, height * .32);
+
+      const travel = scrollProgress * 1.65;
+      stars.forEach((star) => {
+        const zoom = 1 + travel * star.depth * 1.15;
+        const x = width * (.5 + (star.x - .5) * zoom);
+        const yUnit = (star.y + travel * (.12 + star.depth * .28)) % 1.18 - .09;
+        const y = height * yUnit;
+        if (x < -8 || x > width + 8 || y < -8 || y > height + 8) return;
+        const twinkle = reduceMotion ? .78 : .57 + Math.sin(time * .001 * star.pulse + star.phase) * .29;
+        const radius = star.radius * (1 + travel * star.depth * .7);
+        const [red, green, blue] = star.tone;
+        if (star.glow) {
+          const halo = context.createRadialGradient(x, y, 0, x, y, radius * 4.8);
+          halo.addColorStop(0, `rgba(${red},${green},${blue},${Math.max(.12, twinkle * .28)})`);
+          halo.addColorStop(1, `rgba(${red},${green},${blue},0)`);
+          context.fillStyle = halo; context.beginPath(); context.arc(x, y, radius * 4.8, 0, Math.PI * 2); context.fill();
+        }
+        context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fillStyle = `rgba(${red},${green},${blue},${Math.max(.18, twinkle)})`; context.fill();
+      });
+
+      if (!reduceMotion && !meteor && time >= nextMeteor) {
+        meteor = { started: time, x: .12 + Math.random() * .7, y: .06 + Math.random() * .34, length: 90 + Math.random() * 95, angle: .42 + Math.random() * .18 };
+      }
+      if (meteor) {
+        const age = (time - meteor.started) / 1050;
+        if (age >= 1) { meteor = null; nextMeteor = time + 2600 + Math.random() * 5200; }
+        else {
+          const headX = width * meteor.x + age * width * .28; const headY = height * meteor.y + age * height * .22;
+          const tailX = headX - Math.cos(meteor.angle) * meteor.length; const tailY = headY - Math.sin(meteor.angle) * meteor.length;
+          const trail = context.createLinearGradient(tailX, tailY, headX, headY);
+          trail.addColorStop(0, 'rgba(180,221,255,0)'); trail.addColorStop(1, `rgba(245,251,255,${Math.sin(age * Math.PI) * .92})`);
+          context.strokeStyle = trail; context.lineWidth = 1.3; context.beginPath(); context.moveTo(tailX, tailY); context.lineTo(headX, headY); context.stroke();
+        }
+      }
+
+      if (!reduceMotion) flights.forEach((flight, index) => {
+        flight.x += flight.speed * flight.direction;
+        if (flight.direction > 0 && flight.x > 1.2) flight.x = -.2;
+        if (flight.direction < 0 && flight.x < -.2) flight.x = 1.2;
+        const x = flight.x * width; const y = (flight.y + Math.sin(time * .00012 + flight.phase) * .012) * height;
+        const blink = Math.sin(time * .006 + flight.phase) > .64;
+        const planeScale = flight.scale * (width < 700 ? 1.18 : 1.46);
+        context.save(); context.translate(x, y); context.scale(flight.direction * planeScale, planeScale); context.rotate(flight.bank);
+        context.fillStyle = 'rgba(181,199,218,.58)';
+        context.beginPath(); context.moveTo(12, 0); context.quadraticCurveTo(5, -2, -9, -1.35); context.lineTo(-13, 0); context.lineTo(-9, 1.35); context.quadraticCurveTo(5, 2, 12, 0); context.fill();
+        context.fillStyle = 'rgba(150,174,200,.52)';
+        context.beginPath(); context.moveTo(2, 0); context.lineTo(-5, -7); context.lineTo(-8, -6.4); context.lineTo(-3, 0); context.lineTo(-7, 6.2); context.lineTo(-4, 6.8); context.lineTo(3, 0); context.fill();
+        context.beginPath(); context.moveTo(-8, 0); context.lineTo(-12, -3); context.lineTo(-13, -2.5); context.lineTo(-10, .3); context.fill();
+        context.restore();
+        const lightRadius = (index === 0 ? 2.15 : 1.75) * flight.scale;
+        const pulse = blink ? 1 : .22;
+        context.shadowBlur = blink ? 10 : 3; context.shadowColor = 'rgba(255,74,86,.9)';
+        context.fillStyle = `rgba(255,74,86,${pulse})`; context.beginPath(); context.arc(x - 5 * flight.direction * planeScale, y - 5.7 * planeScale, lightRadius, 0, Math.PI * 2); context.fill();
+        context.shadowColor = 'rgba(84,255,171,.9)'; context.fillStyle = `rgba(84,255,171,${pulse})`; context.beginPath(); context.arc(x - 5 * flight.direction * planeScale, y + 5.7 * planeScale, lightRadius, 0, Math.PI * 2); context.fill();
+        context.shadowColor = 'rgba(242,249,255,.9)'; context.fillStyle = `rgba(242,249,255,${blink ? .95 : .34})`; context.beginPath(); context.arc(x + 10 * flight.direction * planeScale, y, lightRadius * .78, 0, Math.PI * 2); context.fill();
+        context.shadowBlur = 0;
+      });
+      if (!reduceMotion) frame = window.requestAnimationFrame(draw);
+    };
+    buildField(); updateScroll();
+    window.addEventListener('resize', buildField); window.addEventListener('scroll', updateScroll, { passive: true });
+    frame = window.requestAnimationFrame(draw);
+    return () => { window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); };
+  }, []);
+  return <canvas ref={canvasRef} className="ax-night-canvas" aria-hidden="true"/>;
+}
+
 export function AxiomLandingPage() {
+  const navigate = useNavigate();
+  return <main className="ax-sky-home">
+    <NightSkyCanvas/>
+    <header className="ax-sky-header"><span>ASYMPTOTES · BMSIT</span><button onClick={() => navigate('/login')}>Enter workspace <ArrowRight size={16}/></button></header>
+    <section className="ax-sky-intro"><div><span>PROJECT AXIOM</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A private research and product initiative for the people building Asymptotes from within.</p><button onClick={() => navigate('/login')}>Enter Project Axiom <ArrowRight size={17}/></button></div><small>SCROLL THROUGH THE NIGHT</small></section>
+    <div className="ax-sky-distance" aria-hidden="true"/>
+  </main>;
+}
+
+export function AxiomLandingPageAtomArchive() {
   const navigate = useNavigate(); const root = useRef<HTMLElement>(null); useAxiomMotion(root);
   return <main ref={root} className="ax-site ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader/>
     <section className="ax-hero">
