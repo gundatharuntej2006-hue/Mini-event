@@ -1,7 +1,8 @@
 from app.models.user import User, UserRole
 from app.models.axiom import (
-    AxiomBootstrapState, AxiomProblemStatement, AxiomProfile, AxiomRoleChoice,
-    AxiomRosterType, AxiomStatementStatus,
+    AxiomBootstrapState, AxiomOriginalityAgreement, AxiomProblemStatement,
+    AxiomProfile, AxiomProjectPreference, AxiomRoleChoice, AxiomRosterType,
+    AxiomStatementStatus,
 )
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole, Round1Override, Round1FinishOutcome, Round1SecretAgentSelection
 from app.models.round2_live import Round2CaboScore, Round2CaboSeat, Round2CaboTable, Round2LiveAudit, Round2LiveConfig, Round2TeamAward
@@ -81,8 +82,10 @@ __all__ = [
     "User",
     "UserRole",
     "AxiomBootstrapState",
+    "AxiomOriginalityAgreement",
     "AxiomProblemStatement",
     "AxiomProfile",
+    "AxiomProjectPreference",
     "AxiomRoleChoice",
     "AxiomRosterType",
     "AxiomStatementStatus",

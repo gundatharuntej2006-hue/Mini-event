@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, utc_now
@@ -85,6 +85,41 @@ class AxiomProblemStatement(Base):
         nullable=False,
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class AxiomOriginalityAgreement(Base):
+    __tablename__ = "axiom_originality_agreements"
+
+    account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), primary_key=True
+    )
+    agreement_version: Mapped[str] = mapped_column(String(40), nullable=False, default="axiom-v1")
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class AxiomProjectPreference(Base):
+    __tablename__ = "axiom_project_preferences"
+    __table_args__ = (
+        UniqueConstraint("participant_account_id", "statement_id", name="uq_axiom_participant_statement"),
+        UniqueConstraint("participant_account_id", "preference_rank", name="uq_axiom_participant_rank"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    participant_account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), index=True, nullable=False
+    )
+    statement_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("axiom_problem_statements.id"), index=True, nullable=False
+    )
+    preference_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    proposed_solution: Mapped[str] = mapped_column(Text, nullable=False)
+    contribution: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

@@ -1,5 +1,16 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from app.core.security import create_access_token, get_password_hash, verify_password
-from app.models.axiom import AxiomProfile, AxiomRosterType
+from app.models.axiom import (
+    AxiomOriginalityAgreement,
+    AxiomProblemStatement,
+    AxiomProfile,
+    AxiomProjectPreference,
+    AxiomRoleChoice,
+    AxiomRosterType,
+    AxiomStatementStatus,
+)
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 from app.models.user import User
 from app.services.axiom_bootstrap_service import load_axiom_roster, provision_axiom_accounts
@@ -127,3 +138,70 @@ def test_later_roster_version_preserves_user_changed_passwords(monkeypatch, db_s
     assert verify_password("MemberChanged42", member.password_hash)
     assert verify_password("SuperChanged42", super01.password_hash)
     assert db_session.get(AxiomProfile, member.id).must_change_password is False
+
+
+def test_participant_accepts_agreement_and_saves_ranked_project_response(
+    monkeypatch, client, db_session
+):
+    import app.api.routes.axiom as axiom_routes
+
+    provision_axiom_accounts(db_session)
+    mentor = db_session.query(AxiomProfile).filter(
+        AxiomProfile.roster_type == AxiomRosterType.MENTOR_CANDIDATE
+    ).first()
+    participant = db_session.query(AxiomProfile).filter(
+        AxiomProfile.roster_type == AxiomRosterType.MEMBER
+    ).first()
+    assert mentor is not None and participant is not None
+
+    mentor.role_choice = AxiomRoleChoice.MENTOR
+    statement = AxiomProblemStatement(
+        id="axps-test-project",
+        mentor_account_id=mentor.account_id,
+        title="Internal Knowledge Atlas",
+        domain="Knowledge systems",
+        project_track="PRODUCT",
+        problem_statement="Build a searchable map of the club's reusable knowledge and project decisions.",
+        project_context="Create a small, maintainable prototype that helps future teams find what already exists and understand why earlier choices were made.",
+        helpful_skills="Research, interface design, writing",
+        status=AxiomStatementStatus.SUBMITTED,
+        submitted_at=datetime(2026, 11, 2, 15, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+    )
+    db_session.add(statement)
+    db_session.commit()
+
+    account = db_session.get(EventAccount, participant.account_id)
+    token = create_access_token(subject=account.id, role=account.role.value)
+    headers = {"Authorization": f"Bearer {token}"}
+    agreement = client.post(
+        "/api/v1/axiom/agreement", headers=headers, json={"accepted": True}
+    )
+    assert agreement.status_code == 200
+    assert db_session.get(AxiomOriginalityAgreement, account.id) is not None
+
+    monkeypatch.setattr(
+        axiom_routes,
+        "now_ist",
+        lambda: datetime(2026, 11, 2, 16, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+    )
+    projects = client.get("/api/v1/axiom/projects", headers=headers)
+    assert projects.status_code == 200
+    assert projects.json()["data"]["projects"][0]["id"] == statement.id
+
+    saved = client.put(
+        "/api/v1/axiom/preferences",
+        headers=headers,
+        json={
+            "preferences": [{
+                "statement_id": statement.id,
+                "preference_rank": 1,
+                "proposed_solution": "I would interview core members, define a lightweight taxonomy, and prototype a fast searchable archive.",
+                "contribution": "I can structure information, test the interface, and document the final workflow.",
+            }]
+        },
+    )
+    assert saved.status_code == 200
+    preference = db_session.query(AxiomProjectPreference).one()
+    assert preference.participant_account_id == account.id
+    assert preference.statement_id == statement.id
+    assert preference.preference_rank == 1
