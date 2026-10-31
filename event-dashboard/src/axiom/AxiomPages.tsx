@@ -58,16 +58,18 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
       const heroCopy = element.querySelector('.ax-hero-copy');
       if (scene) {
         const supernatural = gsap.timeline({
-          scrollTrigger: { trigger: '.ax-hero', start: 'top top', end: 'bottom top', scrub: 1.15 },
+          scrollTrigger: { trigger: '.ax-hero', start: 'top top', end: 'bottom top', scrub: 1.55 },
         });
-        supernatural.to(scene, { yPercent: 24, scale: 1.2, rotate: 6, filter: 'blur(1.2px)', ease: 'none' }, 0);
+        supernatural.to(scene, { yPercent: 22, scale: 1.16, rotate: 4, filter: 'blur(.7px)', ease: 'none' }, 0);
         if (heroCopy) supernatural.to(heroCopy, { yPercent: -8, opacity: .48, ease: 'none' }, 0);
         if (shards.length) supernatural.to(shards, { y: (index) => index % 2 ? -125 : 145, rotate: (index) => index % 2 ? 95 : -80, stagger: .025, ease: 'none' }, 0);
+        const stringAtom = element.querySelector('.ax-string-atom');
+        if (stringAtom) supernatural.to(stringAtom, { rotate: -16, scale: 1.1, ease: 'none' }, 0);
+        element.querySelectorAll<SVGPathElement>('.ax-string-path').forEach((path, index) => {
+          const morph = path.dataset.morph;
+          if (morph) supernatural.to(path, { attr: { d: morph }, strokeWidth: index % 2 ? 2.6 : 3.35, ease: 'none' }, 0);
+        });
       }
-      const ringA = element.querySelector('.ax-orbit-ring.ring-a');
-      const ringB = element.querySelector('.ax-orbit-ring.ring-b');
-      if (ringA) gsap.to(ringA, { rotate: 360, duration: 24, ease: 'none', repeat: -1 });
-      if (ringB) gsap.to(ringB, { rotate: -360, duration: 31, ease: 'none', repeat: -1 });
     }, element);
 
     const magnetic = [...element.querySelectorAll<HTMLElement>('.ax-primary,.ax-secondary,.ax-header nav button')];
@@ -158,8 +160,18 @@ export function AxiomLandingPage() {
         <div className="ax-scene-scroll"><div className="ax-scene-body">
           <div className="ax-spectral-field"><i/><i/><i/></div><div className="ax-visual-halo"/>
           <img className="ax-key-visual" src={axiomVisual} alt="Research and product pathways growing from a shared creative core"/>
-          <div className="ax-energy-ribbon ribbon-one"/><div className="ax-energy-ribbon ribbon-two"/>
-          <div className="ax-orbit-ring ring-a"/><div className="ax-orbit-ring ring-b"/>
+          <svg className="ax-string-atom" viewBox="0 0 720 720" aria-hidden="true">
+            <defs><linearGradient id="axiomStringA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#d8ff67"/><stop offset=".48" stopColor="#8fb5ff"/><stop offset="1" stopColor="#ffc95c"/></linearGradient><filter id="axiomGlow"><feGaussianBlur stdDeviation="3.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+            <g className="ax-string-web" fill="none" filter="url(#axiomGlow)">
+              <path className="ax-string-path path-a" pathLength="100" d="M78 360 C112 154 608 154 642 360 C608 566 112 566 78 360" data-morph="M128 142 C368 48 671 270 568 495 C460 680 78 575 122 310 C143 190 221 165 128 142"/>
+              <path className="ax-string-path path-b" pathLength="100" d="M132 160 C317 82 619 235 579 431 C539 615 218 672 116 486 C34 334 66 218 132 160" data-morph="M78 349 C135 111 520 92 637 295 C746 487 457 645 243 592 C42 543 24 458 78 349"/>
+              <path className="ax-string-path path-c" pathLength="100" d="M358 72 C566 120 642 487 453 618 C286 733 77 492 121 282 C157 111 258 49 358 72" data-morph="M184 92 C422 44 684 227 598 449 C521 648 172 673 87 459 C13 273 73 126 184 92"/>
+              <path className="ax-string-path path-d" pathLength="100" d="M102 245 C252 78 557 109 632 303 C704 491 449 642 231 583 C37 530 2 358 102 245" data-morph="M356 68 C552 92 677 344 579 527 C473 714 111 613 94 361 C82 177 202 49 356 68"/>
+              <path className="ax-string-path path-e" pathLength="100" d="M169 536 C61 399 147 111 355 94 C563 77 691 351 565 520 C472 647 269 662 169 536" data-morph="M103 203 C261 45 594 113 635 344 C674 562 343 685 164 538 C35 432 16 290 103 203"/>
+            </g>
+            <g className="ax-string-particles"><g className="particle-orbit particle-a"><circle cx="360" cy="83" r="8"/></g><g className="particle-orbit particle-b"><circle cx="619" cy="360" r="6"/></g><g className="particle-orbit particle-c"><circle cx="360" cy="640" r="5"/></g><g className="particle-orbit particle-d"><circle cx="105" cy="360" r="7"/></g></g>
+            <g className="ax-atom-nucleus"><circle cx="360" cy="360" r="78"/><circle cx="337" cy="351" r="10"/><circle cx="382" cy="342" r="8"/><circle cx="367" cy="382" r="12"/></g>
+          </svg>
           <div className="ax-orbit-core"><Orbit size={27}/><b>AXIOM</b><small>IDEA → IMPACT</small></div>
           <div className="ax-node node-one"><Users size={16}/><span>People</span></div><div className="ax-node node-two"><FileText size={16}/><span>Inquiry</span></div><div className="ax-node node-three"><Layers3 size={16}/><span>Build</span></div>
           {[0,1,2,3,4,5].map(index=><span className={`ax-spectral-shard shard-${index+1}`} key={index}/>) }
