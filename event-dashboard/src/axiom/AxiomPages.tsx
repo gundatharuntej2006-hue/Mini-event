@@ -53,8 +53,17 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
           scrollTrigger: { trigger: item, start: 'top 88%', once: true },
         });
       });
-      const visual = element.querySelector('.ax-key-visual');
-      if (visual) gsap.to(visual, { yPercent: 9, scale: 1.06, ease: 'none', scrollTrigger: { trigger: '.ax-hero', start: 'top top', end: 'bottom top', scrub: 1.1 } });
+      const scene = element.querySelector('.ax-scene-scroll');
+      const shards = element.querySelectorAll('.ax-spectral-shard');
+      const heroCopy = element.querySelector('.ax-hero-copy');
+      if (scene) {
+        const supernatural = gsap.timeline({
+          scrollTrigger: { trigger: '.ax-hero', start: 'top top', end: 'bottom top', scrub: 1.15 },
+        });
+        supernatural.to(scene, { yPercent: 24, scale: 1.2, rotate: 6, filter: 'blur(1.2px)', ease: 'none' }, 0);
+        if (heroCopy) supernatural.to(heroCopy, { yPercent: -8, opacity: .48, ease: 'none' }, 0);
+        if (shards.length) supernatural.to(shards, { y: (index) => index % 2 ? -125 : 145, rotate: (index) => index % 2 ? 95 : -80, stagger: .025, ease: 'none' }, 0);
+      }
       const ringA = element.querySelector('.ax-orbit-ring.ring-a');
       const ringB = element.querySelector('.ax-orbit-ring.ring-b');
       if (ringA) gsap.to(ringA, { rotate: 360, duration: 24, ease: 'none', repeat: -1 });
@@ -79,8 +88,18 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
 function interactivePointer(event: ReactPointerEvent<HTMLElement>) {
   if (event.pointerType === 'touch') return;
   const box = event.currentTarget.getBoundingClientRect();
-  event.currentTarget.style.setProperty('--ax-x', `${((event.clientX - box.left) / box.width) * 100}%`);
-  event.currentTarget.style.setProperty('--ax-y', `${((event.clientY - box.top) / box.height) * 100}%`);
+  const x = (event.clientX - box.left) / box.width;
+  const y = (event.clientY - box.top) / box.height;
+  event.currentTarget.style.setProperty('--ax-x', `${x * 100}%`);
+  event.currentTarget.style.setProperty('--ax-y', `${y * 100}%`);
+  event.currentTarget.style.setProperty('--ax-tilt-x', `${(x - .5) * 6}deg`);
+  event.currentTarget.style.setProperty('--ax-tilt-y', `${(y - .5) * -6}deg`);
+  event.currentTarget.style.setProperty('--ax-image-x', `${(x - .5) * 24}px`);
+  event.currentTarget.style.setProperty('--ax-image-y', `${(y - .5) * 18}px`);
+  event.currentTarget.style.setProperty('--ax-glow-x', `${(x - .5) * -10}px`);
+  event.currentTarget.style.setProperty('--ax-glow-y', `${(y - .5) * -8}px`);
+  event.currentTarget.style.setProperty('--ax-depth-x', `${(x - .5) * -8}px`);
+  event.currentTarget.style.setProperty('--ax-depth-y', `${(y - .5) * -6}px`);
 }
 
 function AxiomBackdrop() {
@@ -136,10 +155,15 @@ export function AxiomLandingPage() {
         <div className="ax-hero-proof"><span><b>02</b> paths</span><span><b>01</b> community</span><span><b>∞</b> possibility</span></div>
       </div>
       <div className="ax-orbit-stage" aria-label="Project Axiom interactive creation system" onPointerMove={interactivePointer}>
-        <div className="ax-visual-halo"/><img className="ax-key-visual" src={axiomVisual} alt="Research and product pathways growing from a shared creative core"/>
-        <div className="ax-orbit-ring ring-a"/><div className="ax-orbit-ring ring-b"/>
-        <div className="ax-orbit-core"><Orbit size={27}/><b>AXIOM</b><small>IDEA → IMPACT</small></div>
-        <div className="ax-node node-one"><Users size={16}/><span>People</span></div><div className="ax-node node-two"><FileText size={16}/><span>Inquiry</span></div><div className="ax-node node-three"><Layers3 size={16}/><span>Build</span></div>
+        <div className="ax-scene-scroll"><div className="ax-scene-body">
+          <div className="ax-spectral-field"><i/><i/><i/></div><div className="ax-visual-halo"/>
+          <img className="ax-key-visual" src={axiomVisual} alt="Research and product pathways growing from a shared creative core"/>
+          <div className="ax-energy-ribbon ribbon-one"/><div className="ax-energy-ribbon ribbon-two"/>
+          <div className="ax-orbit-ring ring-a"/><div className="ax-orbit-ring ring-b"/>
+          <div className="ax-orbit-core"><Orbit size={27}/><b>AXIOM</b><small>IDEA → IMPACT</small></div>
+          <div className="ax-node node-one"><Users size={16}/><span>People</span></div><div className="ax-node node-two"><FileText size={16}/><span>Inquiry</span></div><div className="ax-node node-three"><Layers3 size={16}/><span>Build</span></div>
+          {[0,1,2,3,4,5].map(index=><span className={`ax-spectral-shard shard-${index+1}`} key={index}/>) }
+        </div></div>
       </div>
     </section>
 
