@@ -1,15 +1,11 @@
-import { type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown, ArrowRight, ArrowUp, BadgeCheck, BookOpen, CalendarClock, Check,
   ChevronRight, CircleDot, FileText, FlaskConical, History, Layers3,
   LockKeyhole, LogOut, MoveRight, Orbit, ShieldCheck, Sparkles, X,
 } from 'lucide-react';
-import { gsap } from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
-
-gsap.registerPlugin(ScrollTrigger);
 
 type Deadlines = { mentor_decision: string; statement: string; preference: string };
 type Statement = {
@@ -40,72 +36,25 @@ const countWords = (value: string) => value.trim() ? value.trim().split(/\s+/).l
 function useAxiomMotion(root: RefObject<HTMLElement>) {
   useEffect(() => {
     const element = root.current;
-    if (!element || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const context = gsap.context(() => {
-      const heroItems = element.querySelectorAll('.ax-hero-copy > *');
-      const orbitStage = element.querySelector('.ax-orbit-stage');
-      if (heroItems.length) gsap.fromTo(heroItems, { y: 34, opacity: 0 }, { y: 0, opacity: 1, duration: 1.05, stagger: .1, ease: 'power3.out' });
-      if (orbitStage) gsap.fromTo(orbitStage, { scale: .9, opacity: 0, rotate: -2 }, { scale: 1, opacity: 1, rotate: 0, duration: 1.4, ease: 'expo.out' });
-      gsap.utils.toArray<HTMLElement>('.ax-scroll').forEach((item) => {
-        gsap.fromTo(item, { y: 54, opacity: 0 }, {
-          y: 0, opacity: 1, duration: .95, ease: 'power3.out',
-          scrollTrigger: { trigger: item, start: 'top 88%', once: true },
-        });
+    if (!element) return;
+    const items = [...element.querySelectorAll<HTMLElement>('.ax-scroll,.ax-cinema-scene')];
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      items.forEach(item => item.classList.add('is-visible'));
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
       });
-      const scene = element.querySelector('.ax-scene-scroll');
-      const shards = element.querySelectorAll('.ax-spectral-shard');
-      const heroCopy = element.querySelector('.ax-hero-copy');
-      if (scene) {
-        const supernatural = gsap.timeline({
-          scrollTrigger: { trigger: '.ax-hero', start: 'top top', end: 'bottom top', scrub: 1.55 },
-        });
-        supernatural.to(scene, { yPercent: 22, scale: 1.16, rotate: 4, filter: 'blur(.7px)', ease: 'none' }, 0);
-        if (heroCopy) supernatural.to(heroCopy, { yPercent: -8, opacity: .48, ease: 'none' }, 0);
-        if (shards.length) supernatural.to(shards, { y: (index) => index % 2 ? -125 : 145, rotate: (index) => index % 2 ? 95 : -80, stagger: .025, ease: 'none' }, 0);
-        const stringAtom = element.querySelector('.ax-string-atom');
-        if (stringAtom) supernatural.to(stringAtom, { rotate: -16, scale: 1.1, ease: 'none' }, 0);
-        const orbitCore = element.querySelector('.ax-orbit-core');
-        const atomCaption = element.querySelector('.ax-atom-caption');
-        if (orbitCore) supernatural.to(orbitCore, { opacity: 0, scale: .28, filter: 'blur(9px)', ease: 'none' }, 0);
-        if (atomCaption) supernatural.to(atomCaption, { opacity: 0, y: 34, ease: 'none' }, .08);
-        element.querySelectorAll<SVGPathElement>('.ax-string-path').forEach((path, index) => {
-          const morph = path.dataset.morph;
-          if (morph) supernatural.to(path, { attr: { d: morph }, strokeWidth: index % 2 ? 2.6 : 3.35, ease: 'none' }, 0);
-        });
-      }
-    }, element);
-
-    const magnetic = [...element.querySelectorAll<HTMLElement>('.ax-primary,.ax-secondary,.ax-header nav button')];
-    const cleanups = magnetic.map((button) => {
-      const move = (event: PointerEvent) => {
-        if (event.pointerType === 'touch') return;
-        const box = button.getBoundingClientRect();
-        gsap.to(button, { x: (event.clientX - box.left - box.width / 2) * .13, y: (event.clientY - box.top - box.height / 2) * .18, duration: .25, overwrite: true });
-      };
-      const leave = () => gsap.to(button, { x: 0, y: 0, duration: .55, ease: 'elastic.out(1,.4)' });
-      button.addEventListener('pointermove', move); button.addEventListener('pointerleave', leave);
-      return () => { button.removeEventListener('pointermove', move); button.removeEventListener('pointerleave', leave); };
-    });
-    return () => { cleanups.forEach(fn => fn()); context.revert(); };
+    }, { threshold: .18, rootMargin: '0px 0px -8% 0px' });
+    items.forEach(item => observer.observe(item));
+    return () => observer.disconnect();
   }, [root]);
 }
 
-function interactivePointer(event: ReactPointerEvent<HTMLElement>) {
-  if (event.pointerType === 'touch') return;
-  const box = event.currentTarget.getBoundingClientRect();
-  const x = (event.clientX - box.left) / box.width;
-  const y = (event.clientY - box.top) / box.height;
-  event.currentTarget.style.setProperty('--ax-x', `${x * 100}%`);
-  event.currentTarget.style.setProperty('--ax-y', `${y * 100}%`);
-  event.currentTarget.style.setProperty('--ax-tilt-x', `${(x - .5) * 6}deg`);
-  event.currentTarget.style.setProperty('--ax-tilt-y', `${(y - .5) * -6}deg`);
-  event.currentTarget.style.setProperty('--ax-image-x', `${(x - .5) * 24}px`);
-  event.currentTarget.style.setProperty('--ax-image-y', `${(y - .5) * 18}px`);
-  event.currentTarget.style.setProperty('--ax-glow-x', `${(x - .5) * -10}px`);
-  event.currentTarget.style.setProperty('--ax-glow-y', `${(y - .5) * -8}px`);
-  event.currentTarget.style.setProperty('--ax-depth-x', `${(x - .5) * -8}px`);
-  event.currentTarget.style.setProperty('--ax-depth-y', `${(y - .5) * -6}px`);
-}
+const interactivePointer = undefined;
 
 function AxiomBackdrop() {
   return <div className="ax-backdrop" aria-hidden="true"><i/><i/><i/><span>∑</span><span>π</span><span>∞</span><div className="ax-noise"/></div>;
@@ -195,7 +144,71 @@ function PasswordPanel() {
   </section>;
 }
 
+type CinemaScene = {
+  number: string; eyebrow: string; title: string; description: string;
+  note: string; effect: string; art: 'paths' | 'mentor' | 'members' | 'teams' | 'build' | 'review' | 'final';
+};
+
+const cinemaScenes: CinemaScene[] = [
+  { number:'01', eyebrow:'CHOOSE A DIRECTION', title:'Every project begins with a decision.', description:'Follow a research question toward evidence, or turn a real need into a software or hardware product.', note:'RESEARCH · PRODUCT', effect:'wipe', art:'paths' },
+  { number:'02', eyebrow:'MENTORS FRAME THE CHALLENGE', title:'A meaningful problem enters focus.', description:'Mentors define a concise challenge, the context around it and what a valuable outcome should look like.', note:'QUESTION · CONTEXT · POSSIBILITY', effect:'focus', art:'mentor' },
+  { number:'03', eyebrow:'MEMBERS EXPLORE & RESPOND', title:'Ideas meet independent thinking.', description:'Members study the released challenges, rank up to three preferences and explain—in their own words—how they would contribute.', note:'READ · RANK · RESPOND', effect:'pan', art:'members' },
+  { number:'04', eyebrow:'TEAMS TAKE SHAPE', title:'Preference meets purpose.', description:'Preference fit, mentor review and balanced capacity form focused teams of two or three, with one exceptional team allowed four.', note:'FIT · BALANCE · HUMAN JUDGMENT', effect:'assemble', art:'teams' },
+  { number:'05', eyebrow:'BUILD OR INVESTIGATE', title:'The work becomes tangible.', description:'Teams research, prototype, test and document. Every project must leave behind something the club can learn from or use.', note:'METHOD · PROTOTYPE · EVIDENCE', effect:'dolly', art:'build' },
+  { number:'06', eyebrow:'TWO REVIEW MOMENTS', title:'Progress is examined—not performed.', description:'Review One checks direction and feasibility. Review Two examines execution, evidence and how intelligently the team responded to feedback.', note:'REVIEW 01 · REFINE · REVIEW 02', effect:'split', art:'review' },
+  { number:'07', eyebrow:'FINAL DEMONSTRATION', title:'The strongest work earns a future.', description:'Projects are presented, recognised and considered for club implementation, research support, incubation or seed-stage funding.', note:'SHOWCASE · RECOGNITION · CONTINUATION', effect:'iris', art:'final' },
+];
+
+export function CinemaSketch({ kind }: { kind: CinemaScene['art'] }) {
+  return <div className={`ax-cinema-sketch sketch-${kind}`} aria-hidden="true">
+    <svg viewBox="0 0 620 420" fill="none">
+      <g className="ink-main">
+        {kind === 'paths' && <><path d="M72 337h476M310 337v-70M310 267l-103-56M310 267l103-56"/><circle cx="310" cy="183" r="25"/><path d="M281 254c5-37 13-52 29-52s25 15 30 52M157 325v-78h103v78M360 325v-78h103v78"/><path d="M174 247l17-45h36l17 45M377 247l16-45h37l17 45"/><circle cx="207" cy="159" r="20"/><path d="M179 202c5-27 13-39 28-39s24 12 29 39M180 273h58M190 290h38"/><circle cx="413" cy="159" r="20"/><path d="M385 202c5-27 13-39 28-39s24 12 29 39M386 275h57M396 292h37"/></>}
+        {kind === 'mentor' && <><rect x="221" y="62" width="322" height="221" rx="7"/><path d="M257 111h143M257 145h226M257 179h174M257 215h198"/><circle cx="129" cy="150" r="25"/><path d="M92 266c4-61 14-91 37-91s34 30 38 91M150 198l88-40M235 158l-18-4 8 17M74 326h486"/><path d="M111 326l10-60h17l11 60M440 105l24 13 29-37"/><path d="M90 116c-18-13-18-35 2-45M98 91c-7-21 9-34 27-30"/></>}
+        {kind === 'members' && <><path d="M50 331h520M81 307v-84h124v84M248 307v-84h124v84M415 307v-84h124v84"/><path d="M98 223l19-50h51l19 50M265 223l19-50h51l19 50M432 223l19-50h51l19 50"/><circle cx="143" cy="121" r="23"/><circle cx="310" cy="121" r="23"/><circle cx="477" cy="121" r="23"/><path d="M109 173c5-32 15-47 34-47s29 15 34 47M276 173c5-32 15-47 34-47s29 15 34 47M443 173c5-32 15-47 34-47s29 15 34 47"/><path d="M112 252h62M279 252h62M446 252h62M121 272h44M288 272h44M455 272h44"/></>}
+        {kind === 'teams' && <><ellipse cx="310" cy="265" rx="190" ry="72"/><path d="M194 255l20-54h65l20 54M323 255l20-54h65l20 54"/><circle cx="176" cy="125" r="24"/><circle cx="277" cy="104" r="24"/><circle cx="378" cy="104" r="24"/><circle cx="468" cy="143" r="24"/><path d="M143 204c5-51 14-75 33-75s29 24 34 75M244 190c5-42 14-62 33-62s29 20 34 62M345 190c5-42 14-62 33-62s29 20 34 62M435 215c5-46 14-68 33-68s29 22 34 68"/><path d="M183 215l61 29M276 201l27 42M378 201l-34 42M460 226l-72 27"/></>}
+        {kind === 'build' && <><path d="M54 331h512M81 302h216M338 302h201"/><circle cx="146" cy="136" r="24"/><path d="M111 257c5-64 14-95 35-95s31 31 36 95M169 190l83 39M252 229l-18-3 9 16"/><path d="M205 302l18-73h64l18 73M228 252h52"/><circle cx="405" cy="136" r="24"/><path d="M370 258c5-65 14-96 35-96s31 31 36 96M426 193l69 21"/><rect x="465" y="179" width="78" height="55" rx="3"/><path d="M449 265h105M482 193h43M482 207h31M383 302l11-44h22l11 44"/><path d="M80 83h155M80 103h110M365 74h124M365 94h80"/></>}
+        {kind === 'review' && <><path d="M54 331h512M74 284h214M355 284h191"/><rect x="319" y="65" width="223" height="146" rx="5"/><path d="M350 105h91M350 133h157M350 161h122"/><circle cx="154" cy="138" r="24"/><path d="M119 276c5-72 14-108 35-108s31 36 36 108M174 194l119-49M291 145l-18-4 8 17"/><circle cx="385" cy="251" r="19"/><circle cx="456" cy="251" r="19"/><circle cx="521" cy="251" r="19"/><path d="M358 313c4-39 11-58 27-58s24 19 28 58M429 313c4-39 11-58 27-58s24 19 28 58M494 313c4-39 11-58 27-58s24 19 28 58"/></>}
+        {kind === 'final' && <><path d="M48 334h524M71 289h190M303 289h244"/><rect x="268" y="54" width="277" height="174" rx="5"/><path d="M302 194h205M322 174l47-45 40 20 69-67M462 82h16v16"/><circle cx="151" cy="139" r="25"/><path d="M113 282c5-75 16-113 38-113s34 38 39 113M171 192l84 34"/><circle cx="345" cy="268" r="17"/><circle cx="407" cy="268" r="17"/><circle cx="469" cy="268" r="17"/><path d="M321 321c4-33 10-49 24-49s21 16 24 49M383 321c4-33 10-49 24-49s21 16 24 49M445 321c4-33 10-49 24-49s21 16 24 49"/><path d="M91 91l8-18 8 18 18 8-18 8-8 18-8-18-18-8z"/></>}
+      </g>
+      <g className="ink-detail"><path d="M38 382h544"/><path d="M52 36h86M482 36h86"/><circle cx="310" cy="36" r="4"/></g>
+    </svg>
+  </div>;
+}
+
+const cinemaArtwork: Record<CinemaScene['art'], string> = {
+  paths:'/axiom/cinema/scene-01.jpg', mentor:'/axiom/cinema/scene-02.jpg', members:'/axiom/cinema/scene-03.jpg',
+  teams:'/axiom/cinema/scene-04.jpg', build:'/axiom/cinema/scene-05.jpg', review:'/axiom/cinema/scene-06.jpg', final:'/axiom/cinema/scene-07.jpg',
+};
+
+function CinemaArtwork({ kind }: { kind: CinemaScene['art'] }) {
+  return <div className={`ax-cinema-sketch sketch-${kind}`} aria-hidden="true"><img src={cinemaArtwork[kind]} alt="" loading={kind === 'paths' ? 'eager' : 'lazy'} decoding="async"/><div className="ax-frame-wash"/></div>;
+}
+
 export function AxiomLandingPage() {
+  const navigate = useNavigate();
+  const root = useRef<HTMLElement>(null);
+  useAxiomMotion(root);
+  return <main ref={root} className="ax-cinema-home">
+    <nav className="ax-cinema-nav"><button className="ax-cinema-mark" onClick={() => window.scrollTo({top:0,behavior:'smooth'})} aria-label="Project Axiom home">✦</button><button onClick={() => navigate('/login')}>Enter Project Axiom <ArrowRight size={16}/></button></nav>
+    <section className="ax-cinema-opening is-visible">
+      <div className="ax-starfield" aria-hidden="true"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div>
+      <div className="ax-opening-copy"><span>AN ASYMPTOTES INTERNAL INITIATIVE</span><div className="ax-origin-star" aria-hidden="true"><i/><i/><i/><b>✦</b></div><h1>Project Axiom</h1><p>Every meaningful project begins as one bright, unfinished idea.</p><button onClick={() => document.querySelector('#axiom-journey')?.scrollIntoView({behavior:'smooth'})}>Follow the idea <ArrowDown size={17}/></button></div>
+      <div className="ax-scroll-cue"><i/><span>SCROLL TO ENTER</span></div>
+    </section>
+    <section id="axiom-journey" className="ax-cinema-intro ax-cinema-scene" data-effect="reveal"><span>THE PREMISE</span><h2>Events create moments.<br/><em>Communities create momentum.</em></h2><p>Project Axiom gives the club’s core members the structure, trust and time to create research or products that continue beyond a single event.</p></section>
+    <div className="ax-cinema-sequence">
+      {cinemaScenes.map((scene,index)=><section className="ax-cinema-scene" data-effect={scene.effect} key={scene.number}>
+        <div className="ax-scene-frame"><div className="ax-scene-copy"><span>{scene.number} / 07 · {scene.eyebrow}</span><h2>{scene.title}</h2><p>{scene.description}</p><small>{scene.note}</small></div><CinemaArtwork kind={scene.art}/></div>
+        {index < cinemaScenes.length-1 && <div className="ax-scene-cut" aria-hidden="true"><span>CUT {String(index+1).padStart(2,'0')}</span><i/></div>}
+      </section>)}
+    </div>
+    <section className="ax-cinema-end ax-cinema-scene" data-effect="rise"><span>THE OUTCOME</span><h2>From a question,<br/>to a team,<br/><em>to something worth continuing.</em></h2><div><b>RESEARCH RECOGNITION</b><b>CLUB IMPLEMENTATION</b><b>INCUBATION</b><b>SEED SUPPORT</b></div><button onClick={() => navigate('/login')}>Enter the workspace <ArrowRight size={18}/></button></section>
+    <footer className="ax-cinema-footer"><span>PROJECT AXIOM · SEMESTER 01</span><p>Think · build · share · grow</p></footer>
+  </main>;
+}
+
+export function AxiomLandingPageLegacy() {
   const navigate = useNavigate(); const root = useRef<HTMLElement>(null); useAxiomMotion(root);
   return <main ref={root} className="ax-site ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader/>
     <section className="ax-hero">
