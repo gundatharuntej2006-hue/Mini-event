@@ -2,13 +2,12 @@ import { type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEv
 import {
   ArrowDown, ArrowRight, ArrowUp, BadgeCheck, BookOpen, CalendarClock, Check,
   ChevronRight, CircleDot, FileText, FlaskConical, History, Layers3,
-  LockKeyhole, LogOut, MoveRight, Orbit, ShieldCheck, Sparkles, Users, X,
+  LockKeyhole, LogOut, MoveRight, Orbit, ShieldCheck, Sparkles, X,
 } from 'lucide-react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
-import axiomVisual from '../assets/project-axiom-key-visual.png';
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -159,23 +158,32 @@ export function AxiomLandingPage() {
       <div className="ax-orbit-stage" aria-label="Project Axiom interactive creation system" onPointerMove={interactivePointer}>
         <div className="ax-scene-scroll"><div className="ax-scene-body">
           <div className="ax-spectral-field"><i/><i/><i/></div><div className="ax-visual-halo"/>
-          <img className="ax-key-visual" src={axiomVisual} alt="Research and product pathways growing from a shared creative core"/>
-          <svg className="ax-string-atom" viewBox="0 0 720 720" aria-hidden="true">
-            <defs><linearGradient id="axiomStringA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#d8ff67"/><stop offset=".48" stopColor="#8fb5ff"/><stop offset="1" stopColor="#ffc95c"/></linearGradient><filter id="axiomGlow"><feGaussianBlur stdDeviation="3.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+          <svg className="ax-string-atom" viewBox="0 0 720 720" role="img" aria-label="An artistic string-theory-inspired atom with luminous vibrating filaments">
+            <defs>
+              <linearGradient id="axiomStringA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#d8ff67"/><stop offset=".48" stopColor="#8fb5ff"/><stop offset="1" stopColor="#ffc95c"/></linearGradient>
+              <linearGradient id="axiomStringB" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#fff7d0"/><stop offset=".44" stopColor="#8deaff"/><stop offset="1" stopColor="#a995ff"/></linearGradient>
+              <radialGradient id="axiomCore" cx="42%" cy="36%"><stop offset="0" stopColor="#ffffff"/><stop offset=".18" stopColor="#d8ff67"/><stop offset=".5" stopColor="#759fff"/><stop offset="1" stopColor="#071431" stopOpacity=".15"/></radialGradient>
+              <filter id="axiomGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              <filter id="axiomSoftGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="12"/></filter>
+            </defs>
+            <g className="ax-string-depth" fill="none" filter="url(#axiomSoftGlow)">
+              <path d="M94 357 C117 105 603 105 628 357 C603 610 117 610 94 357"/><path d="M355 77 C617 124 648 511 437 629 C230 719 58 436 137 241 C193 103 276 63 355 77"/>
+            </g>
             <g className="ax-string-web" fill="none" filter="url(#axiomGlow)">
               <path className="ax-string-path path-a" pathLength="100" d="M78 360 C112 154 608 154 642 360 C608 566 112 566 78 360" data-morph="M128 142 C368 48 671 270 568 495 C460 680 78 575 122 310 C143 190 221 165 128 142"/>
               <path className="ax-string-path path-b" pathLength="100" d="M132 160 C317 82 619 235 579 431 C539 615 218 672 116 486 C34 334 66 218 132 160" data-morph="M78 349 C135 111 520 92 637 295 C746 487 457 645 243 592 C42 543 24 458 78 349"/>
               <path className="ax-string-path path-c" pathLength="100" d="M358 72 C566 120 642 487 453 618 C286 733 77 492 121 282 C157 111 258 49 358 72" data-morph="M184 92 C422 44 684 227 598 449 C521 648 172 673 87 459 C13 273 73 126 184 92"/>
               <path className="ax-string-path path-d" pathLength="100" d="M102 245 C252 78 557 109 632 303 C704 491 449 642 231 583 C37 530 2 358 102 245" data-morph="M356 68 C552 92 677 344 579 527 C473 714 111 613 94 361 C82 177 202 49 356 68"/>
               <path className="ax-string-path path-e" pathLength="100" d="M169 536 C61 399 147 111 355 94 C563 77 691 351 565 520 C472 647 269 662 169 536" data-morph="M103 203 C261 45 594 113 635 344 C674 562 343 685 164 538 C35 432 16 290 103 203"/>
+              <path className="ax-string-path path-f" pathLength="100" d="M87 413 C189 601 509 650 623 425 C715 243 466 55 244 109 C72 151 23 296 87 413" data-morph="M148 561 C16 378 122 92 349 77 C596 62 708 337 588 514 C486 664 257 694 148 561"/>
+              <path className="ax-string-path path-g" pathLength="100" d="M214 89 C421 24 675 248 609 461 C547 659 218 679 103 487 C5 324 65 136 214 89" data-morph="M80 278 C169 76 495 35 628 230 C770 439 510 678 273 622 C71 575 8 442 80 278"/>
             </g>
-            <g className="ax-string-particles"><g className="particle-orbit particle-a"><circle cx="360" cy="83" r="8"/></g><g className="particle-orbit particle-b"><circle cx="619" cy="360" r="6"/></g><g className="particle-orbit particle-c"><circle cx="360" cy="640" r="5"/></g><g className="particle-orbit particle-d"><circle cx="105" cy="360" r="7"/></g></g>
-            <g className="ax-atom-nucleus"><circle cx="360" cy="360" r="78"/><circle cx="337" cy="351" r="10"/><circle cx="382" cy="342" r="8"/><circle cx="367" cy="382" r="12"/></g>
+            <g className="ax-string-particles"><g className="particle-orbit particle-a"><circle cx="360" cy="83" r="8"/></g><g className="particle-orbit particle-b"><circle cx="619" cy="360" r="6"/></g><g className="particle-orbit particle-c"><circle cx="360" cy="640" r="5"/></g><g className="particle-orbit particle-d"><circle cx="105" cy="360" r="7"/></g><g className="particle-orbit particle-e"><circle cx="540" cy="152" r="4"/></g></g>
+            <g className="ax-atom-nucleus"><circle className="core-aura" cx="360" cy="360" r="102"/><circle className="core-shell" cx="360" cy="360" r="65"/><circle cx="337" cy="351" r="10"/><circle cx="382" cy="342" r="8"/><circle cx="367" cy="382" r="12"/><circle cx="342" cy="383" r="6"/></g>
           </svg>
           <div className="ax-orbit-core"><Orbit size={27}/><b>AXIOM</b><small>IDEA → IMPACT</small></div>
-          <div className="ax-node node-one"><Users size={16}/><span>People</span></div><div className="ax-node node-two"><FileText size={16}/><span>Inquiry</span></div><div className="ax-node node-three"><Layers3 size={16}/><span>Build</span></div>
-          {[0,1,2,3,4,5].map(index=><span className={`ax-spectral-shard shard-${index+1}`} key={index}/>) }
         </div></div>
+        <div className="ax-atom-caption"><span>STRING FIELD · 01</span><p><b>Many vibrations. One system.</b> Inspired by string theory, this living atom visualises Project Axiom: individual ideas move differently, yet combine to create one coherent body of work.</p><small>Artistic interpretation—not a scientific simulation.</small></div>
       </div>
     </section>
 
