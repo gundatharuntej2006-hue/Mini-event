@@ -1,0 +1,35 @@
+{
+  "version": "axiom-roster-2026-10-25-v1",
+  "super_admin": {
+    "login_id": "SUPER01",
+    "display_name": "Project Axiom Super Admin",
+    "password_hash": "$2b$12$JbiVRaivoW.3bUU1DprhCu5yQ8UV//jSvoq2D/8obQaJy3rjEpTm6"
+  },
+  "people": [
+    {"name":"D Lalith Chandra","email":"24ug1byai190@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$F4j9Otw09tY9/YokNTBwF.Hb8dxwAQrc5J8xIzn2YF4MTt7LFFUkS"},
+    {"name":"Atul Dhull","email":"24ug1byai146@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$oc1xLwpGwd0gHQkwh6MyK.SNkdZ9oyPWYR.75VCFTQfcMJbRDa3K6"},
+    {"name":"Satvika P H","email":"24ug1byai224@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$lFoRIMgyc8.YwMTckkBzWO0HndARpnNkMm2sxhioBv/mj9sgED1ZK"},
+    {"name":"Ritika Girish Kulkarni","email":"24ug1byai060@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$n0U.V9jcOa577epwAR8cw.meo1fwY4WTtGFyvN/1xoslzU8AijaJy"},
+    {"name":"Vishal Athreya","email":"24ug1byai149@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$lrBP9VSGk5Kid30/GtCi5uYD9zEEyR1olXlOlL7Cdy9AweQ2jAlES"},
+    {"name":"Sushma Gouda","email":"24ug1bycs713@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$Z9EbDZKPDY54gsylRW.uS.SpMfeyO7CHnkjpXWRUqT6tzmtm5goq6"},
+    {"name":"Azman Shaikh","email":"24ug1bycs809@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$Y5QNdFWUyS5f3ozCZojAd.RDoftQSp0mfVNGEx7O2dQ5SQeB58xga"},
+    {"name":"G Tharun Tej","email":"24ug1byai038@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$.uEbUNLA.db1ogfPFSJgl.y6yE7lP8G/Hp9/Bd8ngwCychaPcLWp2"},
+
+    {"name":"Ayush Kumar","email":"24ug1byai049@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$5Cj9oHuIg2AeV5rAWIyQc.YG2k4eKrnhS4oyK4WmWeVw5GQUJXbMC"},
+    {"name":"Anjali Sagar","email":"24ug1byai093@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$qezzsYDCYXczStbf4snPBuzMYcT91VZcXa0I44l3b67dmicCzTgEe"},
+    {"name":"Rohit Rajkumar","email":"25ug1byai170@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$kga9CbFYTaQDRdB5iaZrBejTb0Q1hHQMPjWfzvy.DX.p/lMQL4IPe"},
+    {"name":"M Yukthi","email":"25ug1byai025@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$3iGo/LEZ0b7tYkmkxs75Q.rPVCVZ7MBS.KrfGIf2EYqnXg.L/nRWK"},
+    {"name":"C M Mohan","email":"24ug1byai087@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$FrWn7a5SVT7j.24WTJQ7LuSo7XA0zyzN8SgdmboG8eHr03rG8wrUi"},
+    {"name":"Pranav Aditya","email":"25ug1bycs0025@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$RVeyi0pk5lNbhjziUOz.2.mj.Tp7YiyiaR5ddlJrEB19VQ7e9KaM6"},
+    {"name":"Adithya S Nayak","email":"24ug1bybs051@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$IlBGsmdRUHkyu3fJ7TuMX.RXVbgQqCEm5/T8sBANImF3iSMtOiM72"},
+    {"name":"Guhan M","email":"25ug1byai161@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$eMfPqRDrWq14h2qs5th9lu4xnmJptgSB0A11X1I.mys8xzUPV.igi"},
+    {"name":"M Anusha","email":"25ug1byai184@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$PCooJgoDSjx0AS8tQw1gmuP6sL2UWIxnSoPD97QTkwBvCTeOVCmoG"},
+    {"name":"Madhurya B O","email":"24ug1bycs1001@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$1HODHw4w1JNv3N3zxBuV3Osy1ouESm5YsgtJHV82kFHpKWIkqWy3G"},
+    {"name":"Kezia Jose","email":"25ug1bycs0541@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$46pizC12GotVj9nBLsWt7uAn3WhlPWjpVuXXzHFTEuL9rZuCIRIZ2"},
+    {"name":"Mariam Hussain","email":"25ug1byec049@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$AAGMnsBcDJfwt4omS1NB0Oz21VbvUJBWBEZzyZaa0ZhAAGugn3092"},
+    {"name":"Nayana G N","email":"25ug1byai181@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$5uYkT7yj4W8pwJKatGM7UeZWQ/0tLszEebql.fff3BbGiis.L7CXi"},
+    {"name":"Madhooja Kar","email":"25ug1byec001@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$DZC5VDa59wHYk3c.NXX4nuAMI.j9SMAdvMWMaUDhE/nrJz6idAGbm"},
+    {"name":"S Aniditya","email":"25ug1bycs0249@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$otVxhwlj0WHuNL8jvWQWPuuKtku0GlJckC/1b/3e3dkIlcwJ6w7GC"},
+    {"name":"Anjali Kumari","email":"25ug1byai421@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$zKMnuHzvZ8HqaTKJ.7NRmOcVe8YoGNlaAgoZSNQv1XIn/vrYT1om2"}
+  ]
+}

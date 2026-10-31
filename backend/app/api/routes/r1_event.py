@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
+from app.models.axiom import AxiomProfile
 from app.models.round3_live import Round3LiveConfig, Round3LiveTeam, Round3TeamSession
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
 from app.models.team import Team, TeamStatus
@@ -421,7 +422,8 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
             db.add(Round3TeamSession(jti=session_id, team_id=account.team_id))
             db.commit()
     token = create_access_token(account.id, account.role.value, session_id=session_id)
-    return {"success": True, "data": {"token": token, "role": account.role.value, "display_name": account.display_name}, "message": "Signed in."}
+    is_axiom = account.role == EventRole.SUPER_ADMIN or db.get(AxiomProfile, account.id) is not None
+    return {"success": True, "data": {"token": token, "role": account.role.value, "display_name": account.display_name, "experience": "axiom" if is_axiom else "event"}, "message": "Signed in."}
 
 
 @router.get("/me")

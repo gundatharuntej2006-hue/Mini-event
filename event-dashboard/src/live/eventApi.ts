@@ -41,7 +41,7 @@ async function fetchWithRecovery(url: string, init: RequestInit, canRetry: boole
 }
 
 export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'PARTICIPANT';
-export type Session = { token: string; role: Role; displayName: string };
+export type Session = { token: string; role: Role; displayName: string; experience?: 'axiom' | 'event' };
 export type LoginResult = Session | { redirect: 'instagram'; message: string };
 
 export function getSession(): Session | null {
@@ -57,7 +57,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
   const session = getSession();
   // Round 1 calls use short paths such as /control/overview. Round 2 calls
   // already include their /r2 namespace and must not be nested below /r1.
-  const apiPath = path.startsWith('/r2/') || path.startsWith('/r3-live/') ? `/api/v1${path}` : `/api/v1/r1${path}`;
+  const apiPath = path.startsWith('/r2/') || path.startsWith('/r3-live/') || path.startsWith('/axiom/') ? `/api/v1${path}` : `/api/v1/r1${path}`;
   const response = await fetchWithRecovery(`${apiBase}${apiPath}`, {
     method,
     headers: {
@@ -82,7 +82,7 @@ export async function signIn(loginId: string, password: string): Promise<LoginRe
   const json = await response.json().catch(() => null);
   if (!response.ok || !json?.success) throw new Error(json?.message || 'Incorrect ID or password.');
   if (json.data.redirect === 'instagram') return { redirect: 'instagram', message: json.message || 'Round 1 has ended for this team.' };
-  const session: Session = { token: json.data.token, role: json.data.role, displayName: json.data.display_name };
+  const session: Session = { token: json.data.token, role: json.data.role, displayName: json.data.display_name, experience: json.data.experience };
   localStorage.setItem(sessionKey, JSON.stringify(session));
   return session;
 }

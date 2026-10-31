@@ -63,6 +63,16 @@ def seed_roster_cmd():
         print(f"Successfully seeded/verified roster: {teams_count} teams, {parts_count} participants.")
 
 
+def provision_axiom_cmd():
+    print("Provisioning the approved Project Axiom roster...")
+    from app.services.axiom_bootstrap_service import provision_axiom_accounts
+    with SessionLocal() as db:
+        Base.metadata.create_all(bind=engine)
+        result = provision_axiom_accounts(db)
+        verb = "Applied" if result["applied"] else "Already applied"
+        print(f"{verb}: {result['version']} ({result['people']} people).")
+
+
 def create_user_cmd(email: str, password: str | None, name: str, role_str: str):
     try:
         role = UserRole(role_str.upper())
@@ -167,6 +177,7 @@ if __name__ == "__main__":
 
     # seed-roster
     subparsers.add_parser("seed-roster", help="Seed/sync authoritative 32-team tournament roster with 160 participants")
+    subparsers.add_parser("provision-axiom", help="Pause legacy access and provision the approved Project Axiom roster")
 
     args = parser.parse_args()
 
@@ -180,5 +191,7 @@ if __name__ == "__main__":
         seed_demo_data()
     elif args.command == "seed-roster":
         seed_roster_cmd()
+    elif args.command == "provision-axiom":
+        provision_axiom_cmd()
     else:
         parser.print_help()

@@ -2,7 +2,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from '../live/LoginPage';
 import { ParticipantEntryPage } from '../live/ParticipantEntryPage';
 import { AdminPage, SuperAdminPage } from '../live/StaffPagesV2';
-import { LandingPage, ResultsPage } from '../live/PublicPages';
+import { ResultsPage } from '../live/PublicPages';
+import { AxiomControlPage, AxiomDashboardPage, AxiomLandingPage, PastEventsPage } from '../axiom/AxiomPages';
 import { AccountManagementPage } from '../live/AccountManagementPage';
 import { Round2AdminPage, Round2SuperPage } from '../live/Round2Pages';
 import { Round3SuperPage } from '../live/Round3Pages';
@@ -11,8 +12,11 @@ import { Round3PuzzleDemoPage, Round3PuzzleParticipantPage, Round3PuzzleStationP
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
+      <Route path="/" element={<AxiomLandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/axiom" element={<AxiomDashboardPage />} />
+      <Route path="/axiom/control" element={<AxiomControlPage />} />
+      <Route path="/past-events" element={<PastEventsPage />} />
       <Route path="/play" element={<ParticipantEntryPage />} />
       <Route path="/scan/:location" element={<ParticipantEntryPage />} />
       <Route path="/station" element={<AdminPage />} />
