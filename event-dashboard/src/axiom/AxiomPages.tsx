@@ -203,11 +203,38 @@ function NightSkyCanvas() {
     if (!canvas || !context) return;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0;
-    let nextMeteor = performance.now() + 1800 + Math.random() * 2600;
-    let meteor: { started: number; x: number; y: number; length: number; angle: number } | null = null;
+    let nextMeteor = performance.now() + 1400 + Math.random() * 4200;
+    let meteor: { started: number; x: number; y: number; dx: number; dy: number; length: number; duration: number; brightness: number; twin: boolean } | null = null;
     type Star = { x: number; y: number; depth: number; radius: number; phase: number; pulse: number; tone: [number, number, number]; glow: boolean };
-    type Flight = { x: number; y: number; speed: number; phase: number; direction: number; scale: number; bank: number };
+    type Flight = { x: number; y: number; speed: number; phase: number; direction: number; scale: number; bank: number; delayUntil: number };
     let stars: Star[] = []; let flights: Flight[] = [];
+
+    const randomiseFlight = (flight: Flight, time: number, initial = false) => {
+      flight.direction = Math.random() > .5 ? 1 : -1;
+      flight.x = initial ? Math.random() * 1.3 - .15 : (flight.direction > 0 ? -.22 : 1.22);
+      flight.y = .16 + Math.random() * .68;
+      flight.speed = .0024 + Math.random() * .0035;
+      flight.phase = Math.random() * Math.PI * 2;
+      flight.scale = .72 + Math.random() * .68;
+      flight.bank = -.045 + Math.random() * .09;
+      flight.delayUntil = initial ? time + Math.random() * 2800 : time + 1100 + Math.random() * 7200;
+    };
+
+    const launchMeteor = (time: number) => {
+      const fromLeft = Math.random() > .34;
+      const shallow = Math.random() > .48;
+      meteor = {
+        started: time,
+        x: fromLeft ? -.08 + Math.random() * .45 : .66 + Math.random() * .4,
+        y: .025 + Math.random() * .39,
+        dx: (fromLeft ? 1 : -1) * (.18 + Math.random() * .34),
+        dy: shallow ? .09 + Math.random() * .13 : .2 + Math.random() * .25,
+        length: 58 + Math.random() * 170,
+        duration: 620 + Math.random() * 920,
+        brightness: .62 + Math.random() * .38,
+        twin: Math.random() > .78,
+      };
+    };
 
     const buildField = () => {
       ratio = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -222,11 +249,8 @@ function NightSkyCanvas() {
         radius: .28 + Math.pow(Math.random(), 2.6) * 1.95, phase: Math.random() * Math.PI * 2, pulse: .24 + Math.random() * .68,
         tone: starTones[Math.floor(Math.random() * starTones.length)], glow: Math.random() > .91,
       }));
-      flights = [
-        { x: -.15, y: .28, speed: .0051, phase: 0, direction: 1, scale: 1.18, bank: -.025 },
-        { x: 1.15, y: .62, speed: .0038, phase: 2.4, direction: -1, scale: .96, bank: .018 },
-        { x: -.3, y: .78, speed: .0031, phase: 4.7, direction: 1, scale: .82, bank: -.012 },
-      ];
+      flights = Array.from({ length: 3 }, () => ({ x: 0, y: 0, speed: 0, phase: 0, direction: 1, scale: 1, bank: 0, delayUntil: 0 }));
+      flights.forEach((flight) => randomiseFlight(flight, performance.now(), true));
     };
     const updateScroll = () => {
       const available = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
@@ -266,24 +290,34 @@ function NightSkyCanvas() {
       });
 
       if (!reduceMotion && !meteor && time >= nextMeteor) {
-        meteor = { started: time, x: .12 + Math.random() * .7, y: .06 + Math.random() * .34, length: 90 + Math.random() * 95, angle: .42 + Math.random() * .18 };
+        launchMeteor(time);
       }
       if (meteor) {
-        const age = (time - meteor.started) / 1050;
-        if (age >= 1) { meteor = null; nextMeteor = time + 2600 + Math.random() * 5200; }
+        const age = (time - meteor.started) / meteor.duration;
+        if (age >= 1) { meteor = null; nextMeteor = time + 1800 + Math.random() * 8200; }
         else {
-          const headX = width * meteor.x + age * width * .28; const headY = height * meteor.y + age * height * .22;
-          const tailX = headX - Math.cos(meteor.angle) * meteor.length; const tailY = headY - Math.sin(meteor.angle) * meteor.length;
-          const trail = context.createLinearGradient(tailX, tailY, headX, headY);
-          trail.addColorStop(0, 'rgba(180,221,255,0)'); trail.addColorStop(1, `rgba(245,251,255,${Math.sin(age * Math.PI) * .92})`);
-          context.strokeStyle = trail; context.lineWidth = 1.3; context.beginPath(); context.moveTo(tailX, tailY); context.lineTo(headX, headY); context.stroke();
+          const headX = width * (meteor.x + age * meteor.dx); const headY = height * (meteor.y + age * meteor.dy);
+          const directionAngle = Math.atan2(meteor.dy * height, meteor.dx * width);
+          const tailX = headX - Math.cos(directionAngle) * meteor.length; const tailY = headY - Math.sin(directionAngle) * meteor.length;
+          const alpha = Math.sin(age * Math.PI) * meteor.brightness;
+          const paintTrail = (offset: number, opacity: number, lineWidth: number) => {
+            const normalX = -Math.sin(directionAngle) * offset; const normalY = Math.cos(directionAngle) * offset;
+            const trail = context.createLinearGradient(tailX + normalX, tailY + normalY, headX + normalX, headY + normalY);
+            trail.addColorStop(0, 'rgba(154,204,247,0)'); trail.addColorStop(.72, `rgba(198,228,255,${alpha * opacity * .38})`); trail.addColorStop(1, `rgba(250,253,255,${alpha * opacity})`);
+            context.strokeStyle = trail; context.lineWidth = lineWidth; context.beginPath(); context.moveTo(tailX + normalX, tailY + normalY); context.lineTo(headX + normalX, headY + normalY); context.stroke();
+          };
+          paintTrail(0, 1, 1 + meteor.brightness * 1.15);
+          if (meteor.twin) paintTrail(5 + meteor.brightness * 5, .58, .75);
         }
       }
 
       if (!reduceMotion) flights.forEach((flight, index) => {
+        if (time < flight.delayUntil) return;
         flight.x += flight.speed * flight.direction;
-        if (flight.direction > 0 && flight.x > 1.2) flight.x = -.2;
-        if (flight.direction < 0 && flight.x < -.2) flight.x = 1.2;
+        if ((flight.direction > 0 && flight.x > 1.22) || (flight.direction < 0 && flight.x < -.22)) {
+          randomiseFlight(flight, time);
+          return;
+        }
         const x = flight.x * width; const y = (flight.y + Math.sin(time * .00012 + flight.phase) * .012) * height;
         const blink = Math.sin(time * .006 + flight.phase) > .64;
         const planeScale = flight.scale * (width < 700 ? 1.18 : 1.46);
