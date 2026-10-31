@@ -205,6 +205,10 @@ function NightSkyCanvas() {
     let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0;
     let nextMeteor = performance.now() + 1400 + Math.random() * 4200;
     let meteor: { started: number; x: number; y: number; dx: number; dy: number; length: number; duration: number; brightness: number; twin: boolean } | null = null;
+    let nextImpact = performance.now() + 4000 + Math.random() * 3000;
+    type ImpactSpark = { angle: number; speed: number; size: number; heat: number };
+    type SkyImpact = { started: number; x: number; y: number; direction: number; scale: number; meteorSide: number; sparks: ImpactSpark[] };
+    let impact: SkyImpact | null = null;
     type Star = { x: number; y: number; depth: number; radius: number; phase: number; pulse: number; tone: [number, number, number]; glow: boolean };
     type Flight = { x: number; y: number; speed: number; phase: number; direction: number; scale: number; bank: number; delayUntil: number };
     let stars: Star[] = []; let flights: Flight[] = [];
@@ -234,6 +238,28 @@ function NightSkyCanvas() {
         brightness: .62 + Math.random() * .38,
         twin: Math.random() > .78,
       };
+    };
+
+    const launchImpact = (time: number) => {
+      const zone = Math.floor(Math.random() * 3);
+      const impactX = zone === 1 ? (Math.random() > .5 ? .08 + Math.random() * .17 : .75 + Math.random() * .17) : .16 + Math.random() * .68;
+      const impactY = zone === 0 ? .13 + Math.random() * .16 : zone === 1 ? .31 + Math.random() * .36 : .72 + Math.random() * .16;
+      impact = {
+        started: time,
+        x: impactX,
+        y: impactY,
+        direction: Math.random() > .5 ? 1 : -1,
+        scale: .82 + Math.random() * .72,
+        meteorSide: Math.random() > .5 ? 1 : -1,
+        sparks: Array.from({ length: 16 + Math.floor(Math.random() * 13) }, () => ({
+          angle: Math.random() * Math.PI * 2,
+          speed: .45 + Math.random() * 1.25,
+          size: .7 + Math.random() * 2.1,
+          heat: .45 + Math.random() * .55,
+        })),
+      };
+      meteor = null;
+      nextMeteor = time + 8500 + Math.random() * 4500;
     };
 
     const buildField = () => {
@@ -289,7 +315,9 @@ function NightSkyCanvas() {
         context.fillStyle = `rgba(${red},${green},${blue},${Math.max(.18, twinkle)})`; context.fill();
       });
 
-      if (!reduceMotion && !meteor && time >= nextMeteor) {
+      if (!reduceMotion && !impact && time >= nextImpact) launchImpact(time);
+
+      if (!reduceMotion && !impact && !meteor && time >= nextMeteor) {
         launchMeteor(time);
       }
       if (meteor) {
@@ -336,6 +364,51 @@ function NightSkyCanvas() {
         context.shadowColor = 'rgba(242,249,255,.9)'; context.fillStyle = `rgba(242,249,255,${blink ? .95 : .34})`; context.beginPath(); context.arc(x + 10 * flight.direction * planeScale, y, lightRadius * .78, 0, Math.PI * 2); context.fill();
         context.shadowBlur = 0;
       });
+
+      if (impact) {
+        const activeImpact = impact;
+        const age = (time - activeImpact.started) / 2800;
+        if (age >= 1) {
+          impact = null;
+          nextImpact = time + 43000 + Math.random() * 10000;
+        } else {
+          const targetX = activeImpact.x * width; const targetY = activeImpact.y * height;
+          const approach = Math.min(1, age / .48);
+          const ease = 1 - Math.pow(1 - approach, 3);
+          const planeX = targetX - activeImpact.direction * (1 - ease) * Math.min(width * .34, 340);
+          const planeY = targetY + Math.sin(approach * Math.PI) * 9 * activeImpact.scale;
+          const planeScale = activeImpact.scale * (width < 700 ? 1.28 : 1.58);
+          if (age < .55) {
+            context.save(); context.translate(planeX, planeY); context.scale(activeImpact.direction * planeScale, planeScale); context.rotate(-activeImpact.direction * .025);
+            context.fillStyle = 'rgba(205,216,226,.72)';
+            context.beginPath(); context.moveTo(12, 0); context.quadraticCurveTo(5, -2, -9, -1.35); context.lineTo(-13, 0); context.lineTo(-9, 1.35); context.quadraticCurveTo(5, 2, 12, 0); context.fill();
+            context.fillStyle = 'rgba(169,186,204,.68)';
+            context.beginPath(); context.moveTo(2, 0); context.lineTo(-5, -7); context.lineTo(-8, -6.4); context.lineTo(-3, 0); context.lineTo(-7, 6.2); context.lineTo(-4, 6.8); context.lineTo(3, 0); context.fill();
+            context.restore();
+            const meteorStartX = targetX + activeImpact.meteorSide * Math.min(width * .42, 390); const meteorStartY = targetY - Math.min(height * .37, 310);
+            const meteorX = meteorStartX + (targetX - meteorStartX) * ease; const meteorY = meteorStartY + (targetY - meteorStartY) * ease;
+            const meteorAngle = Math.atan2(targetY - meteorStartY, targetX - meteorStartX);
+            const tailLength = 70 + activeImpact.scale * 80;
+            const meteorTailX = meteorX - Math.cos(meteorAngle) * tailLength; const meteorTailY = meteorY - Math.sin(meteorAngle) * tailLength;
+            const collisionTrail = context.createLinearGradient(meteorTailX, meteorTailY, meteorX, meteorY);
+            collisionTrail.addColorStop(0, 'rgba(151,204,255,0)'); collisionTrail.addColorStop(.65, 'rgba(207,233,255,.38)'); collisionTrail.addColorStop(1, 'rgba(255,255,255,.98)');
+            context.strokeStyle = collisionTrail; context.lineWidth = 2.2; context.beginPath(); context.moveTo(meteorTailX, meteorTailY); context.lineTo(meteorX, meteorY); context.stroke();
+          }
+          if (age >= .46) {
+            const blast = Math.min(1, (age - .46) / .54); const fade = Math.pow(1 - blast, 1.35); const blastRadius = (10 + blast * 82) * activeImpact.scale;
+            const fire = context.createRadialGradient(targetX, targetY, 0, targetX, targetY, blastRadius);
+            fire.addColorStop(0, `rgba(255,255,238,${fade})`); fire.addColorStop(.16, `rgba(255,218,112,${fade * .96})`); fire.addColorStop(.48, `rgba(255,99,32,${fade * .72})`); fire.addColorStop(1, 'rgba(93,28,15,0)');
+            context.fillStyle = fire; context.beginPath(); context.arc(targetX, targetY, blastRadius, 0, Math.PI * 2); context.fill();
+            context.strokeStyle = `rgba(255,191,92,${fade * .48})`; context.lineWidth = 1.5; context.beginPath(); context.arc(targetX, targetY, blastRadius * 1.12, 0, Math.PI * 2); context.stroke();
+            activeImpact.sparks.forEach((spark) => {
+              const distance = blast * blast * 88 * activeImpact.scale * spark.speed;
+              const sparkX = targetX + Math.cos(spark.angle) * distance; const sparkY = targetY + Math.sin(spark.angle) * distance + blast * blast * 26;
+              context.fillStyle = `rgba(255,${Math.round(105 + spark.heat * 130)},${Math.round(25 + spark.heat * 70)},${fade * spark.heat})`;
+              context.beginPath(); context.arc(sparkX, sparkY, spark.size * (1 - blast * .55), 0, Math.PI * 2); context.fill();
+            });
+          }
+        }
+      }
       if (!reduceMotion) frame = window.requestAnimationFrame(draw);
     };
     buildField(); updateScroll();
