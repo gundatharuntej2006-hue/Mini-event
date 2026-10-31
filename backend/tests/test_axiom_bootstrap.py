@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.axiom import (
+    AxiomLoginGuard,
     AxiomOriginalityAgreement,
     AxiomProblemStatement,
     AxiomProfile,
@@ -138,6 +139,36 @@ def test_later_roster_version_preserves_user_changed_passwords(monkeypatch, db_s
     assert verify_password("MemberChanged42", member.password_hash)
     assert verify_password("SuperChanged42", super01.password_hash)
     assert db_session.get(AxiomProfile, member.id).must_change_password is False
+
+
+def test_axiom_login_locks_for_twelve_hours_after_ten_failures(monkeypatch, client, db_session):
+    import app.api.routes.r1_event as login_routes
+
+    provision_axiom_accounts(db_session)
+    account = db_session.query(EventAccount).filter(
+        EventAccount.login_id == "24UG1BYAI038@BMSIT.IN"
+    ).one()
+
+    async def reject_password(_account, _password):
+        return False
+
+    monkeypatch.setattr(login_routes, "guard_login_rate", lambda _login_id: None)
+    monkeypatch.setattr(login_routes, "verify_event_password", reject_password)
+    for _ in range(10):
+        response = client.post(
+            "/api/v1/r1/login",
+            json={"login_id": account.login_id, "password": "definitely-wrong"},
+        )
+        assert response.status_code == 401
+
+    guard = db_session.get(AxiomLoginGuard, account.id)
+    assert guard is not None
+    assert guard.locked_until is not None
+    locked = client.post(
+        "/api/v1/r1/login",
+        json={"login_id": account.login_id, "password": "9030847016"},
+    )
+    assert locked.status_code == 423
 
 
 def test_participant_accepts_agreement_and_saves_ranked_project_response(

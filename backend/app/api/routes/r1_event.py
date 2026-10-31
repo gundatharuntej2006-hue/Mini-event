@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.constants import R1_LOCATIONS
 from app.db.session import get_db
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole, Round1FinishOutcome, Round1Override, Round1SecretAgentSelection
-from app.models.axiom import AxiomProfile
+from app.models.axiom import AxiomLoginGuard, AxiomProfile
 from app.models.round3_live import Round3LiveConfig, Round3LiveTeam, Round3TeamSession
 from app.models.round1 import GateCheckinModel, Round1CheckpointAttemptModel, Round1ConfigModel, Round1RouteAllocationModel
 from app.models.team import Team, TeamStatus
@@ -41,6 +41,8 @@ BASE_POINTS = 400.0
 WRONG_ANSWER_DEDUCTION = 5.0
 LOGIN_WINDOW_SECONDS = 60
 LOGIN_MAX_ATTEMPTS = 8
+AXIOM_LOCK_ATTEMPTS = 10
+AXIOM_LOCK_HOURS = 12
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
 
 # Password verification is intentionally isolated from FastAPI's shared worker
@@ -171,6 +173,49 @@ def guard_login_rate(login_id: str) -> None:
     if len(attempts) >= LOGIN_MAX_ATTEMPTS:
         raise HTTPException(status_code=429, detail="Too many sign-in attempts. Please wait one minute and try again.")
     attempts.append(monotonic())
+
+
+def axiom_guard_for(db: Session, account_id: str) -> AxiomLoginGuard:
+    guard = db.get(AxiomLoginGuard, account_id)
+    if not guard:
+        guard = AxiomLoginGuard(account_id=account_id)
+        db.add(guard)
+        db.flush()
+    return guard
+
+
+def check_axiom_lock(db: Session, account_id: str) -> None:
+    guard = db.get(AxiomLoginGuard, account_id)
+    if not guard or not guard.locked_until:
+        return
+    locked_until = guard.locked_until
+    if locked_until.tzinfo is None:
+        locked_until = locked_until.replace(tzinfo=timezone.utc)
+    if locked_until > now():
+        raise HTTPException(
+            status_code=423,
+            detail="This account is temporarily locked after repeated incorrect passwords. Try again after 12 hours or contact the Club Council.",
+        )
+    guard.failed_attempts = 0
+    guard.locked_until = None
+    db.commit()
+
+
+def record_axiom_login_failure(db: Session, account_id: str) -> None:
+    guard = axiom_guard_for(db, account_id)
+    guard.failed_attempts += 1
+    guard.last_failed_at = now()
+    if guard.failed_attempts >= AXIOM_LOCK_ATTEMPTS:
+        guard.locked_until = now() + timedelta(hours=AXIOM_LOCK_HOURS)
+    db.commit()
+
+
+def clear_axiom_login_failures(db: Session, account_id: str) -> None:
+    guard = db.get(AxiomLoginGuard, account_id)
+    if guard and (guard.failed_attempts or guard.locked_until):
+        guard.failed_attempts = 0
+        guard.locked_until = None
+        db.commit()
 
 
 def current_account(
@@ -367,6 +412,9 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
     if not account:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    is_axiom = account.role == EventRole.SUPER_ADMIN or db.get(AxiomProfile, account.id) is not None
+    if is_axiom:
+        check_axiom_lock(db, account.id)
     stored_verifier = db.get(EventPasswordVerifier, account.id)
     verifier_is_current = bool(
         stored_verifier
@@ -389,7 +437,11 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
         not fast_password_rejected and await verify_event_password(account, payload.password)
     )
     if not password_valid:
+        if is_axiom:
+            record_axiom_login_failure(db, account.id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
+    if is_axiom:
+        clear_axiom_login_failures(db, account.id)
     if not verifier_is_current:
         db.merge(EventPasswordVerifier(
             account_id=account.id,
@@ -422,7 +474,6 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
             db.add(Round3TeamSession(jti=session_id, team_id=account.team_id))
             db.commit()
     token = create_access_token(account.id, account.role.value, session_id=session_id)
-    is_axiom = account.role == EventRole.SUPER_ADMIN or db.get(AxiomProfile, account.id) is not None
     return {"success": True, "data": {"token": token, "role": account.role.value, "display_name": account.display_name, "experience": "axiom" if is_axiom else "event"}, "message": "Signed in."}
 
 

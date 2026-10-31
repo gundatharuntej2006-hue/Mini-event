@@ -25,7 +25,7 @@ from app.models.event_account import EventAccount, EventPasswordVerifier, EventR
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
 IST = ZoneInfo("Asia/Kolkata")
-MENTOR_DECISION_DEADLINE = datetime(2026, 10, 31, 18, 0, tzinfo=IST)
+MENTOR_DECISION_DEADLINE = datetime(2026, 11, 1, 12, 0, tzinfo=IST)
 STATEMENT_DEADLINE = datetime(2026, 11, 2, 15, 0, tzinfo=IST)
 PREFERENCE_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
 
@@ -293,7 +293,7 @@ def choose_role(
     if profile.roster_type != AxiomRosterType.MENTOR_CANDIDATE:
         raise HTTPException(status_code=403, detail="Only mentor candidates make this decision.")
     if now_ist() > MENTOR_DECISION_DEADLINE:
-        raise HTTPException(status_code=409, detail="The mentor decision window closed on 31 October at 6:00 PM IST.")
+        raise HTTPException(status_code=409, detail="The mentor decision window closed on 1 November at 12:00 PM IST.")
     if not payload.confirmed:
         raise HTTPException(status_code=400, detail="Please confirm your final selection.")
     profile.role_choice = AxiomRoleChoice(payload.choice)

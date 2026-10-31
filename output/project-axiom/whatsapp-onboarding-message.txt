@@ -1,0 +1,31 @@
+🧭 *PROJECT AXIOM — YOUR WORKSPACE IS READY*
+
+Hello everyone! Project Axiom is our internal build-and-research programme for the Asymptotes core team. Each person will either guide a project as a mentor or contribute to one as a participant.
+
+🔐 *Your login*
+• Website: [INSERT LIVE WEBSITE LINK]
+• Login ID: your registered BMSIT college email address
+• Initial password: your registered mobile number
+
+Please do not post your individual credentials in the group. After your first login, use the *Change password* section and choose a private password for every future login.
+
+👩‍🏫 *If your dashboard says “Mentor candidate”*
+1. Choose *Mentor*, *Participant* or *Opt out* and confirm your decision.
+2. If you choose Mentor, submit exactly one track: either Research, or Product. A Product may be software or hardware.
+3. Keep the problem statement within 44 words and the explanation within 88 words.
+4. After teams are formed, guide the members through the reviews and final showcase.
+
+🧑‍💻 *If your dashboard says “Participant”*
+1. Wait until all mentor problem statements are released together.
+2. Accept the originality and confidentiality agreement.
+3. Read the available projects, rank up to three preferences, and explain your proposed solution and contribution in your own words.
+4. The more complete your preferences are, the better the team-matching process can work.
+
+🗺️ *The complete journey*
+Role confirmation → Problem-statement release → Participant preferences → Team formation → Review 1 on 29 November → Online Review 2 after the semester ends → Final showcase and winning project in the first week of next semester.
+
+⚠️ Ten incorrect password attempts lock an account for 12 hours. If you are unsure of your password, please contact the Club Council instead of repeatedly trying.
+
+This initiative is about more than helping at events. It is about learning together, building something useful, and leaving behind work that strengthens the club. We are excited to see what all of you create. ✨
+
+— Club Asymptotes

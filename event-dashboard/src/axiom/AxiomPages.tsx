@@ -64,6 +64,10 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
         if (shards.length) supernatural.to(shards, { y: (index) => index % 2 ? -125 : 145, rotate: (index) => index % 2 ? 95 : -80, stagger: .025, ease: 'none' }, 0);
         const stringAtom = element.querySelector('.ax-string-atom');
         if (stringAtom) supernatural.to(stringAtom, { rotate: -16, scale: 1.1, ease: 'none' }, 0);
+        const orbitCore = element.querySelector('.ax-orbit-core');
+        const atomCaption = element.querySelector('.ax-atom-caption');
+        if (orbitCore) supernatural.to(orbitCore, { opacity: 0, scale: .28, filter: 'blur(9px)', ease: 'none' }, 0);
+        if (atomCaption) supernatural.to(atomCaption, { opacity: 0, y: 34, ease: 'none' }, .08);
         element.querySelectorAll<SVGPathElement>('.ax-string-path').forEach((path, index) => {
           const morph = path.dataset.morph;
           if (morph) supernatural.to(path, { attr: { d: morph }, strokeWidth: index % 2 ? 2.6 : 3.35, ease: 'none' }, 0);
@@ -109,6 +113,53 @@ function AxiomBackdrop() {
 
 function AxiomLogo() {
   return <div className="ax-logo"><span className="ax-glyph"><i/><i/><b>A</b></span><div><b>PROJECT AXIOM</b><small>AN ASYMPTOTES INITIATIVE</small></div></div>;
+}
+
+function closedStringPath(time: number, phase = 0) {
+  const points: string[] = [];
+  const count = 180;
+  for (let index = 0; index <= count; index += 1) {
+    const theta = (index / count) * Math.PI * 2;
+    // A classical visual analogue of a closed string: two oppositely travelling
+    // waves plus a higher harmonic. Their superposition changes the loop shape.
+    const left = 20 * Math.sin(2 * theta - time * 1.18 + phase);
+    const right = 13 * Math.sin(3 * theta + time * .92 - phase * .7);
+    const harmonic = 6 * Math.sin(5 * theta - time * 1.7 + phase * 1.4);
+    const radius = 142 + left + right + harmonic;
+    const x = 260 + radius * Math.cos(theta);
+    const y = 175 + radius * .58 * Math.sin(theta) + 9 * Math.sin(2 * theta + time * .7);
+    points.push(`${index === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`);
+  }
+  return `${points.join(' ')} Z`;
+}
+
+function StringTheoryLab() {
+  const primary = useRef<SVGPathElement>(null);
+  const echoA = useRef<SVGPathElement>(null);
+  const echoB = useRef<SVGPathElement>(null);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      primary.current?.setAttribute('d', closedStringPath(.6));
+      echoA.current?.setAttribute('d', closedStringPath(.6, .45));
+      echoB.current?.setAttribute('d', closedStringPath(.6, -.45));
+      return;
+    }
+    let frame = 0;
+    const started = performance.now();
+    const draw = (stamp: number) => {
+      const time = (stamp - started) / 1000;
+      primary.current?.setAttribute('d', closedStringPath(time));
+      echoA.current?.setAttribute('d', closedStringPath(time, .42));
+      echoB.current?.setAttribute('d', closedStringPath(time, -.42));
+      frame = window.requestAnimationFrame(draw);
+    };
+    frame = window.requestAnimationFrame(draw);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+  return <section className="ax-string-lab ax-scroll">
+    <div className="ax-lab-copy"><span>MAGNIFICATION · CLOSED STRING</span><h2>Not an orbit.<br/><em>A vibration.</em></h2><p>String theory models fundamental objects as one-dimensional strings. This view isolates one closed loop and projects its motion into two dimensions so the changing modes can be seen.</p><div className="ax-mode-notes"><article><b>01</b><div><strong>Left-moving mode</strong><small>A wave travels around the loop in one direction.</small></div></article><article><b>02</b><div><strong>Right-moving mode</strong><small>A second wave travels in the opposite direction.</small></div></article><article><b>03</b><div><strong>Superposition</strong><small>The modes overlap, producing the continuously changing profile.</small></div></article></div><small className="ax-physics-note">Conceptual classical projection. A full string-theory description is quantum and may require additional dimensions.</small></div>
+    <div className="ax-loop-viewport" aria-label="Animated projection of harmonic modes on a closed string"><div className="ax-loop-grid"/><svg viewBox="0 0 520 350" role="img" aria-label="Closed string vibrating through several harmonic modes"><defs><linearGradient id="loopSpectrum" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#67e8f9"/><stop offset=".48" stopColor="#c4b5fd"/><stop offset="1" stopColor="#f0abfc"/></linearGradient><filter id="loopGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path ref={echoA} className="ax-loop-echo echo-a"/><path ref={echoB} className="ax-loop-echo echo-b"/><path ref={primary} className="ax-loop-main" filter="url(#loopGlow)"/></svg><div className="ax-mode-chip chip-left">ψ<sub>L</sub> left-moving</div><div className="ax-mode-chip chip-right">ψ<sub>R</sub> right-moving</div><div className="ax-frequency"><i/><span>MODE ENERGY</span><b>n = 2 + 3 + 5</b></div></div>
+  </section>;
 }
 
 function AxiomHeader({ compact = false }: { compact?: boolean }) {
@@ -160,9 +211,9 @@ export function AxiomLandingPage() {
           <div className="ax-spectral-field"><i/><i/><i/></div><div className="ax-visual-halo"/>
           <svg className="ax-string-atom" viewBox="0 0 720 720" role="img" aria-label="An artistic string-theory-inspired atom with luminous vibrating filaments">
             <defs>
-              <linearGradient id="axiomStringA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#d8ff67"/><stop offset=".48" stopColor="#8fb5ff"/><stop offset="1" stopColor="#ffc95c"/></linearGradient>
-              <linearGradient id="axiomStringB" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#fff7d0"/><stop offset=".44" stopColor="#8deaff"/><stop offset="1" stopColor="#a995ff"/></linearGradient>
-              <radialGradient id="axiomCore" cx="42%" cy="36%"><stop offset="0" stopColor="#ffffff"/><stop offset=".18" stopColor="#d8ff67"/><stop offset=".5" stopColor="#759fff"/><stop offset="1" stopColor="#071431" stopOpacity=".15"/></radialGradient>
+              <linearGradient id="axiomStringA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#67e8f9"/><stop offset=".48" stopColor="#c4b5fd"/><stop offset="1" stopColor="#f0abfc"/></linearGradient>
+              <linearGradient id="axiomStringB" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#e0f2fe"/><stop offset=".44" stopColor="#a78bfa"/><stop offset="1" stopColor="#fb7185"/></linearGradient>
+              <radialGradient id="axiomCore" cx="42%" cy="36%"><stop offset="0" stopColor="#ffffff"/><stop offset=".18" stopColor="#67e8f9"/><stop offset=".5" stopColor="#a78bfa"/><stop offset="1" stopColor="#071431" stopOpacity=".15"/></radialGradient>
               <filter id="axiomGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
               <filter id="axiomSoftGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="12"/></filter>
             </defs>
@@ -181,18 +232,20 @@ export function AxiomLandingPage() {
             <g className="ax-string-particles"><g className="particle-orbit particle-a"><circle cx="360" cy="83" r="8"/></g><g className="particle-orbit particle-b"><circle cx="619" cy="360" r="6"/></g><g className="particle-orbit particle-c"><circle cx="360" cy="640" r="5"/></g><g className="particle-orbit particle-d"><circle cx="105" cy="360" r="7"/></g><g className="particle-orbit particle-e"><circle cx="540" cy="152" r="4"/></g></g>
             <g className="ax-atom-nucleus"><circle className="core-aura" cx="360" cy="360" r="102"/><circle className="core-shell" cx="360" cy="360" r="65"/><circle cx="337" cy="351" r="10"/><circle cx="382" cy="342" r="8"/><circle cx="367" cy="382" r="12"/><circle cx="342" cy="383" r="6"/></g>
           </svg>
-          <div className="ax-orbit-core"><Orbit size={27}/><b>AXIOM</b><small>IDEA → IMPACT</small></div>
+          <div className="ax-orbit-core"><Orbit size={27}/><b>STRING FIELD</b><small>MODES IN SUPERPOSITION</small></div>
         </div></div>
         <div className="ax-atom-caption"><span>STRING FIELD · 01</span><p><b>Many vibrations. One system.</b> Inspired by string theory, this living atom visualises Project Axiom: individual ideas move differently, yet combine to create one coherent body of work.</p><small>Artistic interpretation—not a scientific simulation.</small></div>
       </div>
     </section>
+
+    <StringTheoryLab/>
 
     <section className="ax-statement ax-scroll"><span>THE PREMISE</span><p>Events create moments. <em>Communities create momentum.</em></p><small>Project Axiom gives our internal team the time, trust and structure to create work that lasts beyond one event.</small></section>
 
     <section className="ax-paths ax-scroll">
       <div className="ax-section-intro"><span>CHOOSE A DIRECTION</span><h2>Two paths.<br/><em>Equal ambition.</em></h2><p>A project follows one clear track. The difference is the output—not the value.</p></div>
       <article className="research ax-glass" onPointerMove={interactivePointer}><div className="ax-path-number">R/01</div><FlaskConical/><span>RESEARCH</span><h3>Turn a question into knowledge.</h3><p>Investigate a meaningful problem, test assumptions and produce findings the club can learn from or act upon.</p><small>QUESTION · METHOD · EVIDENCE · INSIGHT</small></article>
-      <article className="product ax-glass" onPointerMove={interactivePointer}><div className="ax-path-number">P/02</div><Layers3/><span>PRODUCT</span><h3>Turn a need into something useful.</h3><p>Design, prototype and deliver a practical tool, system or experience that improves how the club works.</p><small>NEED · DESIGN · PROTOTYPE · IMPACT</small></article>
+      <article className="product ax-glass" onPointerMove={interactivePointer}><div className="ax-path-number">P/02</div><Layers3/><span>PRODUCT · SOFTWARE OR HARDWARE</span><h3>Turn a need into something useful.</h3><p>Design, prototype and deliver one practical software or hardware product that improves how the club works.</p><small>NEED · DESIGN · PROTOTYPE · IMPACT</small></article>
     </section>
 
     <section className="ax-process ax-scroll"><div className="ax-section-intro"><span>THE SYSTEM</span><h2>Preference, purpose<br/>and human judgment.</h2></div><div className="ax-process-line">{[
@@ -204,9 +257,17 @@ export function AxiomLandingPage() {
   </main>;
 }
 
-function Timeline({ deadlines, active }: { deadlines: Deadlines; active: number }) {
-  const items = [['Role decision',formatDeadline(deadlines.mentor_decision)],['Problem statements',formatDeadline(deadlines.statement)],['Member preferences',formatDeadline(deadlines.preference)],['Team formation','Council review']];
-  return <div className="ax-timeline ax-scroll">{items.map((item,index)=><div className={index<=active?'active':''} key={item[0]}><span>{index<active?<Check size={14}/>:index+1}</span><section><b>{item[0]}</b><small>{item[1]}</small></section></div>)}</div>;
+function ProjectJourney({ deadlines, active }: { deadlines: Deadlines; active: number }) {
+  const items = [
+    ['01','Choose your role','Mentor candidates confirm whether they will mentor, participate or sit out.',formatDeadline(deadlines.mentor_decision)],
+    ['02','Frame the project','Confirmed mentors submit one research or product problem statement.',formatDeadline(deadlines.statement)],
+    ['03','Select with intent','Participants review the released briefs, rank up to three and explain their contribution.',formatDeadline(deadlines.preference)],
+    ['04','Form balanced teams','Preference fit, mentor review, capacity and Council judgment produce teams of two to four.','Council formation'],
+    ['05','Review one','Teams present the problem framing, plan and early evidence.','29 Nov 2026'],
+    ['06','Review two','An online review after semester examinations checks progress, evidence and execution.','After semester ends · Online'],
+    ['07','Final showcase','Completed work is demonstrated, recognised and the winning project is announced.','First week of next semester'],
+  ];
+  return <section className="ax-journey ax-scroll"><div className="ax-section-title"><div><span>PROJECT LIFECYCLE</span><h2>From decision<br/><em>to demonstration.</em></h2></div><p>Every stage leaves a clear output. Nothing disappears after team formation.</p></div><div className="ax-journey-track">{items.map(([number,title,copy,date],index)=><article className={index<active?'complete':index===active?'current':''} key={number}><header><b>{number}</b><span>{index<active?<Check size={15}/>:index===active?'NOW':'NEXT'}</span></header><h3>{title}</h3><p>{copy}</p><small>{date}</small></article>)}</div></section>;
 }
 
 function ParticipantWorkspace({ data }: { data: AxiomMe }) {
@@ -248,13 +309,13 @@ export function AxiomDashboardPage() {
   const psWords=countWords(statement.problem_statement); const contextWords=countWords(statement.project_context);
   return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/>
     <section className="ax-dash-head"><div><div className="ax-kicker"><CircleDot/> PRIVATE AXIOM WORKSPACE</div><h1>Welcome, <em>{data.display_name.split(' ')[0]}.</em></h1><p>{data.college_email}</p></div><div className="ax-status-pill"><span/><div><small>CURRENT STATUS</small><b>{data.role_choice==='PENDING'?(isCandidate?'Decision required':'Participant roster'):data.role_choice?.replace('_',' ')}</b></div></div></section>
-    <Timeline deadlines={data.deadlines} active={activeStep}/>{error&&<div className="ax-alert"><X/>{error}</div>}
+    <ProjectJourney deadlines={data.deadlines} active={activeStep}/>{error&&<div className="ax-alert"><X/>{error}</div>}
     {isCandidate&&data.role_choice==='PENDING'&&<section className="ax-decision-section ax-scroll"><div className="ax-section-title"><div><span>01 / YOUR DECISION</span><h2>How will you take part?</h2></div><p>Review every path before confirming. Your decision shapes this cycle’s teams.</p></div><div className="ax-choice-grid">
-      <button className={choice==='MENTOR'?'selected':''} onClick={()=>setChoice('MENTOR')}><div><BookOpen/><span>MENTOR</span></div><h3>Frame a challenge worth solving.</h3><p>Propose one research project or product build and guide a compact internal team.</p><small>CREATE THE BRIEF</small></button>
+      <button className={choice==='MENTOR'?'selected':''} onClick={()=>setChoice('MENTOR')}><div><BookOpen/><span>MENTOR</span></div><h3>Frame a challenge worth solving.</h3><p>Propose either one research project or one product build—software or hardware—and guide a compact internal team.</p><small>CREATE THE BRIEF</small></button>
       <button className={choice==='PARTICIPANT'?'selected':''} onClick={()=>setChoice('PARTICIPANT')}><div><FlaskConical/><span>PARTICIPANT</span></div><h3>Bring a solution and build it.</h3><p>Explore projects, rank three and explain what you can contribute.</p><small>JOIN THE WORK</small></button>
       <button className={`opt-out ${choice==='OPTED_OUT'?'selected':''}`} onClick={()=>setChoice('OPTED_OUT')}><div><X/><span>OPT OUT</span></div><h3>Sit out this cycle.</h3><p>Your club access remains safe, but you will not join a project this semester.</p><small>FUTURE CYCLES REMAIN OPEN</small></button>
     </div>{choice&&<div className="ax-confirm-bar"><p><b>Confirm {choice.replace('_',' ').toLowerCase()}?</b> This becomes your Project Axiom path.</p><button disabled={busy} onClick={()=>void confirmChoice()}>{busy?'Saving…':'Confirm decision'} <ArrowRight/></button></div>}</section>}
-    {isMentor&&<section className="ax-editor ax-scroll ax-glass" onPointerMove={interactivePointer}><div className="ax-section-title"><div><span>02 / FRAME THE CHALLENGE</span><h2>Your problem statement.</h2></div><p>Clear enough to begin. Open enough to discover.</p></div><div className="ax-editor-grid"><label>Project title<input value={statement.title} onChange={e=>setStatement({...statement,title:e.target.value})} placeholder="A short, memorable title"/></label><label>Domain<input value={statement.domain} onChange={e=>setStatement({...statement,domain:e.target.value})} placeholder="Data, education, accessibility…"/></label><label className="wide">Project path<select value={statement.project_track} onChange={e=>setStatement({...statement,project_track:e.target.value as 'RESEARCH'|'PRODUCT'})}><option value="RESEARCH">Research — investigate and produce a useful finding</option><option value="PRODUCT">Product — design and create a practical solution</option></select></label><label className="wide">Problem statement<textarea value={statement.problem_statement} onChange={e=>setStatement({...statement,problem_statement:e.target.value})} placeholder="What specific problem should the team solve?"/><small className={psWords>44?'over':''}>{psWords} / 44 words</small></label><label className="wide">Why this matters and what success looks like<textarea value={statement.project_context} onChange={e=>setStatement({...statement,project_context:e.target.value})} placeholder="Explain the club need, constraints and intended outcome."/><small className={contextWords>88?'over':''}>{contextWords} / 88 words</small></label><label className="wide">Helpful skills — not eligibility requirements<input value={statement.helpful_skills} onChange={e=>setStatement({...statement,helpful_skills:e.target.value})} placeholder="Research, frontend, statistics, electronics…"/></label></div><div className="ax-editor-actions"><span><ShieldCheck/> Members accept the originality agreement before reading.</span><button className="ax-secondary" disabled={busy||psWords>44||contextWords>88} onClick={()=>void saveStatement(false)}>Save draft</button><button className="ax-primary compact" disabled={busy||psWords>44||contextWords>88} onClick={()=>void saveStatement(true)}>Submit statement</button></div></section>}
+    {isMentor&&<section className="ax-editor ax-scroll ax-glass" onPointerMove={interactivePointer}><div className="ax-section-title"><div><span>02 / FRAME THE CHALLENGE</span><h2>Your problem statement.</h2></div><p>Choose exactly one path: Research, or Product. A Product may be software or hardware.</p></div><div className="ax-editor-grid"><label>Project title<input value={statement.title} onChange={e=>setStatement({...statement,title:e.target.value})} placeholder="A short, memorable title"/></label><label>Domain<input value={statement.domain} onChange={e=>setStatement({...statement,domain:e.target.value})} placeholder="Data, education, accessibility…"/></label><label className="wide">Project path — choose one<select value={statement.project_track} onChange={e=>setStatement({...statement,project_track:e.target.value as 'RESEARCH'|'PRODUCT'})}><option value="RESEARCH">Research — investigate and produce a useful finding</option><option value="PRODUCT">Product — build a software or hardware solution</option></select></label><label className="wide">Problem statement<textarea value={statement.problem_statement} onChange={e=>setStatement({...statement,problem_statement:e.target.value})} placeholder="What specific problem should the team solve?"/><small className={psWords>44?'over':''}>{psWords} / 44 words</small></label><label className="wide">Why this matters and what success looks like<textarea value={statement.project_context} onChange={e=>setStatement({...statement,project_context:e.target.value})} placeholder="Explain the club need, constraints and intended outcome."/><small className={contextWords>88?'over':''}>{contextWords} / 88 words</small></label><label className="wide">Helpful skills — not eligibility requirements<input value={statement.helpful_skills} onChange={e=>setStatement({...statement,helpful_skills:e.target.value})} placeholder="Research, frontend, statistics, electronics…"/></label></div><div className="ax-editor-actions"><span><ShieldCheck/> Members accept the originality agreement before reading.</span><button className="ax-secondary" disabled={busy||psWords>44||contextWords>88} onClick={()=>void saveStatement(false)}>Save draft</button><button className="ax-primary compact" disabled={busy||psWords>44||contextWords>88} onClick={()=>void saveStatement(true)}>Submit statement</button></div></section>}
     {isParticipant&&<ParticipantWorkspace data={data}/>} {data.role_choice==='OPTED_OUT'&&<section className="ax-member-wait quiet ax-scroll"><Check/><span>DECISION RECORDED</span><h2>You have opted out of this cycle.</h2><p>You can return in a future Project Axiom cycle.</p></section>}
     <PasswordPanel/>
   </main>;
@@ -264,7 +325,7 @@ export function AxiomControlPage() {
   const navigate=useNavigate(); const root=useRef<HTMLElement>(null); useAxiomMotion(root); const [data,setData]=useState<ControlOverview|null>(null); const [error,setError]=useState('');
   useEffect(()=>{request<ControlOverview>('/axiom/control/overview').then(setData).catch(item=>setError(item.message));},[]);
   const ready=useMemo(()=>data?.people.filter(person=>person.role_choice!=='PENDING').length||0,[data]);
-  return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck/> CLUB COUNCIL CONTROL</div><h1>Axiom, <em>at a glance.</em></h1><p>Transparent inputs. Reviewable matching. Human final judgment.</p></div><button className="ax-secondary" onClick={()=>navigate('/')}>Public page</button></section>{error&&<div className="ax-alert"><X/>{error}</div>}{data&&<><section className="ax-stat-grid ax-scroll"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>DECISIONS</small><b>{ready}</b><span>of {data.mentor_candidates} candidates</span></div><div><small>PROJECTS</small><b>{data.submitted_statements}</b><span>submitted statements</span></div><div><small>RESPONSES</small><b>{data.preference_count}</b><span>ranked preferences</span></div></section>
+  return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck/> CLUB COUNCIL CONTROL</div><h1>Axiom, <em>at a glance.</em></h1><p>Transparent inputs. Reviewable matching. Human final judgment.</p></div><button className="ax-secondary" onClick={()=>navigate('/')}>Public page</button></section>{error&&<div className="ax-alert"><X/>{error}</div>}{data&&<><ProjectJourney deadlines={{mentor_decision:'2026-11-01T12:00:00+05:30',statement:'2026-11-02T15:00:00+05:30',preference:'2026-11-03T18:00:00+05:30'}} active={Math.min(3,ready?1:0)}/><section className="ax-stat-grid ax-scroll"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>DECISIONS</small><b>{ready}</b><span>of {data.mentor_candidates} candidates</span></div><div><small>PROJECTS</small><b>{data.submitted_statements}</b><span>submitted statements</span></div><div><small>RESPONSES</small><b>{data.preference_count}</b><span>ranked preferences</span></div></section>
     <section className="ax-matching ax-scroll"><div className="ax-section-title"><div><span>PREFERENCE-FIT PREVIEW</span><h2>A transparent first pass.</h2></div><p>First choices are considered first, normal capacity is three, and only one team may expand to four. Mentor review and Council judgment remain final.</p></div>{data.matching_preview.length===0?<div className="ax-empty-projects"><Orbit/><h3>Waiting for projects and preferences.</h3></div>:<div className="ax-matching-grid">{data.matching_preview.map(team=><article key={team.statement_id}><header><span>{team.track}</span><b>{team.members.length}/3</b></header><h3>{team.title}</h3>{team.members.length?team.members.map(member=><div className="ax-match-person" key={member.name}><span>{member.name.split(' ').map(part=>part[0]).slice(0,2).join('')}</span><b>{member.name}</b><small>Preference {member.preference_rank}</small></div>):<p>No preference fit yet.</p>}</article>)}</div>}</section>
     <section className="ax-roster ax-scroll"><div className="ax-section-title"><div><span>LIVE ROSTER</span><h2>People and decisions.</h2></div><p>Legacy event accounts remain paused.</p></div><div className="ax-roster-table">{data.people.map(person=><article key={person.email}><div className="ax-avatar">{person.name.split(' ').slice(0,2).map(part=>part[0]).join('')}</div><div><b>{person.name}</b><small>{person.email}</small></div><span>{person.roster_type==='MENTOR_CANDIDATE'?'CANDIDATE':'MEMBER'}</span><em className={person.role_choice.toLowerCase()}>{person.role_choice.replace('_',' ')}</em></article>)}</div></section><PasswordPanel/></>}</main>;
 }

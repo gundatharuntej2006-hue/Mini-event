@@ -49,6 +49,23 @@ class AxiomProfile(Base):
     )
 
 
+class AxiomLoginGuard(Base):
+    """Persistent brute-force guard for the private Axiom roster.
+
+    Unlike the short in-memory burst throttle, this state survives API restarts
+    and applies consistently when Render runs more than one worker.
+    """
+
+    __tablename__ = "axiom_login_guards"
+
+    account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), primary_key=True
+    )
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AxiomBootstrapState(Base):
     """Records one-time production roster changes across service restarts."""
 
