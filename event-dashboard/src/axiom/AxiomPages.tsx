@@ -231,8 +231,9 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
     type SkyImpact = { started: number; x: number; y: number; direction: number; scale: number; meteorSide: number; sparks: ImpactSpark[] };
     let impact: SkyImpact | null = null;
     type Star = { x: number; y: number; depth: number; radius: number; phase: number; pulse: number; tone: [number, number, number]; glow: boolean };
+    type Firefly = { x: number; y: number; phase: number; speed: number; radius: number; drift: number };
     type Flight = { x: number; y: number; speed: number; phase: number; direction: number; scale: number; bank: number; delayUntil: number };
-    let stars: Star[] = []; let flights: Flight[] = [];
+    let stars: Star[] = []; let fireflies: Firefly[] = []; let flights: Flight[] = [];
 
     const randomiseFlight = (flight: Flight, time: number, initial = false) => {
       flight.direction = Math.random() > .5 ? 1 : -1;
@@ -297,12 +298,20 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
 
     const paintCloud = (x: number, y: number, scale: number, alpha: number) => {
       context.save(); context.translate(x, y); context.scale(scale, scale);
-      const cloud = context.createLinearGradient(0, -18, 0, 16);
-      cloud.addColorStop(0, `rgba(255,255,255,${alpha})`); cloud.addColorStop(1, `rgba(206,225,239,${alpha * .42})`);
-      context.fillStyle = cloud;
-      [[-28, 5, 21], [-9, -5, 27], [16, -1, 23], [34, 8, 17], [2, 11, 35]].forEach(([cloudX, cloudY, cloudRadius]) => {
-        context.beginPath(); context.arc(cloudX, cloudY, cloudRadius, 0, Math.PI * 2); context.fill();
+      const lobes = [[-34, 7, 19], [-17, -2, 25], [5, -11, 31], [29, -1, 24], [45, 10, 16], [8, 13, 38]];
+      context.filter = 'blur(7px)';
+      context.fillStyle = `rgba(78,126,163,${alpha * .2})`; context.beginPath(); context.ellipse(5, 18, 70, 22, 0, 0, Math.PI * 2); context.fill();
+      context.filter = 'none';
+      lobes.forEach(([cloudX, cloudY, cloudRadius], index) => {
+        const lobe = context.createRadialGradient(cloudX - cloudRadius * .3, cloudY - cloudRadius * .42, cloudRadius * .08, cloudX, cloudY, cloudRadius);
+        lobe.addColorStop(0, `rgba(255,255,255,${alpha * (index === 2 ? 1 : .9)})`);
+        lobe.addColorStop(.58, `rgba(236,246,252,${alpha * .78})`);
+        lobe.addColorStop(1, `rgba(145,181,207,${alpha * .22})`);
+        context.fillStyle = lobe; context.beginPath(); context.arc(cloudX, cloudY, cloudRadius, 0, Math.PI * 2); context.fill();
       });
+      const base = context.createLinearGradient(0, 2, 0, 28); base.addColorStop(0, `rgba(244,251,255,${alpha * .76})`); base.addColorStop(1, `rgba(130,172,204,${alpha * .17})`);
+      context.fillStyle = base; context.beginPath(); context.ellipse(4, 13, 54, 19, 0, 0, Math.PI * 2); context.fill();
+      context.fillStyle = `rgba(255,255,255,${alpha * .16})`; context.beginPath(); context.ellipse(-18, -18, 25, 7, -.13, 0, Math.PI * 2); context.fill();
       context.restore();
     };
 
@@ -316,6 +325,21 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
         const x = leadX + birdX * direction; const y = leadY + birdY;
         const flap = Math.sin(time * .012 + index * 1.7) * 2.4;
         context.beginPath(); context.moveTo(x - 5, y + flap); context.quadraticCurveTo(x - 2, y - 3, x, y); context.quadraticCurveTo(x + 2, y - 3, x + 5, y - flap); context.stroke();
+      });
+    };
+
+    const paintFireflies = (time: number) => {
+      fireflies.forEach((firefly) => {
+        const pulse = Math.max(0, Math.sin(time * .001 * firefly.speed + firefly.phase));
+        const brightness = Math.pow(pulse, 4);
+        if (brightness < .025) return;
+        const x = (firefly.x + Math.sin(time * .00022 + firefly.phase) * firefly.drift) * width;
+        const y = (firefly.y + Math.cos(time * .00017 + firefly.phase * 1.3) * firefly.drift * .65) * height;
+        const haloRadius = firefly.radius * (5.5 + brightness * 4);
+        const halo = context.createRadialGradient(x, y, 0, x, y, haloRadius);
+        halo.addColorStop(0, `rgba(239,255,133,${.92 * brightness})`); halo.addColorStop(.22, `rgba(201,255,90,${.42 * brightness})`); halo.addColorStop(1, 'rgba(174,255,77,0)');
+        context.fillStyle = halo; context.beginPath(); context.arc(x, y, haloRadius, 0, Math.PI * 2); context.fill();
+        context.fillStyle = `rgba(250,255,184,${brightness})`; context.beginPath(); context.arc(x, y, firefly.radius, 0, Math.PI * 2); context.fill();
       });
     };
 
@@ -343,6 +367,11 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
         x: Math.random(), y: Math.random(), depth: .15 + Math.random() * .85,
         radius: .28 + Math.pow(Math.random(), 2.6) * 1.95, phase: Math.random() * Math.PI * 2, pulse: .24 + Math.random() * .68,
         tone: starTones[Math.floor(Math.random() * starTones.length)], glow: Math.random() > .91,
+      }));
+      fireflies = Array.from({ length: width < 700 ? 24 : 38 }, () => ({
+        x: .035 + Math.random() * .93, y: .48 + Math.random() * .34,
+        phase: Math.random() * Math.PI * 2, speed: .65 + Math.random() * 1.4,
+        radius: .75 + Math.random() * 1.25, drift: .004 + Math.random() * .013,
       }));
       flights = Array.from({ length: 3 }, () => ({ x: 0, y: 0, speed: 0, phase: 0, direction: 1, scale: 1, bank: 0, delayUntil: 0 }));
       flights.forEach((flight) => randomiseFlight(flight, performance.now(), true));
@@ -394,7 +423,7 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
         paintSun(width * (.76 + eveningProgress * .12), height * (.63 + eveningProgress * .12), width < 700 ? 15 : 23, .88, 1 - eveningProgress * .22);
         const drift = (time * .000006) % 1;
         paintCloud((-.15 + drift * 1.3) * width, height * .47, width < 700 ? .58 : .88, .24);
-        paintBirdFlock(time, -1, true);
+        paintFireflies(time);
       }
 
       const travel = scrollProgress * 1.65;
