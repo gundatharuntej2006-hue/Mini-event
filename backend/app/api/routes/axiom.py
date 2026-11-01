@@ -25,8 +25,8 @@ from app.models.event_account import EventAccount, EventPasswordVerifier, EventR
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
 IST = ZoneInfo("Asia/Kolkata")
-MENTOR_DECISION_DEADLINE = datetime(2026, 11, 1, 12, 0, tzinfo=IST)
-STATEMENT_DEADLINE = datetime(2026, 11, 2, 15, 0, tzinfo=IST)
+MENTOR_DECISION_DEADLINE = datetime(2026, 11, 2, 12, 0, tzinfo=IST)
+STATEMENT_DEADLINE = datetime(2026, 11, 3, 15, 0, tzinfo=IST)
 PREFERENCE_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
 
 
@@ -206,7 +206,7 @@ def save_participant_preferences(
     if not db.get(AxiomOriginalityAgreement, account.id):
         raise HTTPException(status_code=403, detail="Accept the originality agreement before submitting preferences.")
     if now_ist() < STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Project preferences open on 2 November at 3:00 PM IST.")
+        raise HTTPException(status_code=409, detail="Project preferences open on 3 November at 3:00 PM IST.")
     if now_ist() > PREFERENCE_DEADLINE:
         raise HTTPException(status_code=409, detail="Project preferences closed on 3 November at 6:00 PM IST.")
 
@@ -293,7 +293,7 @@ def choose_role(
     if profile.roster_type != AxiomRosterType.MENTOR_CANDIDATE:
         raise HTTPException(status_code=403, detail="Only mentor candidates make this decision.")
     if now_ist() > MENTOR_DECISION_DEADLINE:
-        raise HTTPException(status_code=409, detail="The mentor decision window closed on 1 November at 12:00 PM IST.")
+        raise HTTPException(status_code=409, detail="The mentor decision window closed on 2 November at 12:00 PM IST.")
     if not payload.confirmed:
         raise HTTPException(status_code=400, detail="Please confirm your final selection.")
     profile.role_choice = AxiomRoleChoice(payload.choice)
@@ -311,7 +311,7 @@ def save_statement(
     if profile.role_choice != AxiomRoleChoice.MENTOR:
         raise HTTPException(status_code=403, detail="Choose the mentor role before creating a problem statement.")
     if now_ist() > STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 2 November at 3:00 PM IST.")
+        raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 3 November at 3:00 PM IST.")
     if word_count(payload.problem_statement) > 44:
         raise HTTPException(status_code=400, detail="The problem statement must be 44 words or fewer.")
     if word_count(payload.project_context) > 88:

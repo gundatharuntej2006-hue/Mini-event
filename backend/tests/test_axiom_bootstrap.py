@@ -196,7 +196,7 @@ def test_participant_accepts_agreement_and_saves_ranked_project_response(
         project_context="Create a small, maintainable prototype that helps future teams find what already exists and understand why earlier choices were made.",
         helpful_skills="Research, interface design, writing",
         status=AxiomStatementStatus.SUBMITTED,
-        submitted_at=datetime(2026, 11, 2, 15, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        submitted_at=datetime(2026, 11, 3, 15, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
     )
     db_session.add(statement)
     db_session.commit()
@@ -213,7 +213,7 @@ def test_participant_accepts_agreement_and_saves_ranked_project_response(
     monkeypatch.setattr(
         axiom_routes,
         "now_ist",
-        lambda: datetime(2026, 11, 2, 16, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        lambda: datetime(2026, 11, 3, 16, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
     )
     projects = client.get("/api/v1/axiom/projects", headers=headers)
     assert projects.status_code == 200
