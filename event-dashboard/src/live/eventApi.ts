@@ -2,9 +2,32 @@ const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').r
 const sessionKey = 'asymptotes_live_session';
 
 const retryDelaysMs = [0, 1000, 2000, 4000, 6000];
+let backendWarmup: Promise<void> | null = null;
 
 function delay(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
+}
+
+/**
+ * Wake Render and open the database connection while the visitor is reading
+ * the landing/login screen. This removes the cold-start wait from the moment
+ * they press Continue without weakening password hashing or authentication.
+ */
+export function warmBackend(): Promise<void> {
+  if (backendWarmup) return backendWarmup;
+  backendWarmup = fetchWithRecovery(`${apiBase}/api/v1/health`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  }, true, 45_000)
+    .then(response => {
+      if (!response.ok) throw new Error(`Warm-up returned ${response.status}.`);
+    })
+    .catch(() => {
+      // Warm-up is an optimization. A failed probe must never prevent login;
+      // allow a later page view to try again.
+      backendWarmup = null;
+    });
+  return backendWarmup;
 }
 
 /**

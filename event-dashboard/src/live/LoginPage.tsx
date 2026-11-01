@@ -1,8 +1,8 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { KeyRound, LockKeyhole, ArrowRight, AlertCircle, Atom } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Mark, LiveShell } from './LiveShell';
-import { signIn } from './eventApi';
+import { signIn, warmBackend } from './eventApi';
 
 export function LoginPage() {
   const [loginId, setLoginId] = useState('');
@@ -10,6 +10,9 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  useEffect(() => {
+    void warmBackend();
+  }, []);
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setLoading(true);
     try {
