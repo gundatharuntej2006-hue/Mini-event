@@ -4,14 +4,10 @@ import {
   ChevronRight, CircleDot, FileText, FlaskConical, History, Layers3,
   LockKeyhole, LogOut, MoveRight, Orbit, ShieldCheck, Sparkles, X,
 } from 'lucide-react';
-import { gsap } from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
 import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
 import earthNightLights from '../assets/earth-night-lights-nasa.jpg';
-
-gsap.registerPlugin(ScrollTrigger);
 
 type Deadlines = { mentor_decision: string; statement: string; preference: string };
 type Statement = {
@@ -62,7 +58,13 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
   useEffect(() => {
     const element = root.current;
     if (!element || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const context = gsap.context(() => {
+    let disposed = false;
+    let teardown = () => {};
+    void Promise.all([import('gsap'), import('gsap/ScrollTrigger')]).then(([gsapModule, triggerModule]) => {
+      if (disposed) return;
+      const gsap = gsapModule.gsap;
+      gsap.registerPlugin(triggerModule.ScrollTrigger);
+      const context = gsap.context(() => {
       const heroItems = element.querySelectorAll('.ax-hero-copy > *');
       const orbitStage = element.querySelector('.ax-orbit-stage');
       if (heroItems.length) gsap.fromTo(heroItems, { y: 34, opacity: 0 }, { y: 0, opacity: 1, duration: 1.05, stagger: .1, ease: 'power3.out' });
@@ -94,20 +96,22 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
           if (morph) supernatural.to(path, { attr: { d: morph }, strokeWidth: index % 2 ? 2.6 : 3.35, ease: 'none' }, 0);
         });
       }
-    }, element);
+      }, element);
 
-    const magnetic = [...element.querySelectorAll<HTMLElement>('.ax-primary,.ax-secondary,.ax-header nav button')];
-    const cleanups = magnetic.map((button) => {
-      const move = (event: PointerEvent) => {
-        if (event.pointerType === 'touch') return;
-        const box = button.getBoundingClientRect();
-        gsap.to(button, { x: (event.clientX - box.left - box.width / 2) * .13, y: (event.clientY - box.top - box.height / 2) * .18, duration: .25, overwrite: true });
-      };
-      const leave = () => gsap.to(button, { x: 0, y: 0, duration: .55, ease: 'elastic.out(1,.4)' });
-      button.addEventListener('pointermove', move); button.addEventListener('pointerleave', leave);
-      return () => { button.removeEventListener('pointermove', move); button.removeEventListener('pointerleave', leave); };
+      const magnetic = [...element.querySelectorAll<HTMLElement>('.ax-primary,.ax-secondary,.ax-header nav button')];
+      const cleanups = magnetic.map((button) => {
+        const move = (event: PointerEvent) => {
+          if (event.pointerType === 'touch') return;
+          const box = button.getBoundingClientRect();
+          gsap.to(button, { x: (event.clientX - box.left - box.width / 2) * .13, y: (event.clientY - box.top - box.height / 2) * .18, duration: .25, overwrite: true });
+        };
+        const leave = () => gsap.to(button, { x: 0, y: 0, duration: .55, ease: 'elastic.out(1,.4)' });
+        button.addEventListener('pointermove', move); button.addEventListener('pointerleave', leave);
+        return () => { button.removeEventListener('pointermove', move); button.removeEventListener('pointerleave', leave); };
+      });
+      teardown = () => { cleanups.forEach(fn => fn()); context.revert(); };
     });
-    return () => { cleanups.forEach(fn => fn()); context.revert(); };
+    return () => { disposed = true; teardown(); };
   }, [root]);
 }
 
@@ -220,10 +224,13 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
-    const context = canvas?.getContext('2d');
+    const context = canvas?.getContext('2d', { alpha: false, desynchronized: true });
     if (!canvas || !context) return;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0;
+    const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
+    const lowPower = navigator.hardwareConcurrency <= 4 || memory <= 4;
+    const frameInterval = lowPower ? 50 : 33;
+    let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0; let pageVisible = !document.hidden;
     let skyClock = getSkyClock(mode); let lastClockUpdate = 0;
     let nextMeteor = performance.now() + 1400 + Math.random() * 4200;
     let meteor: { started: number; x: number; y: number; dx: number; dy: number; length: number; duration: number; brightness: number; twin: boolean } | null = null;
@@ -357,12 +364,12 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
     };
 
     const buildField = () => {
-      ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+      ratio = Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.25);
       width = window.innerWidth; height = window.innerHeight;
       canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
       canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      const count = width < 700 ? 125 : 220;
+      const count = width < 700 ? (lowPower ? 80 : 110) : (lowPower ? 135 : 190);
       const starTones: Array<[number, number, number]> = [[217, 232, 255], [244, 247, 255], [255, 239, 211], [203, 222, 255]];
       stars = Array.from({ length: count }, () => ({
         x: Math.random(), y: Math.random(), depth: .15 + Math.random() * .85,
@@ -382,7 +389,9 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
       scrollProgress = Math.min(1, Math.max(0, window.scrollY / available));
     };
     const draw = (time: number) => {
-      if (!reduceMotion && time - lastPaint < 33) { frame = window.requestAnimationFrame(draw); return; }
+      frame = 0;
+      if (!pageVisible) return;
+      if (!reduceMotion && time - lastPaint < frameInterval) { frame = window.requestAnimationFrame(draw); return; }
       lastPaint = time;
       if (time - lastClockUpdate > 30000) { skyClock = getSkyClock(mode); lastClockUpdate = time; }
       const { phase, minutes } = skyClock;
@@ -545,10 +554,16 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
       }
       if (!reduceMotion) frame = window.requestAnimationFrame(draw);
     };
+    const updateVisibility = () => {
+      pageVisible = !document.hidden;
+      if (pageVisible && !reduceMotion && !frame) frame = window.requestAnimationFrame(draw);
+      if (!pageVisible && frame) { window.cancelAnimationFrame(frame); frame = 0; }
+    };
     buildField(); updateScroll();
     window.addEventListener('resize', buildField); window.addEventListener('scroll', updateScroll, { passive: true });
+    document.addEventListener('visibilitychange', updateVisibility);
     frame = window.requestAnimationFrame(draw);
-    return () => { window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); };
+    return () => { window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); document.removeEventListener('visibilitychange', updateVisibility); };
   }, [mode]);
   return <canvas ref={canvasRef} className="ax-night-canvas" aria-hidden="true"/>;
 }

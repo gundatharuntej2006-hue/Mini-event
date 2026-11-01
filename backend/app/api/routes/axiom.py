@@ -165,14 +165,15 @@ def participant_projects(
     window_open = now_ist() >= STATEMENT_DEADLINE
     statements = []
     if agreement and window_open:
-        submitted = db.query(AxiomProblemStatement).filter(
+        submitted = db.query(AxiomProblemStatement, AxiomProfile.full_name).join(
+            AxiomProfile, AxiomProfile.account_id == AxiomProblemStatement.mentor_account_id
+        ).filter(
             AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED
         ).order_by(AxiomProblemStatement.title).all()
-        for statement in submitted:
-            mentor = db.get(AxiomProfile, statement.mentor_account_id)
+        for statement, mentor_name in submitted:
             statements.append({
                 "id": statement.id,
-                "mentor_name": mentor.full_name if mentor else "Project mentor",
+                "mentor_name": mentor_name or "Project mentor",
                 **(statement_data(statement) or {}),
             })
     preferences = db.query(AxiomProjectPreference).filter(

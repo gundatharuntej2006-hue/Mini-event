@@ -1,17 +1,34 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { LoginPage } from '../live/LoginPage';
-import { ParticipantEntryPage } from '../live/ParticipantEntryPage';
-import { AdminPage, SuperAdminPage } from '../live/StaffPagesV2';
-import { ResultsPage } from '../live/PublicPages';
-import { AxiomControlPage, AxiomDashboardPage, AxiomLandingPage, PastEventsPage } from '../axiom/AxiomPages';
-import { AccountManagementPage } from '../live/AccountManagementPage';
-import { Round2AdminPage, Round2SuperPage } from '../live/Round2Pages';
-import { Round3SuperPage } from '../live/Round3Pages';
-import { Round3PuzzleDemoPage, Round3PuzzleParticipantPage, Round3PuzzleStationPage } from '../live/Round3PuzzlePages';
+import { lazy, Suspense, type ComponentType } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+
+function lazyNamed<T extends Record<string, ComponentType<object>>>(loader: () => Promise<T>, name: keyof T) {
+  return lazy(async () => ({ default: (await loader())[name] }));
+}
+
+const LoginPage = lazyNamed(() => import('../live/LoginPage'), 'LoginPage');
+const ParticipantEntryPage = lazyNamed(() => import('../live/ParticipantEntryPage'), 'ParticipantEntryPage');
+const AdminPage = lazyNamed(() => import('../live/StaffPagesV2'), 'AdminPage');
+const SuperAdminPage = lazyNamed(() => import('../live/StaffPagesV2'), 'SuperAdminPage');
+const ResultsPage = lazyNamed(() => import('../live/PublicPages'), 'ResultsPage');
+const AxiomLandingPage = lazyNamed(() => import('../axiom/AxiomPages'), 'AxiomLandingPage');
+const AxiomDashboardPage = lazyNamed(() => import('../axiom/AxiomPages'), 'AxiomDashboardPage');
+const AxiomControlPage = lazyNamed(() => import('../axiom/AxiomPages'), 'AxiomControlPage');
+const PastEventsPage = lazyNamed(() => import('../axiom/AxiomPages'), 'PastEventsPage');
+const AccountManagementPage = lazyNamed(() => import('../live/AccountManagementPage'), 'AccountManagementPage');
+const Round2SuperPage = lazyNamed(() => import('../live/Round2Pages'), 'Round2SuperPage');
+const Round2AdminPage = lazyNamed(() => import('../live/Round2Pages'), 'Round2AdminPage');
+const Round3SuperPage = lazyNamed(() => import('../live/Round3Pages'), 'Round3SuperPage');
+const Round3PuzzleParticipantPage = lazyNamed(() => import('../live/Round3PuzzlePages'), 'Round3PuzzleParticipantPage');
+const Round3PuzzleStationPage = lazyNamed(() => import('../live/Round3PuzzlePages'), 'Round3PuzzleStationPage');
+const Round3PuzzleDemoPage = lazyNamed(() => import('../live/Round3PuzzlePages'), 'Round3PuzzleDemoPage');
+
+function RouteFallback() {
+  return <main className="route-loading" aria-live="polite"><span />Opening workspace…</main>;
+}
 
 export function AppRoutes() {
   return (
-    <Routes>
+    <Suspense fallback={<RouteFallback />}><Routes>
       <Route path="/" element={<AxiomLandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/axiom" element={<AxiomDashboardPage />} />
@@ -31,6 +48,6 @@ export function AppRoutes() {
       <Route path="/round3/games/*" element={<Navigate to="/round3/play" replace />} />
       <Route path="/results" element={<ResultsPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    </Routes></Suspense>
   );
 }
