@@ -16,12 +16,14 @@ from app.services.auth_service import ensure_default_organizer
 from app.services.dashboard_service import get_or_create_settings
 from app.db.seed_production_roster import seed_production_roster
 from app.services.axiom_bootstrap_service import provision_axiom_accounts
+from app.db.axiom_schema import upgrade_axiom_statement_schema
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize DB schema
     Base.metadata.create_all(bind=engine)
+    upgrade_axiom_statement_schema(engine)
     # Seed default organizer, settings, and authoritative tournament roster
     with SessionLocal() as db:
         ensure_default_organizer(db)

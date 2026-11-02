@@ -85,11 +85,18 @@ class AxiomStatementStatus(str, enum.Enum):
 
 class AxiomProblemStatement(Base):
     __tablename__ = "axiom_problem_statements"
+    __table_args__ = (
+        # A team lead may present two alternatives, but each numbered slot is
+        # still unique for that author.  The previous schema allowed only one
+        # statement per mentor account.
+        UniqueConstraint("mentor_account_id", "statement_slot", name="uq_axiom_statement_author_slot"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     mentor_account_id: Mapped[str] = mapped_column(
-        String(40), ForeignKey("event_accounts.id"), unique=True, index=True, nullable=False
+        String(40), ForeignKey("event_accounts.id"), index=True, nullable=False
     )
+    statement_slot: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     title: Mapped[str] = mapped_column(String(140), nullable=False)
     domain: Mapped[str] = mapped_column(String(100), nullable=False)
     project_track: Mapped[str] = mapped_column(String(20), nullable=False, default="RESEARCH")

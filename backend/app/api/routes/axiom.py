@@ -28,6 +28,7 @@ IST = ZoneInfo("Asia/Kolkata")
 MENTOR_DECISION_DEADLINE = datetime(2026, 11, 2, 12, 0, tzinfo=IST)
 STATEMENT_DEADLINE = datetime(2026, 11, 3, 15, 0, tzinfo=IST)
 PREFERENCE_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
+TEAM_FINALIZATION_DEADLINE = datetime(2026, 11, 4, 15, 0, tzinfo=IST)
 
 
 class RoleChoiceInput(BaseModel):
@@ -96,6 +97,8 @@ def statement_data(statement: AxiomProblemStatement | None) -> dict | None:
     if not statement:
         return None
     return {
+        "id": statement.id,
+        "statement_slot": statement.statement_slot,
         "title": statement.title,
         "domain": statement.domain,
         "project_track": statement.project_track,
@@ -105,6 +108,48 @@ def statement_data(statement: AxiomProblemStatement | None) -> dict | None:
         "status": statement.status.value,
         "submitted_at": statement.submitted_at.isoformat() if statement.submitted_at else None,
     }
+
+
+def deadlines_data() -> dict[str, str]:
+    return {
+        "mentor_decision": MENTOR_DECISION_DEADLINE.isoformat(),
+        "statement": STATEMENT_DEADLINE.isoformat(),
+        "preference": PREFERENCE_DEADLINE.isoformat(),
+        "team_finalization": TEAM_FINALIZATION_DEADLINE.isoformat(),
+    }
+
+
+def statement_for_author_slot(db: Session, account_id: str, slot: int) -> AxiomProblemStatement | None:
+    return db.query(AxiomProblemStatement).filter(
+        AxiomProblemStatement.mentor_account_id == account_id,
+        AxiomProblemStatement.statement_slot == slot,
+    ).first()
+
+
+def save_statement_for_author(
+    *, db: Session, account: EventAccount, payload: StatementInput, slot: int
+) -> AxiomProblemStatement:
+    if word_count(payload.problem_statement) > 44:
+        raise HTTPException(status_code=400, detail="The problem statement must be 44 words or fewer.")
+    if word_count(payload.project_context) > 88:
+        raise HTTPException(status_code=400, detail="The project explanation must be 88 words or fewer.")
+    statement = statement_for_author_slot(db, account.id, slot)
+    if not statement:
+        statement = AxiomProblemStatement(
+            id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id, statement_slot=slot
+        )
+        db.add(statement)
+    statement.title = payload.title.strip()
+    statement.domain = payload.domain.strip()
+    statement.project_track = payload.project_track
+    statement.problem_statement = payload.problem_statement.strip()
+    statement.project_context = payload.project_context.strip()
+    statement.helpful_skills = payload.helpful_skills.strip()
+    statement.status = AxiomStatementStatus.SUBMITTED if payload.submit else AxiomStatementStatus.DRAFT
+    statement.submitted_at = now_ist() if payload.submit else None
+    db.commit()
+    db.refresh(statement)
+    return statement
 
 
 @router.post("/password")
@@ -173,7 +218,7 @@ def participant_projects(
         for statement, mentor_name in submitted:
             statements.append({
                 "id": statement.id,
-                "mentor_name": mentor_name or "Project mentor",
+                "team_lead_name": mentor_name or "Project team lead",
                 **(statement_data(statement) or {}),
             })
     preferences = db.query(AxiomProjectPreference).filter(
@@ -185,6 +230,7 @@ def participant_projects(
             "agreement_accepted": bool(agreement),
             "window_open": window_open,
             "window_closed": now_ist() > PREFERENCE_DEADLINE,
+            "team_finalization_deadline": TEAM_FINALIZATION_DEADLINE.isoformat(),
             "projects": statements,
             "preferences": [{
                 "statement_id": item.statement_id,
@@ -253,18 +299,16 @@ def me(account: EventAccount = Depends(current_account), db: Session = Depends(g
                 "display_name": account.display_name,
                 "is_super_admin": True,
                 "deadlines": {
-                    "mentor_decision": MENTOR_DECISION_DEADLINE.isoformat(),
-                    "statement": STATEMENT_DEADLINE.isoformat(),
-                    "preference": PREFERENCE_DEADLINE.isoformat(),
+                    **deadlines_data(),
                 },
             },
             "message": "Project Axiom control account loaded.",
         }
 
     profile = profile_for(db, account)
-    statement = db.query(AxiomProblemStatement).filter(
+    statements = db.query(AxiomProblemStatement).filter(
         AxiomProblemStatement.mentor_account_id == account.id
-    ).first()
+    ).order_by(AxiomProblemStatement.statement_slot).all()
     return {
         "success": True,
         "data": {
@@ -273,12 +317,10 @@ def me(account: EventAccount = Depends(current_account), db: Session = Depends(g
             "roster_type": profile.roster_type.value,
             "role_choice": profile.role_choice.value,
             "must_change_password": profile.must_change_password,
-            "statement": statement_data(statement),
-            "deadlines": {
-                "mentor_decision": MENTOR_DECISION_DEADLINE.isoformat(),
-                "statement": STATEMENT_DEADLINE.isoformat(),
-                "preference": PREFERENCE_DEADLINE.isoformat(),
-            },
+            # `statement` is retained for older browsers during the rollout.
+            "statement": statement_data(statements[0]) if statements else None,
+            "statements": [statement_data(statement) for statement in statements],
+            "deadlines": deadlines_data(),
         },
         "message": "Project Axiom profile loaded.",
     }
@@ -292,9 +334,9 @@ def choose_role(
 ):
     profile = profile_for(db, account)
     if profile.roster_type != AxiomRosterType.MENTOR_CANDIDATE:
-        raise HTTPException(status_code=403, detail="Only mentor candidates make this decision.")
+        raise HTTPException(status_code=403, detail="Only team-lead candidates make this decision.")
     if now_ist() > MENTOR_DECISION_DEADLINE:
-        raise HTTPException(status_code=409, detail="The mentor decision window closed on 2 November at 12:00 PM IST.")
+        raise HTTPException(status_code=409, detail="The team-lead decision window has closed. You are now in the participant pool.")
     if not payload.confirmed:
         raise HTTPException(status_code=400, detail="Please confirm your final selection.")
     profile.role_choice = AxiomRoleChoice(payload.choice)
@@ -302,40 +344,40 @@ def choose_role(
     return {"success": True, "data": {"role_choice": profile.role_choice.value}, "message": "Your Project Axiom decision has been saved."}
 
 
-@router.put("/mentor/statement")
-def save_statement(
+@router.put("/team-lead/statements/{slot}")
+def save_team_lead_statement(
+    slot: int,
     payload: StatementInput,
     account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
     db: Session = Depends(get_db),
 ):
     profile = profile_for(db, account)
+    if slot not in (1, 2):
+        raise HTTPException(status_code=400, detail="A team lead may create only statement 1 or statement 2.")
     if profile.role_choice != AxiomRoleChoice.MENTOR:
-        raise HTTPException(status_code=403, detail="Choose the mentor role before creating a problem statement.")
+        raise HTTPException(status_code=403, detail="Only confirmed team leads can create team-lead problem statements.")
     if now_ist() > STATEMENT_DEADLINE:
         raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 3 November at 3:00 PM IST.")
-    if word_count(payload.problem_statement) > 44:
-        raise HTTPException(status_code=400, detail="The problem statement must be 44 words or fewer.")
-    if word_count(payload.project_context) > 88:
-        raise HTTPException(status_code=400, detail="The project explanation must be 88 words or fewer.")
-    statement = db.query(AxiomProblemStatement).filter(
-        AxiomProblemStatement.mentor_account_id == account.id
-    ).first()
-    if not statement:
-        statement = AxiomProblemStatement(
-            id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id
-        )
-        db.add(statement)
-    statement.title = payload.title.strip()
-    statement.domain = payload.domain.strip()
-    statement.project_track = payload.project_track
-    statement.problem_statement = payload.problem_statement.strip()
-    statement.project_context = payload.project_context.strip()
-    statement.helpful_skills = payload.helpful_skills.strip()
-    statement.status = AxiomStatementStatus.SUBMITTED if payload.submit else AxiomStatementStatus.DRAFT
-    statement.submitted_at = now_ist() if payload.submit else None
-    db.commit()
-    db.refresh(statement)
+    statement = save_statement_for_author(db=db, account=account, payload=payload, slot=slot)
     return {"success": True, "data": statement_data(statement), "message": "Problem statement submitted." if payload.submit else "Draft saved."}
+
+
+@router.put("/participant/statement")
+def save_participant_statement(
+    payload: StatementInput,
+    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
+    db: Session = Depends(get_db),
+):
+    """A participant may launch one project call and become its provisional lead."""
+    participant_profile_for(db, account)
+    if now_ist() > STATEMENT_DEADLINE:
+        raise HTTPException(status_code=409, detail="Project-call submissions closed on 3 November at 3:00 PM IST.")
+    statement = save_statement_for_author(db=db, account=account, payload=payload, slot=1)
+    return {
+        "success": True,
+        "data": statement_data(statement),
+        "message": "Your project call is live. Participants can now rank it as a preference.",
+    }
 
 
 @router.get("/control/overview")
@@ -411,6 +453,7 @@ def control_overview(
                 "statement_id": project.id,
                 "title": project.title,
                 "track": project.project_track,
+                "team_lead_name": db.get(AxiomProfile, project.mentor_account_id).full_name if db.get(AxiomProfile, project.mentor_account_id) else "Project team lead",
                 "members": assignments.get(project.id, []),
             } for project in submitted_projects],
             "people": people,

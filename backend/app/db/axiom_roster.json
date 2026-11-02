@@ -1,5 +1,5 @@
 {
-  "version": "axiom-roster-2026-10-25-v1",
+  "version": "axiom-roster-2026-11-02-v2",
   "super_admin": {
     "login_id": "SUPER01",
     "display_name": "Project Axiom Super Admin",
@@ -13,7 +13,7 @@
     {"name":"Vishal Athreya","email":"24ug1byai149@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$lrBP9VSGk5Kid30/GtCi5uYD9zEEyR1olXlOlL7Cdy9AweQ2jAlES"},
     {"name":"Sushma Gouda","email":"24ug1bycs713@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$Z9EbDZKPDY54gsylRW.uS.SpMfeyO7CHnkjpXWRUqT6tzmtm5goq6"},
     {"name":"Azman Shaikh","email":"24ug1bycs809@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$Y5QNdFWUyS5f3ozCZojAd.RDoftQSp0mfVNGEx7O2dQ5SQeB58xga"},
-    {"name":"G Tharun Tej","email":"24ug1byai038@bmsit.in","roster_type":"MENTOR_CANDIDATE","password_hash":"$2b$12$.uEbUNLA.db1ogfPFSJgl.y6yE7lP8G/Hp9/Bd8ngwCychaPcLWp2"},
+    {"name":"G Tharun Tej","email":"24ug1byai038@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$.uEbUNLA.db1ogfPFSJgl.y6yE7lP8G/Hp9/Bd8ngwCychaPcLWp2"},
 
     {"name":"Ayush Kumar","email":"24ug1byai049@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$5Cj9oHuIg2AeV5rAWIyQc.YG2k4eKrnhS4oyK4WmWeVw5GQUJXbMC"},
     {"name":"Anjali Sagar","email":"24ug1byai093@bmsit.in","roster_type":"MEMBER","password_hash":"$2b$12$qezzsYDCYXczStbf4snPBuzMYcT91VZcXa0I44l3b67dmicCzTgEe"},

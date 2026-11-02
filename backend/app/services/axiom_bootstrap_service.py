@@ -96,6 +96,12 @@ def provision_axiom_accounts(db: Session) -> dict:
         profile.roster_type = AxiomRosterType(person["roster_type"])
         profile.is_program_active = True
 
+        # The decision window has closed.  Anyone who did not make a choice
+        # joins the participant pool.  The roster can also explicitly place a
+        # person in that pool (used for Tharun Tej for this cycle).
+        if profile.roster_type == AxiomRosterType.MEMBER or profile.role_choice == AxiomRoleChoice.PENDING:
+            profile.role_choice = AxiomRoleChoice.PARTICIPANT
+
     # Anyone removed from the approved Axiom roster remains in historical
     # event records but has no current programme access.
     for profile in db.query(AxiomProfile).all():

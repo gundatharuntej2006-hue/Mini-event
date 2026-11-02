@@ -26,8 +26,8 @@ def test_axiom_roster_contains_only_approved_club_members():
     assert len(names) == 24
     assert len(emails) == 24
     assert "Archisha Gupta" not in names
-    assert sum(item["roster_type"] == "MENTOR_CANDIDATE" for item in roster["people"]) == 8
-    assert sum(item["roster_type"] == "MEMBER" for item in roster["people"]) == 16
+    assert sum(item["roster_type"] == "MENTOR_CANDIDATE" for item in roster["people"]) == 7
+    assert sum(item["roster_type"] == "MEMBER" for item in roster["people"]) == 17
 
 
 def test_provisioning_pauses_legacy_accounts_and_keeps_super01(db_session):
@@ -70,14 +70,17 @@ def test_provisioning_pauses_legacy_accounts_and_keeps_super01(db_session):
 
     profiles = db_session.query(AxiomProfile).all()
     assert len(profiles) == 24
-    assert sum(p.roster_type == AxiomRosterType.MENTOR_CANDIDATE for p in profiles) == 8
-    assert sum(p.roster_type == AxiomRosterType.MEMBER for p in profiles) == 16
+    assert sum(p.roster_type == AxiomRosterType.MENTOR_CANDIDATE for p in profiles) == 7
+    assert sum(p.roster_type == AxiomRosterType.MEMBER for p in profiles) == 17
     assert all("archisha" not in p.full_name.lower() for p in profiles)
 
     tharun = db_session.query(EventAccount).filter(
         EventAccount.login_id == "24UG1BYAI038@BMSIT.IN"
     ).one()
     assert verify_password("9030847016", tharun.password_hash)
+    tharun_profile = db_session.get(AxiomProfile, tharun.id)
+    assert tharun_profile.roster_type == AxiomRosterType.MEMBER
+    assert tharun_profile.role_choice == AxiomRoleChoice.PARTICIPANT
 
 
 def test_provisioning_is_idempotent(db_session):
@@ -236,3 +239,39 @@ def test_participant_accepts_agreement_and_saves_ranked_project_response(
     assert preference.participant_account_id == account.id
     assert preference.statement_id == statement.id
     assert preference.preference_rank == 1
+
+
+def test_team_lead_can_submit_two_briefs_and_participant_can_publish_one_call(
+    monkeypatch, client, db_session
+):
+    import app.api.routes.axiom as axiom_routes
+
+    provision_axiom_accounts(db_session)
+    lead = db_session.query(AxiomProfile).filter(
+        AxiomProfile.roster_type == AxiomRosterType.MENTOR_CANDIDATE
+    ).first()
+    participant = db_session.query(AxiomProfile).filter(
+        AxiomProfile.roster_type == AxiomRosterType.MEMBER
+    ).first()
+    assert lead is not None and participant is not None
+    lead.role_choice = AxiomRoleChoice.MENTOR
+    db_session.commit()
+    monkeypatch.setattr(
+        axiom_routes, "now_ist", lambda: datetime(2026, 11, 3, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    )
+    lead_headers = {"Authorization": f"Bearer {create_access_token(subject=lead.account_id, role='PARTICIPANT')}"}
+    participant_headers = {"Authorization": f"Bearer {create_access_token(subject=participant.account_id, role='PARTICIPANT')}"}
+    payload = {
+        "title": "Club Knowledge Map", "domain": "Education", "project_track": "PRODUCT",
+        "problem_statement": "Build a searchable, maintainable map of the club's reusable knowledge and project decisions.",
+        "project_context": "Create a focused internal prototype that helps future members discover prior work, decisions, and useful assets without losing institutional memory.",
+        "helpful_skills": "Research, interface design", "submit": True,
+    }
+    assert client.put("/api/v1/axiom/team-lead/statements/1", headers=lead_headers, json=payload).status_code == 200
+    payload["title"] = "Accessibility Toolkit"
+    assert client.put("/api/v1/axiom/team-lead/statements/2", headers=lead_headers, json=payload).status_code == 200
+    payload["title"] = "Participant Innovation Call"
+    response = client.put("/api/v1/axiom/participant/statement", headers=participant_headers, json=payload)
+    assert response.status_code == 200, response.json()
+    assert db_session.query(AxiomProblemStatement).filter(AxiomProblemStatement.mentor_account_id == lead.account_id).count() == 2
+    assert db_session.query(AxiomProblemStatement).filter(AxiomProblemStatement.mentor_account_id == participant.account_id).count() == 1
