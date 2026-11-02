@@ -218,7 +218,7 @@ def participant_projects(
         for statement, mentor_name in submitted:
             statements.append({
                 "id": statement.id,
-                "team_lead_name": mentor_name or "Project team lead",
+                "publisher_name": mentor_name or "Project publisher",
                 **(statement_data(statement) or {}),
             })
     preferences = db.query(AxiomProjectPreference).filter(
