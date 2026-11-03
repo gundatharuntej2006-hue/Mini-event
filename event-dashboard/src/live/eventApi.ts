@@ -15,19 +15,20 @@ function delay(ms: number) {
  */
 export function warmBackend(): Promise<void> {
   if (backendWarmup) return backendWarmup;
-  backendWarmup = fetchWithRecovery(`${apiBase}/api/v1/health`, {
+  backendWarmup = waitForBackendReady().catch(() => {
+    // Warm-up is an optimization. Keep the landing page usable if a probe
+    // fails; the sign-in flow will run its own confirmed preflight below.
+    backendWarmup = null;
+  });
+  return backendWarmup;
+}
+
+async function waitForBackendReady(): Promise<void> {
+  const response = await fetchWithRecovery(`${apiBase}/api/v1/health`, {
     method: 'GET',
     headers: { Accept: 'application/json' },
-  }, true, 45_000)
-    .then(response => {
-      if (!response.ok) throw new Error(`Warm-up returned ${response.status}.`);
-    })
-    .catch(() => {
-      // Warm-up is an optimization. A failed probe must never prevent login;
-      // allow a later page view to try again.
-      backendWarmup = null;
-    });
-  return backendWarmup;
+  }, true, 60_000);
+  if (!response.ok) throw new Error(`Warm-up returned ${response.status}.`);
 }
 
 /**
@@ -95,13 +96,22 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
 }
 
 export async function signIn(loginId: string, password: string): Promise<LoginResult> {
+  // Do not race the password request against Render waking or recovering.
+  // A health-confirmed API lets the non-replayable login POST stay safe while
+  // preventing the user from seeing a timeout during a deployment/cold start.
+  if (backendWarmup) await backendWarmup;
+  try {
+    await waitForBackendReady();
+  } catch {
+    throw new Error('The workspace server is still starting. Please wait a moment and try again.');
+  }
   const response = await fetchWithRecovery(`${apiBase}/api/v1/r1/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login_id: loginId, password }),
   // Never automatically replay a password POST. During a venue-wide login
   // burst the first request can still be completing after the browser aborts;
   // retries amplify CPU load and can consume duplicate team-device sessions.
   // A longer single attempt gives the server's bounded verifier time to finish.
-  }, false, 90_000);
+  }, false, 120_000);
   const json = await response.json().catch(() => null);
   if (!response.ok || !json?.success) throw new Error(json?.message || 'Incorrect ID or password.');
   if (json.data.redirect === 'instagram') return { redirect: 'instagram', message: json.message || 'Round 1 has ended for this team.' };

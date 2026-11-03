@@ -82,9 +82,15 @@ def provision_axiom_accounts(db: Session) -> dict:
         account.is_active = True
         db.flush()
 
-        db.query(EventPasswordVerifier).filter(
-            EventPasswordVerifier.account_id == account.id
-        ).delete(synchronize_session=False)
+        # Keep the fast verifier after an account has been activated. Removing
+        # every verifier on a harmless roster metadata refresh forces the whole
+        # club through serial bcrypt checks at the next login burst.
+        # A verifier is only invalidated when this bootstrap actually replaces
+        # the account's initial password.
+        if should_apply_initial_password:
+            db.query(EventPasswordVerifier).filter(
+                EventPasswordVerifier.account_id == account.id
+            ).delete(synchronize_session=False)
 
         if not profile:
             profile = AxiomProfile(account_id=account.id)
