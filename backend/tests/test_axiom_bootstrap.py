@@ -200,10 +200,15 @@ def test_signed_access_open_projects_and_publisher_controlled_selection(monkeypa
         "problem_statement": "Build a searchable, maintainable map of the club's reusable knowledge and project decisions.",
         "project_context": "Create a focused internal prototype that helps future members discover prior work, decisions, and useful assets without losing institutional memory.",
         "helpful_skills": "Research, interface design", "submit": True,
+        "client_request_id": "publish-request-00000001",
     }
     first = client.post("/api/v1/axiom/projects", headers=publisher_headers, json=payload)
     assert first.status_code == 200, first.json()
+    retry = client.post("/api/v1/axiom/projects", headers=publisher_headers, json=payload)
+    assert retry.status_code == 200, retry.json()
+    assert retry.json()["data"]["id"] == first.json()["data"]["id"]
     payload["title"] = "Accessibility Toolkit"
+    payload["client_request_id"] = "publish-request-00000002"
     assert client.post("/api/v1/axiom/projects", headers=publisher_headers, json=payload).status_code == 200
     project_id = first.json()["data"]["id"]
     assert db_session.query(AxiomProblemStatement).filter_by(mentor_account_id=publisher.account_id).count() == 2

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.routes.r1_event import current_account, require_roles
@@ -49,6 +50,9 @@ class StatementInput(BaseModel):
     project_context: str = Field(min_length=20, max_length=2400)
     helpful_skills: str = Field(default="", max_length=600)
     submit: bool = False
+    # Optional only for rolling-deploy compatibility with an already-open old
+    # browser bundle. The current client always sends this idempotency key.
+    client_request_id: str | None = Field(default=None, min_length=16, max_length=64)
 
 
 class SelfPasswordChangeInput(BaseModel):
@@ -148,8 +152,16 @@ def create_statement_for_author(
         raise HTTPException(status_code=400, detail="The problem statement must be 44 words or fewer.")
     if word_count(payload.project_context) > 88:
         raise HTTPException(status_code=400, detail="The project explanation must be 88 words or fewer.")
+    if payload.client_request_id:
+        existing = db.query(AxiomProblemStatement).filter(
+            AxiomProblemStatement.mentor_account_id == account.id,
+            AxiomProblemStatement.client_request_id == payload.client_request_id,
+        ).first()
+        if existing:
+            return existing
     statement = AxiomProblemStatement(
-        id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id
+        id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id,
+        client_request_id=payload.client_request_id,
     )
     db.add(statement)
     statement.title = payload.title.strip()
@@ -160,7 +172,21 @@ def create_statement_for_author(
     statement.helpful_skills = payload.helpful_skills.strip()
     statement.status = AxiomStatementStatus.SUBMITTED
     statement.submitted_at = now_ist()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # The first identical retry may have committed while this request was
+        # in flight. Return that project instead of surfacing a 500 or creating
+        # a duplicate.
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.query(AxiomProblemStatement).filter(
+                AxiomProblemStatement.mentor_account_id == account.id,
+                AxiomProblemStatement.client_request_id == payload.client_request_id,
+            ).first()
+            if existing:
+                return existing
+        raise
     db.refresh(statement)
     return statement
 

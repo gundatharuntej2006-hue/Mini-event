@@ -25,6 +25,11 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
                 "ALTER TABLE axiom_problem_statements "
                 "ADD COLUMN statement_slot INTEGER NOT NULL DEFAULT 1"
             ))
+        if "client_request_id" not in columns:
+            connection.execute(text(
+                "ALTER TABLE axiom_problem_statements "
+                "ADD COLUMN client_request_id VARCHAR(64)"
+            ))
         # Remove legacy one- and two-statement author constraints. The open
         # project board deliberately permits unlimited briefs per publisher.
         connection.execute(text(
@@ -34,4 +39,8 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
         connection.execute(text(
             "ALTER TABLE axiom_problem_statements "
             "DROP CONSTRAINT IF EXISTS uq_axiom_statement_author_slot"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_axiom_project_publish_request "
+            "ON axiom_problem_statements (mentor_account_id, client_request_id)"
         ))

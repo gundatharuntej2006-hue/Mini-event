@@ -77,7 +77,7 @@ export function getSession(): Session | null {
 
 export function clearSession() { localStorage.removeItem(sessionKey); }
 
-export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function request<T>(path: string, method = 'GET', body?: unknown, options?: { retry?: boolean; timeoutMs?: number }): Promise<T> {
   const session = getSession();
   // Round 1 calls use short paths such as /control/overview. Round 2 calls
   // already include their /r2 namespace and must not be nested below /r1.
@@ -89,7 +89,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown): 
       ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  }, method === 'GET');
+  }, options?.retry ?? method === 'GET', options?.timeoutMs ?? 20_000);
   const json = await response.json().catch(() => null);
   if (!response.ok || !json?.success) throw new Error(json?.message || 'Something went wrong.');
   return json.data as T;
