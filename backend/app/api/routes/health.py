@@ -20,6 +20,7 @@ def health_check(db: Session = Depends(get_db)):
             "status": "online",
             "database": db_status,
             "version": "1.0.0",
+            "axiom_schema": "open-project-board-v3",
         },
         message="EVENT HQ API service is running"
     )

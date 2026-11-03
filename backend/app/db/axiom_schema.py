@@ -30,16 +30,48 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
                 "ALTER TABLE axiom_problem_statements "
                 "ADD COLUMN client_request_id VARCHAR(64)"
             ))
-        # Remove legacy one- and two-statement author constraints. The open
-        # project board deliberately permits unlimited briefs per publisher.
-        connection.execute(text(
-            "ALTER TABLE axiom_problem_statements "
-            "DROP CONSTRAINT IF EXISTS axiom_problem_statements_mentor_account_id_key"
-        ))
-        connection.execute(text(
-            "ALTER TABLE axiom_problem_statements "
-            "DROP CONSTRAINT IF EXISTS uq_axiom_statement_author_slot"
-        ))
+        # Remove every legacy uniqueness rule that limits how many projects an
+        # author may publish. Earlier production revisions used generated
+        # constraint names, so dropping two assumed names was not sufficient.
+        # Keep only the request-id uniqueness used to make retries idempotent.
+        legacy_constraints = connection.execute(text("""
+            SELECT con.conname
+            FROM pg_constraint AS con
+            JOIN pg_class AS rel ON rel.oid = con.conrelid
+            JOIN pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+            WHERE nsp.nspname = current_schema()
+              AND rel.relname = 'axiom_problem_statements'
+              AND con.contype = 'u'
+              AND con.conname <> 'uq_axiom_project_publish_request'
+              AND EXISTS (
+                SELECT 1
+                FROM unnest(con.conkey) AS key(attnum)
+                JOIN pg_attribute AS att
+                  ON att.attrelid = rel.oid AND att.attnum = key.attnum
+                WHERE att.attname = 'mentor_account_id'
+              )
+        """)).scalars().all()
+        for constraint_name in legacy_constraints:
+            safe_name = constraint_name.replace('"', '""')
+            connection.execute(text(
+                'ALTER TABLE axiom_problem_statements '
+                f'DROP CONSTRAINT IF EXISTS "{safe_name}"'
+            ))
+
+        # Some old deployments created a standalone unique index rather than
+        # a constraint. Remove author/slot indexes but preserve idempotency.
+        legacy_indexes = connection.execute(text("""
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename = 'axiom_problem_statements'
+              AND indexname <> 'uq_axiom_project_publish_request'
+              AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+              AND indexdef ILIKE '%mentor_account_id%'
+        """)).scalars().all()
+        for index_name in legacy_indexes:
+            safe_name = index_name.replace('"', '""')
+            connection.execute(text(f'DROP INDEX IF EXISTS "{safe_name}"'))
         connection.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_axiom_project_publish_request "
             "ON axiom_problem_statements (mentor_account_id, client_request_id)"
