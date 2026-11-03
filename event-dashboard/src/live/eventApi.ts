@@ -68,6 +68,15 @@ export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'PARTICIPANT';
 export type Session = { token: string; role: Role; displayName: string; experience?: 'axiom' | 'event' };
 export type LoginResult = Session | { redirect: 'instagram'; message: string };
 
+export class ApiRequestError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+  }
+}
+
 export function getSession(): Session | null {
   try {
     const raw = localStorage.getItem(sessionKey);
@@ -91,7 +100,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, o
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }, options?.retry ?? method === 'GET', options?.timeoutMs ?? 20_000);
   const json = await response.json().catch(() => null);
-  if (!response.ok || !json?.success) throw new Error(json?.message || 'Something went wrong.');
+  if (!response.ok || !json?.success) throw new ApiRequestError(json?.message || 'Something went wrong.', response.status);
   return json.data as T;
 }
 
