@@ -1,7 +1,7 @@
 from app.models.user import User, UserRole
 from app.models.axiom import (
-    AxiomBootstrapState, AxiomOriginalityAgreement, AxiomProblemStatement,
-    AxiomProfile, AxiomProjectPreference, AxiomRoleChoice, AxiomRosterType,
+    AxiomBootstrapState, AxiomOriginalityAgreement, AxiomProjectAccessAgreement, AxiomProjectApplication,
+    AxiomProjectTeamSelection, AxiomProblemStatement, AxiomProfile, AxiomProjectPreference, AxiomRoleChoice, AxiomRosterType,
     AxiomStatementStatus,
 )
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole, Round1Override, Round1FinishOutcome, Round1SecretAgentSelection
@@ -83,6 +83,9 @@ __all__ = [
     "UserRole",
     "AxiomBootstrapState",
     "AxiomOriginalityAgreement",
+    "AxiomProjectAccessAgreement",
+    "AxiomProjectApplication",
+    "AxiomProjectTeamSelection",
     "AxiomProblemStatement",
     "AxiomProfile",
     "AxiomProjectPreference",

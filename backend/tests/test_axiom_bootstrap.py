@@ -4,10 +4,11 @@ from zoneinfo import ZoneInfo
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.axiom import (
     AxiomLoginGuard,
-    AxiomOriginalityAgreement,
+    AxiomProjectAccessAgreement,
+    AxiomProjectApplication,
+    AxiomProjectTeamSelection,
     AxiomProblemStatement,
     AxiomProfile,
-    AxiomProjectPreference,
     AxiomRoleChoice,
     AxiomRosterType,
     AxiomStatementStatus,
@@ -174,104 +175,51 @@ def test_axiom_login_locks_for_twelve_hours_after_ten_failures(monkeypatch, clie
     assert locked.status_code == 423
 
 
-def test_participant_accepts_agreement_and_saves_ranked_project_response(
-    monkeypatch, client, db_session
-):
+def test_signed_access_open_projects_and_publisher_controlled_selection(monkeypatch, client, db_session):
     import app.api.routes.axiom as axiom_routes
 
     provision_axiom_accounts(db_session)
-    mentor = db_session.query(AxiomProfile).filter(
-        AxiomProfile.roster_type == AxiomRosterType.MENTOR_CANDIDATE
-    ).first()
-    participant = db_session.query(AxiomProfile).filter(
-        AxiomProfile.roster_type == AxiomRosterType.MEMBER
-    ).first()
-    assert mentor is not None and participant is not None
+    publisher, applicant = db_session.query(AxiomProfile).order_by(AxiomProfile.full_name).limit(2).all()
+    publisher_headers = {"Authorization": f"Bearer {create_access_token(subject=publisher.account_id, role='PARTICIPANT')}"}
+    applicant_headers = {"Authorization": f"Bearer {create_access_token(subject=applicant.account_id, role='PARTICIPANT')}"}
 
-    mentor.role_choice = AxiomRoleChoice.MENTOR
-    statement = AxiomProblemStatement(
-        id="axps-test-project",
-        mentor_account_id=mentor.account_id,
-        title="Internal Knowledge Atlas",
-        domain="Knowledge systems",
-        project_track="PRODUCT",
-        problem_statement="Build a searchable map of the club's reusable knowledge and project decisions.",
-        project_context="Create a small, maintainable prototype that helps future teams find what already exists and understand why earlier choices were made.",
-        helpful_skills="Research, interface design, writing",
-        status=AxiomStatementStatus.SUBMITTED,
-        submitted_at=datetime(2026, 11, 3, 15, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
-    )
-    db_session.add(statement)
-    db_session.commit()
+    def sign(profile, headers):
+        return client.post("/api/v1/axiom/agreement", headers=headers, json={
+            "accepted": True, "full_name": profile.full_name, "college_email": profile.college_email,
+        })
 
-    account = db_session.get(EventAccount, participant.account_id)
-    token = create_access_token(subject=account.id, role=account.role.value)
-    headers = {"Authorization": f"Bearer {token}"}
-    agreement = client.post(
-        "/api/v1/axiom/agreement", headers=headers, json={"accepted": True}
-    )
-    assert agreement.status_code == 200
-    assert db_session.get(AxiomOriginalityAgreement, account.id) is not None
+    signed = sign(publisher, publisher_headers)
+    assert signed.status_code == 200, signed.json()
+    assert len(signed.json()["data"]["document_hash"]) == 64
+    evidence = db_session.query(AxiomProjectAccessAgreement).filter_by(account_id=publisher.account_id).one()
+    assert len(evidence.evidence_seal) == 64
+    assert sign(applicant, applicant_headers).status_code == 200
 
-    monkeypatch.setattr(
-        axiom_routes,
-        "now_ist",
-        lambda: datetime(2026, 11, 3, 16, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
-    )
-    projects = client.get("/api/v1/axiom/projects", headers=headers)
-    assert projects.status_code == 200
-    assert projects.json()["data"]["projects"][0]["id"] == statement.id
-
-    saved = client.put(
-        "/api/v1/axiom/preferences",
-        headers=headers,
-        json={
-            "preferences": [{
-                "statement_id": statement.id,
-                "preference_rank": 1,
-                "proposed_solution": "I would interview core members, define a lightweight taxonomy, and prototype a fast searchable archive.",
-                "contribution": "I can structure information, test the interface, and document the final workflow.",
-            }]
-        },
-    )
-    assert saved.status_code == 200
-    preference = db_session.query(AxiomProjectPreference).one()
-    assert preference.participant_account_id == account.id
-    assert preference.statement_id == statement.id
-    assert preference.preference_rank == 1
-
-
-def test_team_lead_can_submit_two_briefs_and_participant_can_publish_one_call(
-    monkeypatch, client, db_session
-):
-    import app.api.routes.axiom as axiom_routes
-
-    provision_axiom_accounts(db_session)
-    lead = db_session.query(AxiomProfile).filter(
-        AxiomProfile.roster_type == AxiomRosterType.MENTOR_CANDIDATE
-    ).first()
-    participant = db_session.query(AxiomProfile).filter(
-        AxiomProfile.roster_type == AxiomRosterType.MEMBER
-    ).first()
-    assert lead is not None and participant is not None
-    lead.role_choice = AxiomRoleChoice.MENTOR
-    db_session.commit()
-    monkeypatch.setattr(
-        axiom_routes, "now_ist", lambda: datetime(2026, 11, 3, 12, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
-    )
-    lead_headers = {"Authorization": f"Bearer {create_access_token(subject=lead.account_id, role='PARTICIPANT')}"}
-    participant_headers = {"Authorization": f"Bearer {create_access_token(subject=participant.account_id, role='PARTICIPANT')}"}
     payload = {
         "title": "Club Knowledge Map", "domain": "Education", "project_track": "PRODUCT",
         "problem_statement": "Build a searchable, maintainable map of the club's reusable knowledge and project decisions.",
         "project_context": "Create a focused internal prototype that helps future members discover prior work, decisions, and useful assets without losing institutional memory.",
         "helpful_skills": "Research, interface design", "submit": True,
     }
-    assert client.put("/api/v1/axiom/team-lead/statements/1", headers=lead_headers, json=payload).status_code == 200
+    first = client.post("/api/v1/axiom/projects", headers=publisher_headers, json=payload)
+    assert first.status_code == 200, first.json()
     payload["title"] = "Accessibility Toolkit"
-    assert client.put("/api/v1/axiom/team-lead/statements/2", headers=lead_headers, json=payload).status_code == 200
-    payload["title"] = "Participant Innovation Call"
-    response = client.put("/api/v1/axiom/participant/statement", headers=participant_headers, json=payload)
-    assert response.status_code == 200, response.json()
-    assert db_session.query(AxiomProblemStatement).filter(AxiomProblemStatement.mentor_account_id == lead.account_id).count() == 2
-    assert db_session.query(AxiomProblemStatement).filter(AxiomProblemStatement.mentor_account_id == participant.account_id).count() == 1
+    assert client.post("/api/v1/axiom/projects", headers=publisher_headers, json=payload).status_code == 200
+    project_id = first.json()["data"]["id"]
+    assert db_session.query(AxiomProblemStatement).filter_by(mentor_account_id=publisher.account_id).count() == 2
+
+    application = client.put(f"/api/v1/axiom/projects/{project_id}/application", headers=applicant_headers, json={
+        "proposed_solution": "I would map member needs, prototype the fastest workflow, test it with the core group and document every decision.",
+        "contribution": "I can research, build interfaces and test the final flow.",
+    })
+    assert application.status_code == 200, application.json()
+    assert db_session.query(AxiomProjectApplication).count() == 1
+    selected = client.put(f"/api/v1/axiom/projects/{project_id}/selections", headers=publisher_headers, json={
+        "participant_account_ids": [applicant.account_id],
+    })
+    assert selected.status_code == 200, selected.json()
+    assert selected.json()["data"]["team_size"] == 2
+    assert db_session.query(AxiomProjectTeamSelection).count() == 1
+
+    monkeypatch.setattr(axiom_routes, "now_ist", lambda: datetime(2026, 11, 4, 15, 1, tzinfo=ZoneInfo("Asia/Kolkata")))
+    assert client.put(f"/api/v1/axiom/projects/{project_id}/selections", headers=publisher_headers, json={"participant_account_ids": []}).status_code == 409

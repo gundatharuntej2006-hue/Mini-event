@@ -1,9 +1,8 @@
 """Small, idempotent production upgrade for Project Axiom statements.
 
 `create_all()` creates missing tables but intentionally does not alter an
-existing PostgreSQL table.  This upgrade removes the old one-statement-per-
-author constraint and introduces two numbered author slots without touching
-existing project briefs or preferences.
+existing PostgreSQL table. This upgrade removes legacy author-slot constraints
+without touching existing project briefs or preferences.
 """
 
 from sqlalchemy import inspect, text
@@ -26,21 +25,13 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
                 "ALTER TABLE axiom_problem_statements "
                 "ADD COLUMN statement_slot INTEGER NOT NULL DEFAULT 1"
             ))
-        # PostgreSQL gives the old `unique=True` column constraint this name.
+        # Remove legacy one- and two-statement author constraints. The open
+        # project board deliberately permits unlimited briefs per publisher.
         connection.execute(text(
             "ALTER TABLE axiom_problem_statements "
             "DROP CONSTRAINT IF EXISTS axiom_problem_statements_mentor_account_id_key"
         ))
-        connection.execute(text("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conname = 'uq_axiom_statement_author_slot'
-                ) THEN
-                    ALTER TABLE axiom_problem_statements
-                    ADD CONSTRAINT uq_axiom_statement_author_slot
-                    UNIQUE (mentor_account_id, statement_slot);
-                END IF;
-            END $$;
-        """))
+        connection.execute(text(
+            "ALTER TABLE axiom_problem_statements "
+            "DROP CONSTRAINT IF EXISTS uq_axiom_statement_author_slot"
+        ))

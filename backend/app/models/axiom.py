@@ -85,12 +85,6 @@ class AxiomStatementStatus(str, enum.Enum):
 
 class AxiomProblemStatement(Base):
     __tablename__ = "axiom_problem_statements"
-    __table_args__ = (
-        # A team lead may present two alternatives, but each numbered slot is
-        # still unique for that author.  The previous schema allowed only one
-        # statement per mentor account.
-        UniqueConstraint("mentor_account_id", "statement_slot", name="uq_axiom_statement_author_slot"),
-    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     mentor_account_id: Mapped[str] = mapped_column(
@@ -125,6 +119,78 @@ class AxiomOriginalityAgreement(Base):
     accepted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
+
+
+class AxiomProjectAccessAgreement(Base):
+    """Append-only evidence of access to confidential Project Axiom briefs.
+
+    The evidence seal is a server-side HMAC over the canonical signing record.
+    It lets the platform detect post-signing record modification without storing
+    raw network identifiers.
+    """
+
+    __tablename__ = "axiom_project_access_agreements"
+    __table_args__ = (
+        UniqueConstraint("account_id", "agreement_version", name="uq_axiom_access_agreement_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), index=True, nullable=False
+    )
+    signed_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    signer_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    agreement_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    document_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_seal: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_agent_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class AxiomProjectApplication(Base):
+    """A participant's private solution/application for one project brief."""
+
+    __tablename__ = "axiom_project_applications"
+    __table_args__ = (
+        UniqueConstraint("participant_account_id", "statement_id", name="uq_axiom_project_application"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    participant_account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), index=True, nullable=False
+    )
+    statement_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("axiom_problem_statements.id"), index=True, nullable=False
+    )
+    proposed_solution: Mapped[str] = mapped_column(Text, nullable=False)
+    contribution: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class AxiomProjectTeamSelection(Base):
+    """Publisher-controlled team choices. A project has at most three invitees."""
+
+    __tablename__ = "axiom_project_team_selections"
+    __table_args__ = (
+        UniqueConstraint("statement_id", "participant_account_id", name="uq_axiom_project_selection"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    statement_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("axiom_problem_statements.id"), index=True, nullable=False
+    )
+    participant_account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), index=True, nullable=False
+    )
+    selected_by_account_id: Mapped[str] = mapped_column(
+        String(40), ForeignKey("event_accounts.id"), nullable=False
+    )
+    selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class AxiomProjectPreference(Base):

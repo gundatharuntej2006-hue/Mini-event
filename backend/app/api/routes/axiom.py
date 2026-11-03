@@ -1,21 +1,26 @@
+import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.routes.r1_event import current_account, require_roles
 from app.core.security import get_password_hash, verify_password
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.axiom import (
-    AxiomOriginalityAgreement,
+    AxiomProjectAccessAgreement,
+    AxiomProjectApplication,
+    AxiomProjectTeamSelection,
     AxiomProblemStatement,
     AxiomProfile,
-    AxiomProjectPreference,
     AxiomRoleChoice,
     AxiomRosterType,
     AxiomStatementStatus,
@@ -25,15 +30,15 @@ from app.models.event_account import EventAccount, EventPasswordVerifier, EventR
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
 IST = ZoneInfo("Asia/Kolkata")
-MENTOR_DECISION_DEADLINE = datetime(2026, 11, 2, 12, 0, tzinfo=IST)
-STATEMENT_DEADLINE = datetime(2026, 11, 3, 15, 0, tzinfo=IST)
-PREFERENCE_DEADLINE = datetime(2026, 11, 3, 18, 0, tzinfo=IST)
 TEAM_FINALIZATION_DEADLINE = datetime(2026, 11, 4, 15, 0, tzinfo=IST)
+ACCESS_AGREEMENT_VERSION = "axiom-project-access-v2"
+ACCESS_AGREEMENT_TEXT = """PROJECT AXIOM — CONFIDENTIAL PROJECT ACCESS ACKNOWLEDGEMENT
 
+Project statements, solution approaches, research directions, product concepts, documents and discussions shown in this workspace are confidential internal Club Asymptotes material. They remain the intellectual property of their respective authors and/or Club Asymptotes unless a separate written agreement says otherwise.
 
-class RoleChoiceInput(BaseModel):
-    choice: Literal["MENTOR", "PARTICIPANT", "OPTED_OUT"]
-    confirmed: bool
+By signing, I agree that I will use these materials only to participate in Project Axiom. I will not copy, reproduce, publish, forward, distribute, submit, commercialise, present as my own, or use any project material outside Project Axiom without prior written permission from the author and Club Asymptotes. I will write my own proposal and contribution statements. I understand that access is personal to my signed-in college account, and that this acknowledgement, the agreement version, signing time and integrity evidence will be retained for programme records.
+
+I confirm that the name and college email entered below identify me, that I have read this acknowledgement, and that selecting “Sign and access projects” is my electronic acknowledgement of these terms."""
 
 
 class StatementInput(BaseModel):
@@ -54,17 +59,17 @@ class SelfPasswordChangeInput(BaseModel):
 
 class AgreementInput(BaseModel):
     accepted: bool
+    full_name: str = Field(min_length=2, max_length=120)
+    college_email: str = Field(min_length=6, max_length=255)
 
 
-class PreferenceItemInput(BaseModel):
-    statement_id: str = Field(min_length=3, max_length=40)
-    preference_rank: int = Field(ge=1, le=3)
+class ProjectApplicationInput(BaseModel):
     proposed_solution: str = Field(min_length=20, max_length=1400)
     contribution: str = Field(min_length=10, max_length=900)
 
 
-class PreferencesInput(BaseModel):
-    preferences: list[PreferenceItemInput] = Field(min_length=1, max_length=3)
+class ProjectSelectionInput(BaseModel):
+    participant_account_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 def now_ist() -> datetime:
@@ -93,6 +98,26 @@ def word_count(value: str) -> int:
     return len([part for part in value.strip().split() if part])
 
 
+def normalized_identity(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
+def access_agreement_for(db: Session, account_id: str) -> AxiomProjectAccessAgreement | None:
+    return db.query(AxiomProjectAccessAgreement).filter(
+        AxiomProjectAccessAgreement.account_id == account_id,
+        AxiomProjectAccessAgreement.agreement_version == ACCESS_AGREEMENT_VERSION,
+    ).first()
+
+
+def agreement_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def hmac_seal(payload: dict) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def statement_data(statement: AxiomProblemStatement | None) -> dict | None:
     if not statement:
         return None
@@ -112,41 +137,29 @@ def statement_data(statement: AxiomProblemStatement | None) -> dict | None:
 
 def deadlines_data() -> dict[str, str]:
     return {
-        "mentor_decision": MENTOR_DECISION_DEADLINE.isoformat(),
-        "statement": STATEMENT_DEADLINE.isoformat(),
-        "preference": PREFERENCE_DEADLINE.isoformat(),
         "team_finalization": TEAM_FINALIZATION_DEADLINE.isoformat(),
     }
 
 
-def statement_for_author_slot(db: Session, account_id: str, slot: int) -> AxiomProblemStatement | None:
-    return db.query(AxiomProblemStatement).filter(
-        AxiomProblemStatement.mentor_account_id == account_id,
-        AxiomProblemStatement.statement_slot == slot,
-    ).first()
-
-
-def save_statement_for_author(
-    *, db: Session, account: EventAccount, payload: StatementInput, slot: int
+def create_statement_for_author(
+    *, db: Session, account: EventAccount, payload: StatementInput
 ) -> AxiomProblemStatement:
     if word_count(payload.problem_statement) > 44:
         raise HTTPException(status_code=400, detail="The problem statement must be 44 words or fewer.")
     if word_count(payload.project_context) > 88:
         raise HTTPException(status_code=400, detail="The project explanation must be 88 words or fewer.")
-    statement = statement_for_author_slot(db, account.id, slot)
-    if not statement:
-        statement = AxiomProblemStatement(
-            id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id, statement_slot=slot
-        )
-        db.add(statement)
+    statement = AxiomProblemStatement(
+        id=f"axps-{uuid.uuid4().hex[:18]}", mentor_account_id=account.id
+    )
+    db.add(statement)
     statement.title = payload.title.strip()
     statement.domain = payload.domain.strip()
     statement.project_track = payload.project_track
     statement.problem_statement = payload.problem_statement.strip()
     statement.project_context = payload.project_context.strip()
     statement.helpful_skills = payload.helpful_skills.strip()
-    statement.status = AxiomStatementStatus.SUBMITTED if payload.submit else AxiomStatementStatus.DRAFT
-    statement.submitted_at = now_ist() if payload.submit else None
+    statement.status = AxiomStatementStatus.SUBMITTED
+    statement.submitted_at = now_ist()
     db.commit()
     db.refresh(statement)
     return statement
@@ -186,18 +199,64 @@ def change_own_password(
 @router.post("/agreement")
 def accept_originality_agreement(
     payload: AgreementInput,
+    request: Request,
     account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
     db: Session = Depends(get_db),
 ):
     participant_profile_for(db, account)
+    profile = participant_profile_for(db, account)
     if not payload.accepted:
-        raise HTTPException(status_code=400, detail="You must accept the originality agreement to view project statements.")
-    agreement = db.get(AxiomOriginalityAgreement, account.id)
+        raise HTTPException(status_code=400, detail="You must accept and sign the project-access acknowledgement to view project statements.")
+    if normalized_identity(payload.college_email) != normalized_identity(profile.college_email):
+        raise HTTPException(status_code=400, detail="Enter the same college email used for this account.")
+    if normalized_identity(payload.full_name) != normalized_identity(profile.full_name):
+        raise HTTPException(status_code=400, detail="Enter your full name exactly as shown on this Project Axiom account.")
+    agreement = access_agreement_for(db, account.id)
     if not agreement:
-        agreement = AxiomOriginalityAgreement(account_id=account.id, agreement_version="axiom-v1")
+        signed_at = now_ist()
+        document_hash = agreement_hash(ACCESS_AGREEMENT_TEXT)
+        signature_hash = agreement_hash(
+            f"{profile.account_id}|{profile.college_email.lower()}|{profile.full_name}|{document_hash}|{signed_at.isoformat()}"
+        )
+        client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "unknown"))
+        user_agent = request.headers.get("user-agent", "unknown")
+        evidence_payload = {
+            "account_id": account.id,
+            "signed_email": profile.college_email.lower(),
+            "signer_name": profile.full_name,
+            "agreement_version": ACCESS_AGREEMENT_VERSION,
+            "document_hash": document_hash,
+            "signature_hash": signature_hash,
+            "signed_at": signed_at.isoformat(),
+            "ip_hash": hmac_seal({"ip": client_ip}),
+            "user_agent_hash": hmac_seal({"user_agent": user_agent}),
+        }
+        agreement = AxiomProjectAccessAgreement(
+            id=f"axag-{uuid.uuid4().hex[:18]}",
+            account_id=account.id,
+            signed_email=profile.college_email.lower(),
+            signer_name=profile.full_name,
+            agreement_version=ACCESS_AGREEMENT_VERSION,
+            document_hash=document_hash,
+            signature_hash=signature_hash,
+            ip_hash=evidence_payload["ip_hash"],
+            user_agent_hash=evidence_payload["user_agent_hash"],
+            signed_at=signed_at,
+            evidence_seal=hmac_seal(evidence_payload),
+        )
         db.add(agreement)
     db.commit()
-    return {"success": True, "data": {"accepted": True}, "message": "Originality agreement accepted."}
+    return {
+        "success": True,
+        "data": {
+            "accepted": True,
+            "agreement_version": agreement.agreement_version,
+            "document_hash": agreement.document_hash,
+            "evidence_id": agreement.id,
+            "signed_at": agreement.signed_at.isoformat(),
+        },
+        "message": "Project-access acknowledgement signed and securely recorded.",
+    }
 
 
 @router.get("/projects")
@@ -206,88 +265,86 @@ def participant_projects(
     db: Session = Depends(get_db),
 ):
     participant_profile_for(db, account)
-    agreement = db.get(AxiomOriginalityAgreement, account.id)
-    window_open = now_ist() >= STATEMENT_DEADLINE
+    agreement = access_agreement_for(db, account.id)
     statements = []
-    if agreement and window_open:
+    if agreement:
         submitted = db.query(AxiomProblemStatement, AxiomProfile.full_name).join(
             AxiomProfile, AxiomProfile.account_id == AxiomProblemStatement.mentor_account_id
         ).filter(
             AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED
         ).order_by(AxiomProblemStatement.title).all()
-        for statement, mentor_name in submitted:
+        for statement, publisher_name in submitted:
             statements.append({
                 "id": statement.id,
-                "publisher_name": mentor_name or "Project publisher",
+                "publisher_name": publisher_name or "Project publisher",
+                "is_publisher": statement.mentor_account_id == account.id,
                 **(statement_data(statement) or {}),
             })
-    preferences = db.query(AxiomProjectPreference).filter(
-        AxiomProjectPreference.participant_account_id == account.id
-    ).order_by(AxiomProjectPreference.preference_rank).all()
+    applications = db.query(AxiomProjectApplication).filter(
+        AxiomProjectApplication.participant_account_id == account.id
+    ).all()
     return {
         "success": True,
         "data": {
             "agreement_accepted": bool(agreement),
-            "window_open": window_open,
-            "window_closed": now_ist() > PREFERENCE_DEADLINE,
+            "selection_open": now_ist() <= TEAM_FINALIZATION_DEADLINE,
             "team_finalization_deadline": TEAM_FINALIZATION_DEADLINE.isoformat(),
             "projects": statements,
-            "preferences": [{
+            "applications": [{
                 "statement_id": item.statement_id,
-                "preference_rank": item.preference_rank,
                 "proposed_solution": item.proposed_solution,
                 "contribution": item.contribution,
-            } for item in preferences],
+            } for item in applications],
         },
-        "message": "Project selection workspace loaded.",
+        "message": "Open project workspace loaded.",
     }
 
 
-@router.put("/preferences")
-def save_participant_preferences(
-    payload: PreferencesInput,
+@router.post("/projects")
+def create_participant_project(
+    payload: StatementInput,
     account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
     db: Session = Depends(get_db),
 ):
     participant_profile_for(db, account)
-    if not db.get(AxiomOriginalityAgreement, account.id):
-        raise HTTPException(status_code=403, detail="Accept the originality agreement before submitting preferences.")
-    if now_ist() < STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Project preferences open on 3 November at 3:00 PM IST.")
-    if now_ist() > PREFERENCE_DEADLINE:
-        raise HTTPException(status_code=409, detail="Project preferences closed on 3 November at 6:00 PM IST.")
+    if not access_agreement_for(db, account.id):
+        raise HTTPException(status_code=403, detail="Sign the project-access acknowledgement before publishing a project.")
+    statement = create_statement_for_author(db=db, account=account, payload=payload)
+    return {"success": True, "data": statement_data(statement), "message": "Project published. You can now review applications to it."}
 
-    statement_ids = [item.statement_id for item in payload.preferences]
-    ranks = [item.preference_rank for item in payload.preferences]
-    if len(set(statement_ids)) != len(statement_ids) or len(set(ranks)) != len(ranks):
-        raise HTTPException(status_code=400, detail="Choose different projects and use each preference rank only once.")
-    if sorted(ranks) != list(range(1, len(ranks) + 1)):
-        raise HTTPException(status_code=400, detail="Preference ranks must start at 1 without gaps.")
-    for item in payload.preferences:
-        if word_count(item.proposed_solution) + word_count(item.contribution) > 88:
-            raise HTTPException(status_code=400, detail="Each project response must be 88 words or fewer in total.")
-        statement = db.get(AxiomProblemStatement, item.statement_id)
-        if not statement or statement.status != AxiomStatementStatus.SUBMITTED:
-            raise HTTPException(status_code=404, detail="One selected project is not available.")
 
-    db.query(AxiomProjectPreference).filter(
-        AxiomProjectPreference.participant_account_id == account.id
-    ).delete(synchronize_session=False)
-    for item in payload.preferences:
-        db.add(AxiomProjectPreference(
-            id=f"axpref-{uuid.uuid4().hex[:16]}",
-            participant_account_id=account.id,
-            statement_id=item.statement_id,
-            preference_rank=item.preference_rank,
-            proposed_solution=item.proposed_solution.strip(),
-            contribution=item.contribution.strip(),
-        ))
+@router.put("/projects/{statement_id}/application")
+def apply_to_project(
+    statement_id: str,
+    payload: ProjectApplicationInput,
+    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
+    db: Session = Depends(get_db),
+):
+    participant_profile_for(db, account)
+    if not access_agreement_for(db, account.id):
+        raise HTTPException(status_code=403, detail="Sign the project-access acknowledgement before applying.")
+    if word_count(payload.proposed_solution) + word_count(payload.contribution) > 88:
+        raise HTTPException(status_code=400, detail="Your solution and contribution together must be 88 words or fewer.")
+    statement = db.get(AxiomProblemStatement, statement_id)
+    if not statement or statement.status != AxiomStatementStatus.SUBMITTED:
+        raise HTTPException(status_code=404, detail="This project is not available.")
+    if statement.mentor_account_id == account.id:
+        raise HTTPException(status_code=400, detail="You already own this project and do not need to apply to it.")
+    application = db.query(AxiomProjectApplication).filter(
+        AxiomProjectApplication.participant_account_id == account.id,
+        AxiomProjectApplication.statement_id == statement_id,
+    ).first()
+    if not application:
+        application = AxiomProjectApplication(
+            id=f"axapp-{uuid.uuid4().hex[:18]}", participant_account_id=account.id, statement_id=statement_id,
+            proposed_solution=payload.proposed_solution.strip(), contribution=payload.contribution.strip(),
+        )
+        db.add(application)
+    else:
+        application.proposed_solution = payload.proposed_solution.strip()
+        application.contribution = payload.contribution.strip()
     db.commit()
-    return {
-        "success": True,
-        "data": {"saved": len(payload.preferences)},
-        "message": "Your ranked project preferences have been saved.",
-    }
+    return {"success": True, "data": {"statement_id": statement_id}, "message": "Your application has been recorded."}
 
 
 @router.get("/me")
@@ -326,58 +383,77 @@ def me(account: EventAccount = Depends(current_account), db: Session = Depends(g
     }
 
 
-@router.post("/role-choice")
-def choose_role(
-    payload: RoleChoiceInput,
+@router.get("/my-projects")
+def my_projects(
     account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
     db: Session = Depends(get_db),
 ):
-    profile = profile_for(db, account)
-    if profile.roster_type != AxiomRosterType.MENTOR_CANDIDATE:
-        raise HTTPException(status_code=403, detail="Only team-lead candidates make this decision.")
-    if now_ist() > MENTOR_DECISION_DEADLINE:
-        raise HTTPException(status_code=409, detail="The team-lead decision window has closed. You are now in the participant pool.")
-    if not payload.confirmed:
-        raise HTTPException(status_code=400, detail="Please confirm your final selection.")
-    profile.role_choice = AxiomRoleChoice(payload.choice)
-    db.commit()
-    return {"success": True, "data": {"role_choice": profile.role_choice.value}, "message": "Your Project Axiom decision has been saved."}
-
-
-@router.put("/team-lead/statements/{slot}")
-def save_team_lead_statement(
-    slot: int,
-    payload: StatementInput,
-    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
-    db: Session = Depends(get_db),
-):
-    profile = profile_for(db, account)
-    if slot not in (1, 2):
-        raise HTTPException(status_code=400, detail="A team lead may create only statement 1 or statement 2.")
-    if profile.role_choice != AxiomRoleChoice.MENTOR:
-        raise HTTPException(status_code=403, detail="Only confirmed team leads can create team-lead problem statements.")
-    if now_ist() > STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Problem-statement submissions closed on 3 November at 3:00 PM IST.")
-    statement = save_statement_for_author(db=db, account=account, payload=payload, slot=slot)
-    return {"success": True, "data": statement_data(statement), "message": "Problem statement submitted." if payload.submit else "Draft saved."}
-
-
-@router.put("/participant/statement")
-def save_participant_statement(
-    payload: StatementInput,
-    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
-    db: Session = Depends(get_db),
-):
-    """A participant may launch one project call and become its provisional lead."""
     participant_profile_for(db, account)
-    if now_ist() > STATEMENT_DEADLINE:
-        raise HTTPException(status_code=409, detail="Project-call submissions closed on 3 November at 3:00 PM IST.")
-    statement = save_statement_for_author(db=db, account=account, payload=payload, slot=1)
-    return {
-        "success": True,
-        "data": statement_data(statement),
-        "message": "Your project call is live. Participants can now rank it as a preference.",
+    if not access_agreement_for(db, account.id):
+        raise HTTPException(status_code=403, detail="Sign the project-access acknowledgement before opening project applications.")
+    projects = db.query(AxiomProblemStatement).filter(
+        AxiomProblemStatement.mentor_account_id == account.id,
+        AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED,
+    ).order_by(AxiomProblemStatement.created_at.desc()).all()
+    result = []
+    for project in projects:
+        applications = db.query(AxiomProjectApplication, AxiomProfile.full_name).join(
+            AxiomProfile, AxiomProfile.account_id == AxiomProjectApplication.participant_account_id
+        ).filter(AxiomProjectApplication.statement_id == project.id).order_by(
+            AxiomProjectApplication.created_at
+        ).all()
+        selected_ids = {
+            item.participant_account_id for item in db.query(AxiomProjectTeamSelection).filter(
+                AxiomProjectTeamSelection.statement_id == project.id
+            ).all()
+        }
+        result.append({
+            **(statement_data(project) or {}),
+            "applications": [{
+                "account_id": application.participant_account_id,
+                "name": name,
+                "proposed_solution": application.proposed_solution,
+                "contribution": application.contribution,
+                "selected": application.participant_account_id in selected_ids,
+            } for application, name in applications],
+            "selection_open": now_ist() <= TEAM_FINALIZATION_DEADLINE,
+        })
+    return {"success": True, "data": {"projects": result, "team_finalization_deadline": TEAM_FINALIZATION_DEADLINE.isoformat()}, "message": "Your project applications loaded."}
+
+
+@router.put("/projects/{statement_id}/selections")
+def select_project_members(
+    statement_id: str,
+    payload: ProjectSelectionInput,
+    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
+    db: Session = Depends(get_db),
+):
+    participant_profile_for(db, account)
+    if now_ist() > TEAM_FINALIZATION_DEADLINE:
+        raise HTTPException(status_code=409, detail="Team selections closed at 3:00 PM on 4 November 2026.")
+    project = db.get(AxiomProblemStatement, statement_id)
+    if not project or project.mentor_account_id != account.id:
+        raise HTTPException(status_code=403, detail="Only the person who published this project can select its members.")
+    selected_ids = list(dict.fromkeys(payload.participant_account_ids))
+    if len(selected_ids) > 3:
+        raise HTTPException(status_code=400, detail="Select at most three applicants. With you, the project team can have at most four people.")
+    applicants = {
+        item.participant_account_id for item in db.query(AxiomProjectApplication).filter(
+            AxiomProjectApplication.statement_id == statement_id
+        ).all()
     }
+    if not set(selected_ids).issubset(applicants):
+        raise HTTPException(status_code=400, detail="Members can only be selected from people who applied to this project.")
+    db.query(AxiomProjectTeamSelection).filter(
+        AxiomProjectTeamSelection.statement_id == statement_id
+    ).delete(synchronize_session=False)
+    for participant_account_id in selected_ids:
+        db.add(AxiomProjectTeamSelection(
+            id=f"axsel-{uuid.uuid4().hex[:18]}", statement_id=statement_id,
+            participant_account_id=participant_account_id, selected_by_account_id=account.id,
+        ))
+    db.commit()
+    return {"success": True, "data": {"selected": len(selected_ids), "team_size": len(selected_ids) + 1}, "message": "Project members selected."}
 
 
 @router.get("/control/overview")
@@ -392,48 +468,19 @@ def control_overview(
     statements = db.query(func.count(AxiomProblemStatement.id)).filter(
         AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED
     ).scalar() or 0
-    preference_count = db.query(func.count(AxiomProjectPreference.id)).scalar() or 0
+    preference_count = db.query(func.count(AxiomProjectApplication.id)).scalar() or 0
     submitted_projects = db.query(AxiomProblemStatement).filter(
         AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED
     ).order_by(AxiomProblemStatement.title).all()
+    profiles_by_id = {profile.account_id: profile for profile in profiles}
     assignments: dict[str, list[dict]] = {item.id: [] for item in submitted_projects}
-    assigned_accounts: set[str] = set()
-    preference_rows = db.query(AxiomProjectPreference).order_by(
-        AxiomProjectPreference.preference_rank,
-        AxiomProjectPreference.created_at,
-    ).all()
-    # Preference-fit preview only: honour first choices first, cap normal teams
-    # at three, then allow one four-person team if the roster requires it.
-    for preference in preference_rows:
-        if preference.participant_account_id in assigned_accounts:
-            continue
-        if preference.statement_id not in assignments or len(assignments[preference.statement_id]) >= 3:
-            continue
-        participant = db.get(AxiomProfile, preference.participant_account_id)
-        if not participant:
-            continue
-        assignments[preference.statement_id].append({
-            "name": participant.full_name,
-            "preference_rank": preference.preference_rank,
-        })
-        assigned_accounts.add(preference.participant_account_id)
-    unassigned_ids = []
-    for preference in preference_rows:
-        if preference.participant_account_id not in assigned_accounts and preference.participant_account_id not in unassigned_ids:
-            unassigned_ids.append(preference.participant_account_id)
-    overflow_used = False
-    for participant_id in unassigned_ids:
-        options = [row for row in preference_rows if row.participant_account_id == participant_id]
-        available = [row for row in options if row.statement_id in assignments and len(assignments[row.statement_id]) < (4 if not overflow_used else 3)]
-        if not available:
-            continue
-        selected = min(available, key=lambda row: (len(assignments[row.statement_id]), row.preference_rank))
-        participant = db.get(AxiomProfile, participant_id)
+    selections = db.query(AxiomProjectTeamSelection).filter(
+        AxiomProjectTeamSelection.statement_id.in_(assignments.keys()) if assignments else False
+    ).all() if assignments else []
+    for selection in selections:
+        participant = profiles_by_id.get(selection.participant_account_id)
         if participant:
-            assignments[selected.statement_id].append({"name": participant.full_name, "preference_rank": selected.preference_rank})
-            assigned_accounts.add(participant_id)
-            if len(assignments[selected.statement_id]) == 4:
-                overflow_used = True
+            assignments[selection.statement_id].append({"name": participant.full_name, "preference_rank": 0})
     people = [{
         "name": profile.full_name,
         "email": profile.college_email,
@@ -453,7 +500,7 @@ def control_overview(
                 "statement_id": project.id,
                 "title": project.title,
                 "track": project.project_track,
-                "team_lead_name": db.get(AxiomProfile, project.mentor_account_id).full_name if db.get(AxiomProfile, project.mentor_account_id) else "Project team lead",
+                "team_lead_name": db.get(AxiomProfile, project.mentor_account_id).full_name if db.get(AxiomProfile, project.mentor_account_id) else "Project publisher",
                 "members": assignments.get(project.id, []),
             } for project in submitted_projects],
             "people": people,
