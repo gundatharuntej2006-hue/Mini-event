@@ -68,8 +68,11 @@ class AgreementInput(BaseModel):
 
 
 class ProjectApplicationInput(BaseModel):
-    proposed_solution: str = Field(min_length=20, max_length=1400)
-    contribution: str = Field(min_length=10, max_length=900)
+    # A project publisher should be able to read even a concise first idea.
+    # The prior 20/10-character requirement made valid short responses look
+    # like a failed submission in the participant workspace.
+    proposed_solution: str = Field(min_length=1, max_length=1400)
+    contribution: str = Field(min_length=1, max_length=900)
 
 
 class ProjectSelectionInput(BaseModel):
