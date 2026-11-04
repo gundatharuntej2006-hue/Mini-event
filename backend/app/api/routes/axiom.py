@@ -31,7 +31,7 @@ from app.models.event_account import EventAccount, EventPasswordVerifier, EventR
 
 router = APIRouter(prefix="/axiom", tags=["Project Axiom"])
 IST = ZoneInfo("Asia/Kolkata")
-TEAM_FINALIZATION_DEADLINE = datetime(2026, 11, 4, 15, 0, tzinfo=IST)
+TEAM_FINALIZATION_DEADLINE = datetime(2026, 11, 4, 23, 59, 59, tzinfo=IST)
 ACCESS_AGREEMENT_VERSION = "axiom-project-access-v2"
 ACCESS_AGREEMENT_TEXT = """PROJECT AXIOM — CONFIDENTIAL PROJECT ACCESS ACKNOWLEDGEMENT
 
