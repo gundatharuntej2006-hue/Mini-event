@@ -79,6 +79,10 @@ class ProjectSelectionInput(BaseModel):
     participant_account_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
+class ParticipationInput(BaseModel):
+    participate: bool
+
+
 def now_ist() -> datetime:
     return datetime.now(IST)
 
@@ -410,6 +414,18 @@ def me(account: EventAccount = Depends(current_account), db: Session = Depends(g
         },
         "message": "Project Axiom profile loaded.",
     }
+
+
+@router.put("/participation")
+def update_participation(
+    payload: ParticipationInput,
+    account: EventAccount = Depends(require_roles(EventRole.PARTICIPANT)),
+    db: Session = Depends(get_db),
+):
+    profile = profile_for(db, account)
+    profile.role_choice = AxiomRoleChoice.PARTICIPANT if payload.participate else AxiomRoleChoice.OPTED_OUT
+    db.commit()
+    return {"success": True, "data": {"role_choice": profile.role_choice.value}, "message": "Participation status updated."}
 
 
 @router.get("/my-projects")

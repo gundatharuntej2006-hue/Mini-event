@@ -703,12 +703,15 @@ function ParticipantWorkspace() {
 export function AxiomDashboardPage() {
   const navigate=useNavigate(); const root=useRef<HTMLElement>(null); useAxiomMotion(root);
   const [data,setData]=useState<AxiomMe|null>(null); const [error,setError]=useState('');
+  const [participationBusy,setParticipationBusy]=useState(false);
   const load=async()=>{try{const next=await request<AxiomMe>('/axiom/me');if(next.is_super_admin){navigate('/axiom/control',{replace:true});return;}setData(next);}catch(item){setError(item instanceof Error?item.message:'Could not load Project Axiom.');}};
+  async function changeParticipation(participate:boolean){if(!participate&&!window.confirm('Mark yourself as opted out? The club council will see your decision. Existing projects, applications and team selections will remain until the council updates them.'))return;setParticipationBusy(true);setError('');try{await request('/axiom/participation','PUT',{participate});await load();}catch(item){setError(item instanceof Error?item.message:'Could not update your participation.');}finally{setParticipationBusy(false);}}
   useEffect(()=>{if(!getSession())navigate('/login',{replace:true});else void load();},[]);
   if(!data)return <main className="ax-site ax-dashboard"><AxiomBackdrop/><AxiomHeader compact/><div className="ax-loading"><Orbit/> Loading your workspace…{error&&<p>{error}</p>}</div></main>;
   return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/>
     <section className="ax-dash-head"><div><div className="ax-kicker"><CircleDot/> PRIVATE AXIOM WORKSPACE</div><h1>Welcome, <em>{data.display_name.split(' ')[0]}.</em></h1><p>{data.college_email}</p></div><div className="ax-status-pill"><span/><div><small>CURRENT STATUS</small><b>PARTICIPANT</b></div></div></section>
     <ProjectJourney deadlines={data.deadlines} active={1}/>{error&&<div className="ax-alert"><X/>{error}</div>}
+    <section className="ax-editor ax-scroll ax-glass"><div className="ax-section-title"><div><span>YOUR PARTICIPATION</span><h2>{data.role_choice==='OPTED_OUT'?'You have opted out':'Taking part in Axiom'}</h2></div><p>Your decision is visible to the club council. Existing projects, applications and team selections are not removed automatically; contact the council if these need to change.</p></div><button className="ax-secondary" disabled={participationBusy} onClick={()=>void changeParticipation(data.role_choice==='OPTED_OUT')}>{participationBusy?'Saving…':data.role_choice==='OPTED_OUT'?'Choose to participate':'Opt out of Project Axiom'}</button></section>
     <ParticipantWorkspace/>
     <PasswordPanel/>
   </main>;
