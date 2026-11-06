@@ -424,18 +424,26 @@ def my_projects(
         AxiomProblemStatement.mentor_account_id == account.id,
         AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED,
     ).order_by(AxiomProblemStatement.created_at.desc()).all()
-    result = []
-    for project in projects:
+    project_ids = [project.id for project in projects]
+    applications_by_project = {project_id: [] for project_id in project_ids}
+    selected_by_project = {project_id: set() for project_id in project_ids}
+    if project_ids:
         applications = db.query(AxiomProjectApplication, AxiomProfile.full_name).join(
             AxiomProfile, AxiomProfile.account_id == AxiomProjectApplication.participant_account_id
-        ).filter(AxiomProjectApplication.statement_id == project.id).order_by(
+        ).filter(AxiomProjectApplication.statement_id.in_(project_ids)).order_by(
             AxiomProjectApplication.created_at
         ).all()
-        selected_ids = {
-            item.participant_account_id for item in db.query(AxiomProjectTeamSelection).filter(
-                AxiomProjectTeamSelection.statement_id == project.id
-            ).all()
-        }
+        for application, name in applications:
+            applications_by_project[application.statement_id].append((application, name))
+        selections = db.query(AxiomProjectTeamSelection).filter(
+            AxiomProjectTeamSelection.statement_id.in_(project_ids)
+        ).all()
+        for selection in selections:
+            selected_by_project[selection.statement_id].add(selection.participant_account_id)
+    result = []
+    for project in projects:
+        applications = applications_by_project[project.id]
+        selected_ids = selected_by_project[project.id]
         result.append({
             **(statement_data(project) or {}),
             "applications": [{
