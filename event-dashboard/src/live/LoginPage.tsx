@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ArrowRight, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AxiomNightBackdrop } from '../axiom/AxiomPages';
 import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
@@ -50,17 +50,8 @@ export function LoginPage() {
     <div className="ax-glass-weather" aria-hidden="true"/>
     <section className="ax-login-story" aria-label="Project Axiom introduction">
       <AxiomLoginMark/>
-      <p className="ax-login-overline">MATHEMATICS · RESEARCH · CREATION</p>
+      <p className="ax-login-overline">MEMBER WORKSPACE</p>
       <h1>Start with a<br/><span className="ax-fluid-word">question.</span><br/>Build what<br/>comes next.</h1>
-      <p className="ax-login-intro">A private space for Club Asymptotes members to turn considered questions into research, products and work that lasts.</p>
-      <div className="ax-login-principle"><i/> Every discovery begins somewhere.</div>
-      <svg className="ax-login-geometry" viewBox="0 0 560 190" fill="none" aria-hidden="true">
-        <path d="M10 147H550" stroke="currentColor" opacity=".14"/>
-        <path className="ax-geo-flow" d="M18 135C99 135 103 30 190 30S289 147 365 147 456 42 545 42" stroke="currentColor" strokeWidth="1.1" opacity=".58"/>
-        <path d="M145 148 232 23 318 148M185 148 232 80 280 148" stroke="currentColor" strokeWidth="1.1" opacity=".44"/>
-        <circle cx="232" cy="23" r="3.5" fill="currentColor"/><circle cx="365" cy="147" r="3" fill="currentColor"/>
-      </svg>
-      <div className="ax-login-meta"><span>CLUB ASYMPTOTES</span><span>BMSIT</span><span>EST. BY CURIOSITY</span></div>
     </section>
 
     <section className="ax-login-form-wrap" aria-label="Secure sign in">
@@ -76,13 +67,11 @@ export function LoginPage() {
             <span className="ax-login-input"><input type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} placeholder="Enter password" required/><LockKeyhole size={17}/><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span>
           </label>
           {error && <div className="form-error"><AlertCircle size={16}/>{error}</div>}
-          <div className="ax-login-status"><span><ShieldCheck size={14}/> Authorised members only</span><span>Individual access</span></div>
+          <div className="ax-login-status"><span><ShieldCheck size={14}/> Authorised members only</span></div>
           <button className="ax-login-submit" disabled={loading}>{loading ? 'Opening workspace...' : <>Sign in to Axiom <ArrowRight size={18}/></>}</button>
         </form>
-        <p className="ax-login-help"><KeyRound size={14}/> Use your allocated college email (or Council ID) and personal password.</p>
       </div>
       <button className="ax-login-back" type="button" onClick={() => navigate('/')}>← Back to Club Asymptotes</button>
-      <p className="ax-login-foot">PROJECT AXIOM · INDIVIDUAL CREDENTIALS · DO NOT SHARE ACCESS</p>
     </section>
   </main></LiveShell>;
 }
