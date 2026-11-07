@@ -937,5 +937,12 @@ input:focus { border-color: #ffb99c; box-shadow: 0 0 0 4px rgba(255,185,156,.14)
 .ax-stage-modal-glass>footer{margin-top:28px;padding-top:20px;border-top:1px solid rgba(240,251,249,.16);color:#b7ddda;font-size:.65rem;font-weight:800;letter-spacing:.08em}
 .ax-stage-embedded footer{margin-top:0;padding-top:0;border-top:0}
 
+/* Keep descriptive project names readable in compact cards without creating
+   horizontal overflow on phones. */
+.ax-project-card h3,.ax-project-sheet-title h2,.ax-matching-grid h3,.ax-stage-embedded h2{overflow-wrap:anywhere;text-wrap:balance}
+.ax-project-card h3{font-size:clamp(1.15rem,1.55vw,1.7rem);line-height:1.08}
+.ax-project-card p,.ax-project-sheet p,.ax-match-person small{overflow-wrap:anywhere}
+@media(max-width:640px){.ax-project-card h3{font-size:1.28rem}.ax-project-sheet-title h2{font-size:clamp(1.75rem,9vw,2.45rem);line-height:1.02}.ax-stage-embedded .ax-section-title h2{font-size:clamp(1.7rem,10vw,2.45rem)}}
+
 @media(max-width:820px){.ax-stage-stack{gap:58px;padding:45px 0 60px 43px}.ax-stage-panel,.ax-stage-panel:first-child,.ax-stage-panel:nth-child(even){width:100%;margin:0;min-height:0;transform:none}.ax-stage-map{left:18px;top:78px;bottom:90px}.ax-stage-courier{left:18px;top:56px;width:52px;height:52px}.ax-stage-courier>svg{width:28px;height:28px}.ax-stage-copy{padding:23px 22px 27px}.ax-stage-copy h3{font-size:2.5rem}.ax-stage-copy footer{align-items:flex-start;flex-direction:column}.ax-stage-seal{right:18px}.ax-stage-progress{position:sticky;top:8px}.ax-stage-modal{padding:14px 10px}.ax-stage-modal-glass.has-workspace{padding:30px 16px}.ax-stage-embedded{margin:30px -16px -30px;padding:28px 12px 40px}.ax-stage-review-brief li{grid-template-columns:34px 1fr;padding:13px}}
 @media(prefers-reduced-motion:reduce){.ax-stage-courier{display:none}.ax-stage-panel,.ax-stage-panel:nth-child(even){transform:none!important}}

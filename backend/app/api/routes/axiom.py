@@ -301,12 +301,23 @@ def participant_projects(
     agreement = access_agreement_for(db, account.id)
     statements = []
     if agreement:
+        # After formation, a member should only see the brief they own or the
+        # one their publisher selected them to join. This avoids exposing every
+        # internal project to every signed participant.
+        selected_statement_ids = {
+            selection.statement_id
+            for selection in db.query(AxiomProjectTeamSelection).filter(
+                AxiomProjectTeamSelection.participant_account_id == account.id
+            ).all()
+        }
         submitted = db.query(AxiomProblemStatement, AxiomProfile.full_name).join(
             AxiomProfile, AxiomProfile.account_id == AxiomProblemStatement.mentor_account_id
         ).filter(
             AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED
         ).order_by(AxiomProblemStatement.title).all()
         for statement, publisher_name in submitted:
+            if statement.mentor_account_id != account.id and statement.id not in selected_statement_ids:
+                continue
             statements.append({
                 "id": statement.id,
                 "publisher_name": publisher_name or "Project publisher",
