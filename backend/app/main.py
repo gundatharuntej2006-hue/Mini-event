@@ -15,7 +15,7 @@ from app.api.routes.health import health_check
 from app.services.auth_service import ensure_default_organizer
 from app.services.dashboard_service import get_or_create_settings
 from app.db.seed_production_roster import seed_production_roster
-from app.services.axiom_bootstrap_service import provision_axiom_accounts
+from app.services.axiom_bootstrap_service import apply_cleanmatrix_council_team, provision_axiom_accounts
 from app.db.axiom_schema import upgrade_axiom_statement_schema
 
 
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
         seed_production_roster(db)
         if settings.ENVIRONMENT.lower() != "testing":
             provision_axiom_accounts(db)
+            apply_cleanmatrix_council_team(db)
         # Ensure pre-start test scans and dry run state are cleanly reset
         from app.services.round1_service import reset_round1_live_state, get_or_create_round1_config
         cfg = get_or_create_round1_config(db)

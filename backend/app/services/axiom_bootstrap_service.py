@@ -1,19 +1,67 @@
 import json
 from pathlib import Path
+import uuid
 
 from sqlalchemy.orm import Session
 
 from app.models.axiom import (
     AxiomBootstrapState,
+    AxiomProblemStatement,
     AxiomProfile,
     AxiomRoleChoice,
     AxiomRosterType,
+    AxiomProjectTeamSelection,
+    AxiomStatementStatus,
 )
 from app.models.event_account import EventAccount, EventPasswordVerifier, EventRole
 from app.models.user import User
 
 
 ROSTER_PATH = Path(__file__).resolve().parents[1] / "db" / "axiom_roster.json"
+
+
+def apply_cleanmatrix_council_team(db: Session) -> int:
+    """Apply the approved two-member addition to CleanMatrix exactly once.
+
+    This is deliberately idempotent: a service restart neither duplicates a
+    selection nor alters any other project team.
+    """
+    project = db.query(AxiomProblemStatement).filter(
+        AxiomProblemStatement.title == "CleanMatrix — Automatic Dataset Cleaner",
+        AxiomProblemStatement.status == AxiomStatementStatus.SUBMITTED,
+    ).first()
+    if not project:
+        return 0
+    people = db.query(AxiomProfile).filter(
+        AxiomProfile.college_email.in_([
+            "25ug1byai181@bmsit.in",  # Nayana G N
+            "24ug1bycs809@bmsit.in",  # Azman Shaikh
+        ]),
+        AxiomProfile.is_program_active.is_(True),
+    ).all()
+    existing = {
+        row.participant_account_id for row in db.query(AxiomProjectTeamSelection).filter(
+            AxiomProjectTeamSelection.statement_id == project.id
+        ).all()
+    }
+    added = 0
+    for profile in people:
+        if profile.account_id in existing:
+            continue
+        # A publisher plus at most three selected members makes a four-person team.
+        if len(existing) >= 3:
+            break
+        db.add(AxiomProjectTeamSelection(
+            id=f"axsel-{uuid.uuid4().hex[:18]}",
+            statement_id=project.id,
+            participant_account_id=profile.account_id,
+            selected_by_account_id=project.mentor_account_id,
+        ))
+        existing.add(profile.account_id)
+        added += 1
+    if added:
+        db.commit()
+    return added
 
 
 def load_axiom_roster() -> dict:
