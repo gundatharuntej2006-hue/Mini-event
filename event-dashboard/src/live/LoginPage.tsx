@@ -1,6 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { AxiomNightBackdrop } from '../axiom/AxiomPages';
+import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
+import earthNightLights from '../assets/earth-night-lights-nasa.jpg';
 import { LiveShell } from './LiveShell';
 import { signIn, warmBackend } from './eventApi';
 
@@ -38,10 +41,14 @@ export function LoginPage() {
   }
 
   return <LiveShell><main className="auth-page ax-login ax-login-immersive">
-    <div className="ax-login-home-underlay" aria-hidden="true"><div className="ax-login-underlay-title">LOOK UP.<br/>THEN BUILD<br/>FORWARD.</div><div className="ax-login-underlay-earth"/></div>
+    <div className="ax-login-home-underlay" aria-hidden="true">
+      <AxiomNightBackdrop/>
+      <div className="ax-earth-wrap"><div className="ax-earth-globe"><div className="ax-earth-map" style={{ backgroundImage: `url(${earthTexture})` }}/><div className="ax-earth-lights" style={{ backgroundImage: `url(${earthNightLights})` }}/></div></div>
+      <div className="ax-login-underlay-title">LOOK UP.<br/>THEN BUILD<br/>FORWARD.</div>
+    </div>
     <div className="ax-login-grain" aria-hidden="true"/>
     <div className="ax-glass-weather" aria-hidden="true"/>
-    <section className="ax-login-story live-reveal" aria-label="Project Axiom introduction">
+    <section className="ax-login-story" aria-label="Project Axiom introduction">
       <AxiomLoginMark/>
       <p className="ax-login-overline">MATHEMATICS · RESEARCH · CREATION</p>
       <h1>Start with a<br/><span className="ax-fluid-word">question.</span><br/>Build what<br/>comes next.</h1>
@@ -56,7 +63,7 @@ export function LoginPage() {
       <div className="ax-login-meta"><span>CLUB ASYMPTOTES</span><span>BMSIT</span><span>EST. BY CURIOSITY</span></div>
     </section>
 
-    <section className="ax-login-form-wrap live-reveal" aria-label="Secure sign in">
+    <section className="ax-login-form-wrap" aria-label="Secure sign in">
       <div className="ax-login-form-card">
         <div className="ax-login-card-kicker"><span>MEMBER WORKSPACE</span><span><i/> SECURE ACCESS</span></div>
         <h2>Welcome back<span>.</span></h2>

@@ -569,6 +569,10 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
   return <canvas ref={canvasRef} className="ax-night-canvas" aria-hidden="true"/>;
 }
 
+export function AxiomNightBackdrop() {
+  return <NightSkyCanvas mode="night"/>;
+}
+
 export function AxiomLandingPage() {
   const navigate = useNavigate();
   const [skyMode, setSkyMode] = useState<SkyMode>('auto');
