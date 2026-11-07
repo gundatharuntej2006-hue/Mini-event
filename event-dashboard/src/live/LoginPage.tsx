@@ -44,7 +44,6 @@ export function LoginPage() {
     <div className="ax-login-home-underlay" aria-hidden="true">
       <AxiomNightBackdrop/>
       <div className="ax-earth-wrap"><div className="ax-earth-globe"><div className="ax-earth-map" style={{ backgroundImage: `url(${earthTexture})` }}/><div className="ax-earth-lights" style={{ backgroundImage: `url(${earthNightLights})` }}/></div></div>
-      <div className="ax-login-underlay-title">LOOK UP.<br/>THEN BUILD<br/>FORWARD.</div>
     </div>
     <div className="ax-login-grain" aria-hidden="true"/>
     <div className="ax-glass-weather" aria-hidden="true"/>

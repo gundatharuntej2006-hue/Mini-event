@@ -137,6 +137,20 @@ function AxiomBackdrop() {
   return <div className="ax-backdrop" aria-hidden="true"><i/><i/><i/><span>∑</span><span>π</span><span>∞</span><div className="ax-noise"/></div>;
 }
 
+function AxiomClothBackdrop() {
+  const cloth=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    const surface=cloth.current;
+    if(!surface||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    let frame=0; let nextX=0; let nextY=0;
+    const paint=()=>{surface.style.setProperty('--cloth-x',`${(nextX*.55).toFixed(2)}px`);surface.style.setProperty('--cloth-y',`${(nextY*.45).toFixed(2)}px`);surface.style.setProperty('--cloth-x-inverse',`${(nextX*-.7).toFixed(2)}px`);surface.style.setProperty('--cloth-y-inverse',`${(nextY*-.5).toFixed(2)}px`);frame=0;};
+    const move=(event:PointerEvent)=>{nextX=(event.clientX/innerWidth-.5)*18;nextY=(event.clientY/innerHeight-.5)*14;if(!frame)frame=requestAnimationFrame(paint);};
+    window.addEventListener('pointermove',move,{passive:true});
+    return()=>{window.removeEventListener('pointermove',move);if(frame)cancelAnimationFrame(frame);};
+  },[]);
+  return <div ref={cloth} className="ax-cloth-backdrop" aria-hidden="true"><i/><span/><b/></div>;
+}
+
 function AxiomLogo() {
   return <div className="ax-logo"><span className="ax-glyph" aria-hidden="true"><img src="/axiom/axiom-foundation.png" alt=""/><i className="ax-conclusion-orbit"><b/></i></span><div><b>PROJECT AXIOM</b><small>AN ASYMPTOTES INITIATIVE</small></div></div>;
 }
@@ -667,14 +681,11 @@ function ProjectJourney({ deadlines, active }: { deadlines: Deadlines; active: n
       if(disposed)return; const gsap=gsapModule.gsap; const ScrollTrigger=triggerModule.ScrollTrigger; gsap.registerPlugin(ScrollTrigger);
       const panels=Array.from(stageViewport.querySelectorAll<HTMLElement>('.ax-stage-panel')); const progressLine=section.querySelector<HTMLElement>('.ax-stage-progress-fill');
       const context=gsap.context(()=>{
-        if(innerWidth>820){
-          gsap.set(panels,{autoAlpha:0,y:90,scale:.9,filter:'blur(16px)',pointerEvents:'none'}); gsap.set(panels[0],{autoAlpha:1,y:0,scale:1,filter:'blur(0px)',pointerEvents:'auto'});
-          const timeline=gsap.timeline({scrollTrigger:{trigger:section,start:'top top+=76',end:()=>`+=${innerHeight*3.15}`,pin:stageViewport,scrub:.72,anticipatePin:1,invalidateOnRefresh:true,onUpdate:self=>{const visible=Math.min(3,Math.floor(self.progress*4));panels.forEach((panel,index)=>panel.style.pointerEvents=index===visible?'auto':'none');section.dataset.viewStage=String(visible+1);}}});
-          if(progressLine)timeline.to(progressLine,{scaleX:1,duration:4,ease:'none'},0);
-          for(let index=1;index<panels.length;index+=1){timeline.to(panels[index-1],{autoAlpha:.15,y:-72,scale:.88,filter:'blur(14px)',duration:.55,ease:'power2.in'},index-.35).fromTo(panels[index],{autoAlpha:0,y:100,scale:.91,filter:'blur(18px)'},{autoAlpha:1,y:0,scale:1,filter:'blur(0px)',duration:.7,ease:'power3.out'},index-.02);}
-        }else{
-          gsap.set(progressLine,{scaleX:1}); panels.forEach(panel=>gsap.fromTo(panel,{autoAlpha:0,y:55,filter:'blur(10px)'},{autoAlpha:1,y:0,filter:'blur(0px)',duration:.75,ease:'power3.out',scrollTrigger:{trigger:panel,start:'top 88%',once:true}}));
-        }
+        panels.forEach((panel,index)=>{
+          if(index===0)return;
+          gsap.from(panel,{autoAlpha:0,y:innerWidth>820?48:28,scale:.985,duration:.62,ease:'power2.out',immediateRender:false,scrollTrigger:{trigger:panel,start:'top 88%',once:true,onEnter:()=>{section.dataset.viewStage=String(index+1);},onEnterBack:()=>{section.dataset.viewStage=String(index+1);}}});
+        });
+        ScrollTrigger.create({trigger:section,start:'top 72%',end:'bottom 72%',onUpdate:self=>{if(progressLine)progressLine.style.transform=`scaleX(${Math.max(.05,self.progress)})`;}});
       },section); cleanup=()=>context.revert();
     });
     return()=>{disposed=true;cleanup();};
@@ -729,8 +740,8 @@ export function AxiomDashboardPage() {
   const load=async()=>{try{const next=await request<AxiomMe>('/axiom/me');if(next.is_super_admin){navigate('/axiom/control',{replace:true});return;}setData(next);}catch(item){setError(item instanceof Error?item.message:'Could not load Project Axiom.');}};
   async function changeParticipation(participate:boolean){if(!participate&&!window.confirm('Mark yourself as opted out? The club council will see your decision. Existing projects, applications and team selections will remain until the council updates them.'))return;setParticipationBusy(true);setError('');try{await request('/axiom/participation','PUT',{participate});await load();}catch(item){setError(item instanceof Error?item.message:'Could not update your participation.');}finally{setParticipationBusy(false);}}
   useEffect(()=>{if(!getSession())navigate('/login',{replace:true});else void load();},[]);
-  if(!data)return <main className="ax-site ax-dashboard"><AxiomBackdrop/><AxiomHeader compact/><div className="ax-loading"><Orbit/> Loading your workspace…{error&&<p>{error}</p>}</div></main>;
-  return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/>
+  if(!data)return <main className="ax-site ax-dashboard"><AxiomClothBackdrop/><AxiomHeader compact/><div className="ax-loading"><Orbit/> Loading your workspace…{error&&<p>{error}</p>}</div></main>;
+  return <main ref={root} className="ax-site ax-dashboard ax-premium"><AxiomClothBackdrop/><AxiomHeader compact/>
     <section className="ax-dash-head"><div><div className="ax-kicker"><CircleDot/> PRIVATE AXIOM WORKSPACE</div><h1>Welcome, <em>{data.display_name.split(' ')[0]}.</em></h1><p>{data.college_email}</p></div><div className="ax-status-pill"><span/><div><small>CURRENT STATUS</small><b>PARTICIPANT</b></div></div></section>
     <ProjectJourney deadlines={data.deadlines} active={1}/>{error&&<div className="ax-alert"><X/>{error}</div>}
     <section className="ax-editor ax-scroll ax-glass"><div className="ax-section-title"><div><span>YOUR PARTICIPATION</span><h2>{data.role_choice==='OPTED_OUT'?'You have opted out':'Taking part in Axiom'}</h2></div><p>Your decision is visible to the club council. Existing projects, applications and team selections are not removed automatically; contact the council if these need to change.</p></div><button className="ax-secondary" disabled={participationBusy} onClick={()=>void changeParticipation(data.role_choice==='OPTED_OUT')}>{participationBusy?'Saving…':data.role_choice==='OPTED_OUT'?'Choose to participate':'Opt out of Project Axiom'}</button></section>
@@ -743,7 +754,7 @@ export function AxiomControlPage() {
   const navigate=useNavigate(); const root=useRef<HTMLElement>(null); useAxiomMotion(root); const [data,setData]=useState<ControlOverview|null>(null); const [error,setError]=useState('');
   useEffect(()=>{request<ControlOverview>('/axiom/control/overview').then(setData).catch(item=>setError(item.message));},[]);
   const ready=useMemo(()=>data?.people.filter(person=>person.role_choice!=='PENDING').length||0,[data]);
-  return <main ref={root} className="ax-site ax-dashboard ax-premium" onPointerMove={interactivePointer}><AxiomBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck/> CLUB COUNCIL CONTROL</div><h1>Axiom, <em>at a glance.</em></h1><p>Open projects. Publisher-controlled teams. Human final judgment.</p></div><button className="ax-secondary" onClick={()=>navigate('/')}>Public page</button></section>{error&&<div className="ax-alert"><X/>{error}</div>}{data&&<><ProjectJourney deadlines={{team_finalization:'2026-11-06T15:00:00+05:30'}} active={1}/><section className="ax-stat-grid ax-scroll"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>PARTICIPANTS</small><b>{ready}</b><span>open project board</span></div><div><small>PROJECTS</small><b>{data.submitted_statements}</b><span>published statements</span></div><div><small>RESPONSES</small><b>{data.preference_count}</b><span>legacy records</span></div></section>
+  return <main ref={root} className="ax-site ax-dashboard ax-premium"><AxiomClothBackdrop/><AxiomHeader compact/><section className="ax-dash-head"><div><div className="ax-kicker"><ShieldCheck/> CLUB COUNCIL CONTROL</div><h1>Axiom, <em>at a glance.</em></h1><p>Open projects. Publisher-controlled teams. Human final judgment.</p></div><button className="ax-secondary" onClick={()=>navigate('/')}>Public page</button></section>{error&&<div className="ax-alert"><X/>{error}</div>}{data&&<><ProjectJourney deadlines={{team_finalization:'2026-11-06T15:00:00+05:30'}} active={1}/><section className="ax-stat-grid ax-scroll"><div><small>ACTIVE ROSTER</small><b>{data.total}</b><span>approved accounts</span></div><div><small>PARTICIPANTS</small><b>{ready}</b><span>open project board</span></div><div><small>PROJECTS</small><b>{data.submitted_statements}</b><span>published statements</span></div><div><small>RESPONSES</small><b>{data.preference_count}</b><span>legacy records</span></div></section>
     <section className="ax-matching ax-scroll"><div className="ax-section-title"><div><span>PROJECT SELECTIONS</span><h2>Publisher-led teams.</h2></div><p>Each project publisher reviews applications and may select up to three applicants. With the publisher, a team can have at most four people.</p></div>{data.matching_preview.length===0?<div className="ax-empty-projects"><Orbit/><h3>Waiting for published projects.</h3></div>:<div className="ax-matching-grid">{data.matching_preview.map(team=><article key={team.statement_id}><header><span>{team.track}</span><b>{team.members.length + 1}/4</b></header><h3>{team.title}</h3>{team.members.length?team.members.map(member=><div className="ax-match-person" key={member.name}><span>{member.name.split(' ').map(part=>part[0]).slice(0,2).join('')}</span><b>{member.name}</b><small>Selected applicant</small></div>):<p>No applicants selected yet.</p>}</article>)}</div>}</section>
     <section className="ax-roster ax-scroll"><div className="ax-section-title"><div><span>LIVE ROSTER</span><h2>People and decisions.</h2></div><p>Legacy event accounts remain paused.</p></div><div className="ax-roster-table">{data.people.map(person=><article key={person.email}><div className="ax-avatar">{person.name.split(' ').slice(0,2).map(part=>part[0]).join('')}</div><div><b>{person.name}</b><small>{person.email}</small></div><span>{person.roster_type==='MENTOR_CANDIDATE'?'CANDIDATE':'MEMBER'}</span><em className={person.role_choice.toLowerCase()}>{person.role_choice.replace('_',' ')}</em></article>)}</div></section><PasswordPanel/></>}</main>;
 }
