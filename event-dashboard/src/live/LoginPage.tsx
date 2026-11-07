@@ -38,7 +38,9 @@ export function LoginPage() {
   }
 
   return <LiveShell><main className="auth-page ax-login ax-login-immersive">
+    <div className="ax-login-home-underlay" aria-hidden="true"><div className="ax-login-underlay-title">LOOK UP.<br/>THEN BUILD<br/>FORWARD.</div><div className="ax-login-underlay-earth"/></div>
     <div className="ax-login-grain" aria-hidden="true"/>
+    <div className="ax-glass-weather" aria-hidden="true"/>
     <section className="ax-login-story live-reveal" aria-label="Project Axiom introduction">
       <AxiomLoginMark/>
       <p className="ax-login-overline">MATHEMATICS · RESEARCH · CREATION</p>
