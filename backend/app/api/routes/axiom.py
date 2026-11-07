@@ -79,6 +79,11 @@ class ProjectSelectionInput(BaseModel):
     participant_account_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
+class CouncilTeamAdditionInput(BaseModel):
+    """Adds members without replacing a publisher's existing team choices."""
+    participant_account_ids: list[str] = Field(default_factory=list, min_length=1, max_length=3)
+
+
 class ParticipationInput(BaseModel):
     participate: bool
 
@@ -304,12 +309,19 @@ def participant_projects(
         # After formation, a member should only see the brief they own or the
         # one their publisher selected them to join. This avoids exposing every
         # internal project to every signed participant.
-        selected_statement_ids = {
-            selection.statement_id
-            for selection in db.query(AxiomProjectTeamSelection).filter(
-                AxiomProjectTeamSelection.participant_account_id == account.id
+        all_selections = db.query(AxiomProjectTeamSelection).all()
+        selected_statement_ids = {selection.statement_id for selection in all_selections if selection.participant_account_id == account.id}
+        selection_ids = {selection.participant_account_id for selection in all_selections}
+        profile_names = {
+            profile.account_id: profile.full_name for profile in db.query(AxiomProfile).filter(
+                AxiomProfile.account_id.in_(selection_ids)
             ).all()
         }
+        team_members_by_statement: dict[str, list[str]] = {}
+        for selection in all_selections:
+            member_name = profile_names.get(selection.participant_account_id)
+            if member_name:
+                team_members_by_statement.setdefault(selection.statement_id, []).append(member_name)
         submitted = db.query(AxiomProblemStatement, AxiomProfile.full_name).join(
             AxiomProfile, AxiomProfile.account_id == AxiomProblemStatement.mentor_account_id
         ).filter(
@@ -322,6 +334,7 @@ def participant_projects(
                 "id": statement.id,
                 "publisher_name": publisher_name or "Project publisher",
                 "is_publisher": statement.mentor_account_id == account.id,
+                "team_members": team_members_by_statement.get(statement.id, []),
                 **(statement_data(statement) or {}),
             })
     applications = db.query(AxiomProjectApplication).filter(
@@ -520,6 +533,43 @@ def select_project_members(
     return {"success": True, "data": {"selected": len(selected_ids), "team_size": len(selected_ids) + 1}, "message": "Project members selected."}
 
 
+@router.put("/control/projects/{statement_id}/members")
+def council_add_project_members(
+    statement_id: str,
+    payload: CouncilTeamAdditionInput,
+    account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)),
+    db: Session = Depends(get_db),
+):
+    """Council-only, additive roster correction with the same four-person cap."""
+    project = db.get(AxiomProblemStatement, statement_id)
+    if not project or project.status != AxiomStatementStatus.SUBMITTED:
+        raise HTTPException(status_code=404, detail="This submitted project no longer exists.")
+    requested_ids = list(dict.fromkeys(payload.participant_account_ids))
+    if project.mentor_account_id in requested_ids:
+        raise HTTPException(status_code=400, detail="The project publisher is already part of this team.")
+    profiles = {profile.account_id: profile for profile in db.query(AxiomProfile).filter(
+        AxiomProfile.account_id.in_(requested_ids),
+        AxiomProfile.is_program_active.is_(True),
+    ).all()}
+    if set(requested_ids) != set(profiles):
+        raise HTTPException(status_code=400, detail="Every added member must be in the active Project Axiom roster.")
+    opted_out = [profile.full_name for profile in profiles.values() if profile.role_choice == AxiomRoleChoice.OPTED_OUT]
+    if opted_out:
+        raise HTTPException(status_code=400, detail=f"Cannot add opted-out member(s): {', '.join(opted_out)}.")
+    existing = db.query(AxiomProjectTeamSelection).filter(AxiomProjectTeamSelection.statement_id == statement_id).all()
+    existing_ids = {selection.participant_account_id for selection in existing}
+    additions = [participant_id for participant_id in requested_ids if participant_id not in existing_ids]
+    if len(existing_ids) + len(additions) > 3:
+        raise HTTPException(status_code=409, detail="A project can have at most four people including its publisher.")
+    for participant_account_id in additions:
+        db.add(AxiomProjectTeamSelection(
+            id=f"axsel-{uuid.uuid4().hex[:18]}", statement_id=statement_id,
+            participant_account_id=participant_account_id, selected_by_account_id=account.id,
+        ))
+    db.commit()
+    return {"success": True, "data": {"added": len(additions), "team_size": len(existing_ids) + len(additions) + 1}, "message": "Council team additions saved."}
+
+
 @router.get("/control/overview")
 def control_overview(
     account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)),
@@ -544,8 +594,9 @@ def control_overview(
     for selection in selections:
         participant = profiles_by_id.get(selection.participant_account_id)
         if participant:
-            assignments[selection.statement_id].append({"name": participant.full_name, "preference_rank": 0})
+            assignments[selection.statement_id].append({"account_id": participant.account_id, "name": participant.full_name, "preference_rank": 0})
     people = [{
+        "account_id": profile.account_id,
         "name": profile.full_name,
         "email": profile.college_email,
         "roster_type": profile.roster_type.value,
