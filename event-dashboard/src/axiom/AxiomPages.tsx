@@ -20,6 +20,7 @@ type Application = { statement_id: string; proposed_solution: string; contributi
 type ProjectWorkspace = { agreement_accepted: boolean; selection_open: boolean; team_finalization_deadline: string; projects: Project[]; applications: Application[] };
 type AxiomMe = {
   display_name: string; college_email?: string; is_super_admin?: boolean;
+  phone_number?: string | null; skills?: string; linkedin_url?: string | null;
   roster_type?: 'MENTOR_CANDIDATE' | 'MEMBER';
   role_choice?: 'PENDING' | 'MENTOR' | 'PARTICIPANT' | 'OPTED_OUT';
   statement?: Statement | null; statements?: Statement[]; deadlines: Deadlines;
@@ -202,6 +203,24 @@ function StringTheoryLab() {
 function AxiomHeader({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
   return <header className={`ax-header ${compact ? 'compact' : ''}`}><button className="ax-brand-button" onClick={() => navigate('/')}><AxiomLogo/></button><nav><button onClick={() => navigate('/past-events')}><History size={15}/> Past work</button>{getSession() ? <button onClick={() => { clearSession(); navigate('/login'); }}><LogOut size={15}/> Sign out</button> : <button onClick={() => navigate('/login')}>Member access <ArrowRight size={15}/></button>}</nav></header>;
+}
+
+function ClubMark() {
+  const [lit, setLit] = useState(false);
+  return <button type="button" className={`ax-club-mark ${lit ? 'lit' : ''}`} aria-label="Club Asymptotes" onClick={() => { setLit(true); window.setTimeout(() => setLit(false), 1150); }}>
+    <img src="/brand/asymptotes-mark-cutout.png" alt="Asymptotes Club" />
+  </button>;
+}
+
+function ProfilePanel({ data, onSaved }: { data: AxiomMe; onSaved: (next: Partial<AxiomMe>) => void }) {
+  const [open, setOpen] = useState(false);
+  const [fields, setFields] = useState({ phone: data.phone_number || '', skills: data.skills || '', linkedin: data.linkedin_url || '' });
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(''); const [error, setError] = useState('');
+  async function save(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); setMessage(''); try { const next = await request<{ phone_number: string | null; skills: string; linkedin_url: string | null }>('/axiom/profile', 'PUT', { phone_number: fields.phone, skills: fields.skills, linkedin_url: fields.linkedin }, { retry: true }); onSaved(next); setMessage('Profile saved.'); } catch (item) { setError(item instanceof Error ? item.message : 'Could not save your profile.'); } finally { setBusy(false); } }
+  return <section className="ax-profile-panel">
+    <button className="ax-profile-trigger" type="button" onClick={() => setOpen(value => !value)}><span>{data.display_name.split(' ').map(part => part[0]).slice(0, 2).join('')}</span><div><small>YOUR PROFILE</small><b>{data.display_name}</b></div><ChevronRight size={18}/></button>
+    {open && <div className="ax-profile-drawer"><header><div><span>PERSONAL PROFILE</span><h2>Keep your details current.</h2></div><button type="button" aria-label="Close profile" onClick={() => setOpen(false)}><X size={18}/></button></header><p>Your contact information is visible only to authorised Project Axiom administration and project collaborators when needed.</p><form onSubmit={save}><label>College email<input value={data.college_email || ''} disabled /></label><label>Phone number <small>optional</small><input value={fields.phone} inputMode="tel" maxLength={24} onChange={event => setFields({ ...fields, phone: event.target.value })} placeholder="Your contact number" /></label><label>Skills <small>optional · comma-separated</small><textarea value={fields.skills} maxLength={600} onChange={event => setFields({ ...fields, skills: event.target.value })} placeholder="e.g. Figma, Python, public speaking, research" /></label><label>LinkedIn profile <small>optional</small><input type="url" value={fields.linkedin} maxLength={320} onChange={event => setFields({ ...fields, linkedin: event.target.value })} placeholder="https://www.linkedin.com/in/your-name" /></label><button className="ax-primary compact" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button></form>{error && <div className="ax-alert"><X size={16}/>{error}</div>}{message && <div className="ax-password-success"><Check size={16}/>{message}</div>}<PasswordPanel /></div>}
+  </section>;
 }
 
 function PasswordPanel() {
@@ -594,7 +613,7 @@ export function AxiomLandingPage() {
   return <main className="ax-sky-home" data-sky-phase={skyClock.phase}>
     <NightSkyCanvas mode={skyMode}/>
     <div className="ax-earth-wrap" aria-hidden="true"><div className="ax-earth-globe"><div className="ax-earth-map" style={{ backgroundImage: `url(${earthTexture})` }}/><div className="ax-earth-lights" style={{ backgroundImage: `url(${earthNightLights})` }}/></div></div>
-    <header className="ax-sky-header"><span>CLUB ASYMPTOTES · BMSIT</span><div><small>{skyMode === 'auto' ? `${indiaTime} IST` : `${skyClock.phase} preview`}</small><button className="ax-header-archive" onClick={() => navigate('/past-events')}>Previous events <History size={15}/></button><button onClick={() => navigate('/login')}>Current initiative <ArrowRight size={16}/></button></div></header>
+    <header className="ax-sky-header"><ClubMark/><div><small>{skyMode === 'auto' ? `${indiaTime} IST` : `${skyClock.phase} preview`}</small><button className="ax-header-archive" onClick={() => navigate('/past-events')}>Previous events <History size={15}/></button><button onClick={() => navigate('/login')}>Current initiative <ArrowRight size={16}/></button></div></header>
     <nav className="ax-sky-modes" aria-label="Sky time"><span>SKY</span>{SKY_MODES.map((option) => <button key={option.value} className={skyMode === option.value ? 'active' : ''} aria-pressed={skyMode === option.value} onClick={() => setSkyMode(option.value)}>{option.label}</button>)}</nav>
     <section className="ax-sky-intro"><div><span>CLUB ASYMPTOTES · MATHEMATICS DEPARTMENT</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A student community turning mathematics into experiences in technology, research, creativity and real-world problem solving.</p><div className="ax-sky-actions"><button onClick={() => navigate('/login')}>Current initiative <ArrowRight size={17}/></button><button className="ax-sky-previous" onClick={() => navigate('/past-events')}>Explore previous events <History size={16}/></button></div></div><small>SCROLL THROUGH THE SKY</small></section>
     <div className="ax-sky-distance" aria-hidden="true"/>
@@ -740,7 +759,7 @@ export function AxiomDashboardPage() {
   return <main ref={root} className="ax-site ax-dashboard ax-premium"><AxiomClothBackdrop/><AxiomHeader compact/>
     <section className="ax-dash-head"><div><div className="ax-kicker"><CircleDot/> PRIVATE AXIOM WORKSPACE</div><h1>Welcome, <em>{data.display_name.split(' ')[0]}.</em></h1><p>{data.college_email}</p></div><div className="ax-status-pill"><span/><div><small>CURRENT STATUS</small><b>PARTICIPANT</b></div></div></section>
     <ProjectJourney deadlines={data.deadlines} active={1} stageOneContent={stageOneWorkspace}/>{error&&<div className="ax-alert"><X/>{error}</div>}
-    <PasswordPanel/>
+    <ProfilePanel data={data} onSaved={(next) => setData(current => current ? { ...current, ...next } : current)} />
   </main>;
 }
 

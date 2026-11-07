@@ -41,6 +41,9 @@ class AxiomProfile(Base):
     )
     is_program_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    phone_number: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    skills: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    linkedin_url: Mapped[str | None] = mapped_column(String(320), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

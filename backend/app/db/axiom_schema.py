@@ -30,6 +30,14 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
                 "ALTER TABLE axiom_problem_statements "
                 "ADD COLUMN client_request_id VARCHAR(64)"
             ))
+        # Personal profile fields are deliberately optional. They enrich the
+        # member directory without changing the authoritative event roster.
+        if "phone_number" not in columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN phone_number VARCHAR(24)"))
+        if "skills" not in columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN skills TEXT NOT NULL DEFAULT ''"))
+        if "linkedin_url" not in columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN linkedin_url VARCHAR(320)"))
         # Remove every legacy uniqueness rule that limits how many projects an
         # author may publish. Earlier production revisions used generated
         # constraint names, so dropping two assumed names was not sufficient.

@@ -61,6 +61,12 @@ class SelfPasswordChangeInput(BaseModel):
     new_password_confirmation: str = Field(min_length=8, max_length=72)
 
 
+class SelfProfileInput(BaseModel):
+    phone_number: str | None = Field(default=None, max_length=24)
+    skills: str = Field(default="", max_length=600)
+    linkedin_url: str | None = Field(default=None, max_length=320)
+
+
 class AgreementInput(BaseModel):
     accepted: bool
     full_name: str = Field(min_length=2, max_length=120)
@@ -231,6 +237,31 @@ def change_own_password(
         "success": True,
         "data": {"login_id": account.login_id},
         "message": "Password changed. Use the new password for every future login.",
+    }
+
+
+@router.put("/profile")
+def update_own_profile(
+    payload: SelfProfileInput,
+    account: EventAccount = Depends(current_account),
+    db: Session = Depends(get_db),
+):
+    """Allow a roster member to maintain only their own optional profile data."""
+    profile = profile_for(db, account)
+    phone = (payload.phone_number or "").strip()
+    if phone and not all(char.isdigit() or char in "+ -()" for char in phone):
+        raise HTTPException(status_code=400, detail="Enter a valid phone number.")
+    linkedin = (payload.linkedin_url or "").strip()
+    if linkedin and not linkedin.startswith(("https://www.linkedin.com/", "https://linkedin.com/")):
+        raise HTTPException(status_code=400, detail="Use a full LinkedIn profile URL.")
+    profile.phone_number = phone or None
+    profile.skills = payload.skills.strip()
+    profile.linkedin_url = linkedin or None
+    db.commit()
+    return {
+        "success": True,
+        "data": {"phone_number": profile.phone_number, "skills": profile.skills, "linkedin_url": profile.linkedin_url},
+        "message": "Your profile has been saved.",
     }
 
 
@@ -431,6 +462,9 @@ def me(account: EventAccount = Depends(current_account), db: Session = Depends(g
             "roster_type": profile.roster_type.value,
             "role_choice": profile.role_choice.value,
             "must_change_password": profile.must_change_password,
+            "phone_number": profile.phone_number,
+            "skills": profile.skills,
+            "linkedin_url": profile.linkedin_url,
             # `statement` is retained for older browsers during the rollout.
             "statement": statement_data(statements[0]) if statements else None,
             "statements": [statement_data(statement) for statement in statements],
