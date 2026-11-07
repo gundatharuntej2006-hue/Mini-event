@@ -138,7 +138,7 @@ function AxiomBackdrop() {
 }
 
 function AxiomLogo() {
-  return <div className="ax-logo"><span className="ax-glyph"><i/><i/><b>A</b></span><div><b>PROJECT AXIOM</b><small>AN ASYMPTOTES INITIATIVE</small></div></div>;
+  return <div className="ax-logo"><span className="ax-glyph" aria-hidden="true"><img src="/axiom/axiom-foundation.png" alt=""/><i className="ax-conclusion-orbit"><b/></i></span><div><b>PROJECT AXIOM</b><small>AN ASYMPTOTES INITIATIVE</small></div></div>;
 }
 
 function closedStringPath(time: number, phase = 0) {
