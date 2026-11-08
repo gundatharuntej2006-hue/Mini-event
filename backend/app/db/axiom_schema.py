@@ -19,6 +19,7 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
         return
 
     columns = {item["name"] for item in inspector.get_columns("axiom_problem_statements")}
+    profile_columns = {item["name"] for item in inspector.get_columns("axiom_profiles")}
     with engine.begin() as connection:
         if "statement_slot" not in columns:
             connection.execute(text(
@@ -32,12 +33,12 @@ def upgrade_axiom_statement_schema(engine: Engine) -> None:
             ))
         # Personal profile fields are deliberately optional. They enrich the
         # member directory without changing the authoritative event roster.
-        if "phone_number" not in columns:
-            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN phone_number VARCHAR(24)"))
-        if "skills" not in columns:
-            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN skills TEXT NOT NULL DEFAULT ''"))
-        if "linkedin_url" not in columns:
-            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN linkedin_url VARCHAR(320)"))
+        if "phone_number" not in profile_columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN IF NOT EXISTS phone_number VARCHAR(24)"))
+        if "skills" not in profile_columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN IF NOT EXISTS skills TEXT NOT NULL DEFAULT ''"))
+        if "linkedin_url" not in profile_columns:
+            connection.execute(text("ALTER TABLE axiom_profiles ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(320)"))
         # Remove every legacy uniqueness rule that limits how many projects an
         # author may publish. Earlier production revisions used generated
         # constraint names, so dropping two assumed names was not sufficient.
