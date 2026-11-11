@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import { AppRoutes } from './routes';
 import { warmBackend } from './live/eventApi';
-import { CellCursor } from './components/CellCursor';
+import { SiteCursor } from './components/SiteCursor';
 
 export default function App() {
   useEffect(() => {
@@ -12,7 +12,7 @@ export default function App() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AppRoutes />
-      <CellCursor />
+      <SiteCursor />
     </BrowserRouter>
   );
 }

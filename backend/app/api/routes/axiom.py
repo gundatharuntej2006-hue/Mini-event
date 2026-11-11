@@ -221,7 +221,7 @@ def change_own_password(
     if payload.new_password != payload.new_password_confirmation:
         raise HTTPException(status_code=400, detail="The two new password entries do not match.")
     if not verify_password(payload.current_password, account.password_hash):
-        raise HTTPException(status_code=401, detail="Your current password is incorrect.")
+        raise HTTPException(status_code=403, detail="Your current password is incorrect.")
     if verify_password(payload.new_password, account.password_hash):
         raise HTTPException(status_code=400, detail="Choose a new password that is different from your current password.")
 

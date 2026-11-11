@@ -42,7 +42,7 @@ def correct_team_roster(
 ):
     """Rename one existing team and its five existing roster entries safely."""
     if not verify_password(payload.current_super_password, account.password_hash):
-        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+        raise HTTPException(status_code=403, detail="Super admin password confirmation failed.")
 
     identifier = normalise_identifier(payload.team_identifier)
     allocation = db.query(Round1RouteAllocationModel).filter(

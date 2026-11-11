@@ -1,5 +1,6 @@
 const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 const sessionKey = 'asymptotes_live_session';
+const sessionChangedEvent = 'asymptotes_session_changed';
 
 const retryDelaysMs = [0, 1000, 2000, 4000, 6000];
 let backendWarmup: Promise<void> | null = null;
@@ -67,6 +68,8 @@ async function fetchWithRecovery(url: string, init: RequestInit, canRetry: boole
 export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'PARTICIPANT';
 export type Session = { token: string; role: Role; displayName: string; experience?: 'axiom' | 'event' };
 export type LoginResult = Session | { redirect: 'instagram'; message: string };
+type CurrentAccount = { role: Role; display_name: string; experience: 'axiom' | 'event' };
+let sessionValidation: { token: string; promise: Promise<Session | null> } | null = null;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -77,14 +80,49 @@ export class ApiRequestError extends Error {
   }
 }
 
-export function getSession(): Session | null {
+function tokenExpiresAt(token: string): number | null {
   try {
-    const raw = localStorage.getItem(sessionKey);
-    return raw ? JSON.parse(raw) as Session : null;
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown };
+    return typeof decoded.exp === 'number' && Number.isFinite(decoded.exp) ? decoded.exp * 1000 : null;
   } catch { return null; }
 }
 
-export function clearSession() { localStorage.removeItem(sessionKey); }
+export function getSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(sessionKey);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as Session;
+    const expiresAt = typeof session.token === 'string' ? tokenExpiresAt(session.token) : null;
+    // The server decides whether exp has passed. Trusting the device clock
+    // here can sign a member out early, and leaves an open page unaware when
+    // an expired token is omitted from a later request.
+    if (!expiresAt || !['SUPER_ADMIN', 'ADMIN', 'PARTICIPANT'].includes(session.role)) return null;
+    return session;
+  } catch { return null; }
+}
+
+export function getSessionToken(): string | null { return getSession()?.token ?? null; }
+
+export function subscribeSession(listener: () => void): () => void {
+  window.addEventListener(sessionChangedEvent, listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    window.removeEventListener(sessionChangedEvent, listener);
+    window.removeEventListener('storage', listener);
+  };
+}
+
+function saveSession(session: Session): void {
+  localStorage.setItem(sessionKey, JSON.stringify(session));
+  window.dispatchEvent(new Event(sessionChangedEvent));
+}
+
+export function clearSession(): void {
+  localStorage.removeItem(sessionKey);
+  window.dispatchEvent(new Event(sessionChangedEvent));
+}
 
 export async function request<T>(path: string, method = 'GET', body?: unknown, options?: { retry?: boolean; timeoutMs?: number }): Promise<T> {
   const session = getSession();
@@ -100,8 +138,34 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, o
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }, options?.retry ?? method === 'GET', options?.timeoutMs ?? 20_000);
   const json = await response.json().catch(() => null);
+  // A feature can reject its own device session with 401 while the bearer is
+  // still valid. Verify the bearer with /me before ending the global session.
+  if (response.status === 401 && session && getSessionToken() === session.token) {
+    if (path === '/me') clearSession();
+    else void validateSession().catch(() => {});
+  }
   if (!response.ok || !json?.success) throw new ApiRequestError(json?.message || 'Something went wrong.', response.status);
   return json.data as T;
+}
+
+export function validateSession(): Promise<Session | null> {
+  const session = getSession();
+  if (!session) return Promise.resolve(null);
+  if (sessionValidation?.token === session.token) return sessionValidation.promise;
+  const token = session.token;
+  const promise = request<CurrentAccount>('/me').then(account => {
+    if (getSessionToken() !== token) return getSession();
+    const updated: Session = { token, role: account.role, displayName: account.display_name, experience: account.experience };
+    saveSession(updated);
+    return updated;
+  }).catch(error => {
+    if (error instanceof ApiRequestError && error.status === 401) return null;
+    throw error;
+  }).finally(() => {
+    if (sessionValidation?.token === token) sessionValidation = null;
+  });
+  sessionValidation = { token, promise };
+  return promise;
 }
 
 export async function signIn(loginId: string, password: string): Promise<LoginResult> {
@@ -125,7 +189,7 @@ export async function signIn(loginId: string, password: string): Promise<LoginRe
   if (!response.ok || !json?.success) throw new Error(json?.message || 'Incorrect ID or password.');
   if (json.data.redirect === 'instagram') return { redirect: 'instagram', message: json.message || 'Round 1 has ended for this team.' };
   const session: Session = { token: json.data.token, role: json.data.role, displayName: json.data.display_name, experience: json.data.experience };
-  localStorage.setItem(sessionKey, JSON.stringify(session));
+  saveSession(session);
   return session;
 }
 

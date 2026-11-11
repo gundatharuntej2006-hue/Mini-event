@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { clearSession, getSession, request } from '../live/eventApi';
 import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
 import earthNightLights from '../assets/earth-night-lights-nasa.jpg';
+import { getSkyClock, msUntilNextMinute, type SkyClock, type SkyPhase } from './skyTime';
 
 type Deadlines = { team_finalization: string };
 type Statement = {
@@ -32,24 +33,8 @@ type ControlOverview = {
   people: { account_id: string; name: string; email: string; roster_type: string; role_choice: string }[];
 };
 
-type SkyMode = 'auto' | 'morning' | 'afternoon' | 'evening' | 'night';
-type SkyPhase = Exclude<SkyMode, 'auto'>;
-const SKY_MODES: Array<{ value: SkyMode; label: string }> = [
-  { value: 'auto', label: 'Auto · IST' }, { value: 'morning', label: 'Morning' },
-  { value: 'afternoon', label: 'Afternoon' }, { value: 'evening', label: 'Evening' }, { value: 'night', label: 'Night' },
-];
-const getIndiaMinutes = () => {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
-  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0);
-  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0);
-  return hour * 60 + minute;
-};
-const getSkyClock = (mode: SkyMode): { phase: SkyPhase; minutes: number } => {
-  const previewMinutes: Record<SkyPhase, number> = { morning: 7 * 60 + 15, afternoon: 13 * 60 + 30, evening: 18 * 60, night: 22 * 60 };
-  const minutes = mode === 'auto' ? getIndiaMinutes() : previewMinutes[mode];
-  const phase: SkyPhase = mode !== 'auto' ? mode : minutes >= 330 && minutes < 720 ? 'morning' : minutes >= 720 && minutes < 990 ? 'afternoon' : minutes >= 990 && minutes < 1155 ? 'evening' : 'night';
-  return { phase, minutes };
-};
+const NIGHT_CLOCK: SkyClock = { phase: 'night', minutes: 22 * 60 };
+const indiaTimeFormatter = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' });
 
 const formatDeadline = (value: string) => new Intl.DateTimeFormat('en-IN', {
   day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata',
@@ -97,38 +82,41 @@ function useAxiomMotion(root: RefObject<HTMLElement>) {
       }
       }, element);
 
-      const magnetic = [...element.querySelectorAll<HTMLElement>('.ax-primary,.ax-secondary,.ax-header nav button')];
-      const cleanups = magnetic.map((button) => {
-        const move = (event: PointerEvent) => {
-          if (event.pointerType === 'touch') return;
-          const box = button.getBoundingClientRect();
-          gsap.to(button, { x: (event.clientX - box.left - box.width / 2) * .13, y: (event.clientY - box.top - box.height / 2) * .18, duration: .25, overwrite: true });
-        };
-        const leave = () => gsap.to(button, { x: 0, y: 0, duration: .55, ease: 'elastic.out(1,.4)' });
-        button.addEventListener('pointermove', move); button.addEventListener('pointerleave', leave);
-        return () => { button.removeEventListener('pointermove', move); button.removeEventListener('pointerleave', leave); };
-      });
-      teardown = () => { cleanups.forEach(fn => fn()); context.revert(); };
+      teardown = () => { context.revert(); };
     });
     return () => { disposed = true; teardown(); };
   }, [root]);
 }
 
+const pendingPointerPaints = new WeakMap<HTMLElement, { x: number; y: number }>();
 function interactivePointer(event: ReactPointerEvent<HTMLElement>) {
-  if (event.pointerType === 'touch') return;
-  const box = event.currentTarget.getBoundingClientRect();
-  const x = (event.clientX - box.left) / box.width;
-  const y = (event.clientY - box.top) / box.height;
-  event.currentTarget.style.setProperty('--ax-x', `${x * 100}%`);
-  event.currentTarget.style.setProperty('--ax-y', `${y * 100}%`);
-  event.currentTarget.style.setProperty('--ax-tilt-x', `${(x - .5) * 6}deg`);
-  event.currentTarget.style.setProperty('--ax-tilt-y', `${(y - .5) * -6}deg`);
-  event.currentTarget.style.setProperty('--ax-image-x', `${(x - .5) * 24}px`);
-  event.currentTarget.style.setProperty('--ax-image-y', `${(y - .5) * 18}px`);
-  event.currentTarget.style.setProperty('--ax-glow-x', `${(x - .5) * -10}px`);
-  event.currentTarget.style.setProperty('--ax-glow-y', `${(y - .5) * -8}px`);
-  event.currentTarget.style.setProperty('--ax-depth-x', `${(x - .5) * -8}px`);
-  event.currentTarget.style.setProperty('--ax-depth-y', `${(y - .5) * -6}px`);
+  if (event.pointerType !== 'mouse') return;
+  const element = event.currentTarget;
+  const pending = pendingPointerPaints.get(element);
+  if (pending) {
+    pending.x = event.clientX;
+    pending.y = event.clientY;
+    return;
+  }
+  const point = { x: event.clientX, y: event.clientY };
+  pendingPointerPaints.set(element, point);
+  requestAnimationFrame(() => {
+    pendingPointerPaints.delete(element);
+    if (!element.isConnected) return;
+    const box = element.getBoundingClientRect();
+    const x = (point.x - box.left) / box.width;
+    const y = (point.y - box.top) / box.height;
+    element.style.setProperty('--ax-x', `${x * 100}%`);
+    element.style.setProperty('--ax-y', `${y * 100}%`);
+    element.style.setProperty('--ax-tilt-x', `${(x - .5) * 6}deg`);
+    element.style.setProperty('--ax-tilt-y', `${(y - .5) * -6}deg`);
+    element.style.setProperty('--ax-image-x', `${(x - .5) * 24}px`);
+    element.style.setProperty('--ax-image-y', `${(y - .5) * 18}px`);
+    element.style.setProperty('--ax-glow-x', `${(x - .5) * -10}px`);
+    element.style.setProperty('--ax-glow-y', `${(y - .5) * -8}px`);
+    element.style.setProperty('--ax-depth-x', `${(x - .5) * -8}px`);
+    element.style.setProperty('--ax-depth-y', `${(y - .5) * -6}px`);
+  });
 }
 
 function AxiomBackdrop() {
@@ -202,7 +190,7 @@ function StringTheoryLab() {
 
 function AxiomHeader({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
-  return <header className={`ax-header ${compact ? 'compact' : ''}`}><button className="ax-brand-button" onClick={() => navigate('/')}><AxiomLogo/></button><nav><button onClick={() => navigate('/past-events')}><History size={15}/> Past work</button>{getSession() ? <button onClick={() => { clearSession(); navigate('/login'); }}><LogOut size={15}/> Sign out</button> : <button onClick={() => navigate('/login')}>Member access <ArrowRight size={15}/></button>}</nav></header>;
+  return <header className={`ax-header ${compact ? 'compact' : ''}`}><button className="ax-brand-button" onClick={() => navigate('/')}><AxiomLogo/></button><nav><button onClick={() => navigate('/past-events')}><History size={15}/> Past work</button>{getSession() ? <button onClick={() => { clearSession(); navigate('/login'); }}><LogOut size={15}/> Sign out</button> : <button onClick={() => navigate('/axiom')}>Member access <ArrowRight size={15}/></button>}</nav></header>;
 }
 
 function ClubMark() {
@@ -251,8 +239,14 @@ function PasswordPanel() {
   </section>;
 }
 
-function NightSkyCanvas({ mode }: { mode: SkyMode }) {
+function NightSkyCanvas({ clock, staticNight = false }: { clock?: SkyClock; staticNight?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const clockRef = useRef(clock);
+  const redrawRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    clockRef.current = clock;
+    redrawRef.current();
+  }, [clock]);
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext('2d', { alpha: false, desynchronized: true });
@@ -262,7 +256,6 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
     const lowPower = navigator.hardwareConcurrency <= 4 || memory <= 4;
     const frameInterval = lowPower ? 50 : 33;
     let width = 0; let height = 0; let ratio = 1; let frame = 0; let lastPaint = 0; let scrollProgress = 0; let pageVisible = !document.hidden;
-    let skyClock = getSkyClock(mode); let lastClockUpdate = 0;
     let nextMeteor = performance.now() + 1400 + Math.random() * 4200;
     let meteor: { started: number; x: number; y: number; dx: number; dy: number; length: number; duration: number; brightness: number; twin: boolean } | null = null;
     let nextImpact = performance.now() + 4000 + Math.random() * 3000;
@@ -424,8 +417,7 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
       if (!pageVisible) return;
       if (!reduceMotion && time - lastPaint < frameInterval) { frame = window.requestAnimationFrame(draw); return; }
       lastPaint = time;
-      if (time - lastClockUpdate > 30000) { skyClock = getSkyClock(mode); lastClockUpdate = time; }
-      const { phase, minutes } = skyClock;
+      const { phase, minutes } = staticNight ? NIGHT_CLOCK : clockRef.current ?? getSkyClock();
       const palettes: Record<SkyPhase, [string, string, string, string]> = {
         night: ['#01030b', '#030b1c', '#07182d', '#102d4b'],
         morning: ['#1b4168', '#5e99c4', '#b9d8e7', '#f7c78d'],
@@ -587,35 +579,51 @@ function NightSkyCanvas({ mode }: { mode: SkyMode }) {
     };
     const updateVisibility = () => {
       pageVisible = !document.hidden;
-      if (pageVisible && !reduceMotion && !frame) frame = window.requestAnimationFrame(draw);
+      if (pageVisible && !frame) frame = window.requestAnimationFrame(draw);
       if (!pageVisible && frame) { window.cancelAnimationFrame(frame); frame = 0; }
+    };
+    redrawRef.current = () => {
+      if (reduceMotion && pageVisible && !frame) frame = window.requestAnimationFrame(draw);
     };
     buildField(); updateScroll();
     window.addEventListener('resize', buildField); window.addEventListener('scroll', updateScroll, { passive: true });
     document.addEventListener('visibilitychange', updateVisibility);
     frame = window.requestAnimationFrame(draw);
-    return () => { window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); document.removeEventListener('visibilitychange', updateVisibility); };
-  }, [mode]);
+    return () => { redrawRef.current = () => {}; window.cancelAnimationFrame(frame); window.removeEventListener('resize', buildField); window.removeEventListener('scroll', updateScroll); document.removeEventListener('visibilitychange', updateVisibility); };
+  }, [staticNight]);
   return <canvas ref={canvasRef} className="ax-night-canvas" aria-hidden="true"/>;
 }
 
 export function AxiomNightBackdrop() {
-  return <NightSkyCanvas mode="night"/>;
+  return <NightSkyCanvas staticNight/>;
 }
 
 export function AxiomLandingPage() {
   const navigate = useNavigate();
-  const [skyMode, setSkyMode] = useState<SkyMode>('auto');
-  const [clockTick, setClockTick] = useState(0);
-  useEffect(() => { const timer = window.setInterval(() => setClockTick((tick) => tick + 1), 30000); return () => window.clearInterval(timer); }, []);
-  const skyClock = useMemo(() => getSkyClock(skyMode), [skyMode, clockTick]);
-  const indiaTime = useMemo(() => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' }).format(new Date()), [clockTick]);
+  const [skyClock, setSkyClock] = useState(getSkyClock);
+  useEffect(() => {
+    let timer: number;
+    const update = () => {
+      setSkyClock(getSkyClock());
+      timer = window.setTimeout(update, msUntilNextMinute());
+    };
+    const onVisibility = () => {
+      window.clearTimeout(timer);
+      if (!document.hidden) update();
+    };
+    if (!document.hidden) timer = window.setTimeout(update, msUntilNextMinute());
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+  const indiaTime = indiaTimeFormatter.format(new Date());
   return <main className="ax-sky-home" data-sky-phase={skyClock.phase}>
-    <NightSkyCanvas mode={skyMode}/>
+    <NightSkyCanvas clock={skyClock}/>
     <div className="ax-earth-wrap" aria-hidden="true"><div className="ax-earth-globe"><div className="ax-earth-map" style={{ backgroundImage: `url(${earthTexture})` }}/><div className="ax-earth-lights" style={{ backgroundImage: `url(${earthNightLights})` }}/></div></div>
-    <header className="ax-sky-header"><ClubMark/><div><small>{skyMode === 'auto' ? `${indiaTime} IST` : `${skyClock.phase} preview`}</small><button className="ax-header-archive" onClick={() => navigate('/past-events')}>Previous events <History size={15}/></button><button onClick={() => navigate('/login')}>Current initiative <ArrowRight size={16}/></button></div></header>
-    <nav className="ax-sky-modes" aria-label="Sky time"><span>SKY</span>{SKY_MODES.map((option) => <button key={option.value} className={skyMode === option.value ? 'active' : ''} aria-pressed={skyMode === option.value} onClick={() => setSkyMode(option.value)}>{option.label}</button>)}</nav>
-    <section className="ax-sky-intro"><div><span>CLUB ASYMPTOTES · MATHEMATICS DEPARTMENT</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A student community turning mathematics into experiences in technology, research, creativity and real-world problem solving.</p><div className="ax-sky-actions"><button onClick={() => navigate('/login')}>Current initiative <ArrowRight size={17}/></button><button className="ax-sky-previous" onClick={() => navigate('/past-events')}>Explore previous events <History size={16}/></button></div></div><small>SCROLL THROUGH THE SKY</small></section>
+    <header className="ax-sky-header"><ClubMark/><div><small>{indiaTime} IST</small><button className="ax-header-archive" onClick={() => navigate('/past-events')}>Previous events <History size={15}/></button><button onClick={() => navigate('/axiom')}>Current initiative <ArrowRight size={16}/></button></div></header>
+    <section className="ax-sky-intro"><div><span>CLUB ASYMPTOTES · MATHEMATICS DEPARTMENT</span><h1>Look up.<br/><em>Then build forward.</em></h1><p>A student community turning mathematics into experiences in technology, research, creativity and real-world problem solving.</p><div className="ax-sky-actions"><button onClick={() => navigate('/axiom')}>Current initiative <ArrowRight size={17}/></button><button className="ax-sky-previous" onClick={() => navigate('/past-events')}>Explore previous events <History size={16}/></button></div></div><small>SCROLL THROUGH THE SKY</small></section>
     <div className="ax-sky-distance" aria-hidden="true"/>
   </main>;
 }
@@ -628,7 +636,7 @@ export function AxiomLandingPageAtomArchive() {
         <div className="ax-kicker"><Sparkles size={14}/> BUILT FROM WITHIN · SEMESTER 01</div>
         <div className="ax-title-lockup"><span>PROJECT</span><h1>Axiom<em>.</em></h1></div>
         <p>Not another volunteer list. A private studio where Asymptotes’ core members investigate an idea or build a product—and leave the club stronger than they found it.</p>
-        <div className="ax-hero-actions"><button className="ax-primary" onClick={() => navigate('/login')}>Enter the workspace <ArrowRight size={18}/></button><button className="ax-secondary" onClick={() => document.querySelector('.ax-paths')?.scrollIntoView({behavior:'smooth'})}>Discover the initiative <ArrowDown size={17}/></button></div>
+        <div className="ax-hero-actions"><button className="ax-primary" onClick={() => navigate('/axiom')}>Enter the workspace <ArrowRight size={18}/></button><button className="ax-secondary" onClick={() => document.querySelector('.ax-paths')?.scrollIntoView({behavior:'smooth'})}>Discover the initiative <ArrowDown size={17}/></button></div>
         <div className="ax-hero-proof"><span><b>02</b> paths</span><span><b>01</b> community</span><span><b>∞</b> possibility</span></div>
       </div>
       <div className="ax-orbit-stage" aria-label="Project Axiom interactive creation system" onPointerMove={interactivePointer}>
@@ -677,7 +685,7 @@ export function AxiomLandingPageAtomArchive() {
       ['01','Frame','Mentors submit one concise research or product challenge.'],['02','Explore','Members read every released project under an originality agreement.'],['03','Respond','Each member ranks up to three and explains a solution and contribution.'],['04','Match','Preference fit, mentor review and balanced capacity shape the teams.'],['05','Create','Teams work through checkpoints and present at the internal showcase.'],
     ].map(([n,title,copy]) => <article key={n}><b>{n}</b><div><span>{title}</span><p>{copy}</p></div></article>)}</div></section>
 
-    <section className="ax-window ax-scroll ax-glass" onPointerMove={interactivePointer}><div><div className="ax-kicker"><CalendarClock size={14}/> CURRENT WINDOW</div><h2>Built for the people<br/><em>already building the club.</em></h2><p>Private access for the approved Asymptotes core roster.</p></div><button className="ax-primary" onClick={() => navigate('/login')}>Open your invitation <ChevronRight size={18}/></button></section>
+    <section className="ax-window ax-scroll ax-glass" onPointerMove={interactivePointer}><div><div className="ax-kicker"><CalendarClock size={14}/> CURRENT WINDOW</div><h2>Built for the people<br/><em>already building the club.</em></h2><p>Private access for the approved Asymptotes core roster.</p></div><button className="ax-primary" onClick={() => navigate('/axiom')}>Open your invitation <ChevronRight size={18}/></button></section>
     <footer className="ax-footer"><AxiomLogo/><p>Think · build · share · grow</p></footer>
   </main>;
 }
@@ -754,7 +762,7 @@ export function AxiomDashboardPage() {
   const navigate=useNavigate(); const root=useRef<HTMLElement>(null); useAxiomMotion(root);
   const [data,setData]=useState<AxiomMe|null>(null); const [error,setError]=useState('');
   const load=async()=>{try{const next=await request<AxiomMe>('/axiom/me');if(next.is_super_admin){navigate('/axiom/control',{replace:true});return;}setData(next);}catch(item){setError(item instanceof Error?item.message:'Could not load Project Axiom.');}};
-  useEffect(()=>{if(!getSession())navigate('/login',{replace:true});else void load();},[]);
+  useEffect(()=>{void load();},[]);
   if(!data)return <main className="ax-site ax-dashboard"><AxiomClothBackdrop/><AxiomHeader compact/><div className="ax-loading"><Orbit/> Loading your workspace…{error&&<p>{error}</p>}</div></main>;
   const stageOneWorkspace=<div className="ax-stage-one-workspace"><ParticipantWorkspace/></div>;
   return <main ref={root} className="ax-site ax-dashboard ax-premium"><AxiomClothBackdrop/><AxiomHeader compact/>

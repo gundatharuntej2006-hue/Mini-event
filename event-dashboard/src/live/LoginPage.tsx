@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AxiomNightBackdrop } from '../axiom/AxiomPages';
 import earthTexture from '../assets/earth-blue-marble-nasa.jpg';
 import earthNightLights from '../assets/earth-night-lights-nasa.jpg';
 import { LiveShell } from './LiveShell';
 import { signIn, warmBackend } from './eventApi';
+import { destinationForSession } from '../routes/sessionRouting';
 
 function AxiomLoginMark() {
   return <div className="axiom-login-mark" aria-label="Project Axiom">
@@ -21,6 +22,7 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => { void warmBackend(); }, []);
 
@@ -33,8 +35,8 @@ export function LoginPage() {
         navigate('/results', { replace: true, state: { message: session.message } });
         return;
       }
-      if (session.experience === 'axiom') navigate(session.role === 'SUPER_ADMIN' ? '/axiom/control' : '/axiom', { replace: true });
-      else navigate(session.role === 'PARTICIPANT' ? '/play' : session.role === 'ADMIN' ? '/station' : '/control', { replace: true });
+      const requested = new URLSearchParams(location.search).get('next');
+      navigate(destinationForSession(session, requested), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to sign in.');
     } finally { setLoading(false); }

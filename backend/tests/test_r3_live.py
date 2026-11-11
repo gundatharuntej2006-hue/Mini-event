@@ -164,7 +164,7 @@ def test_super_admin_reset_requires_double_password_and_preserves_setup(client, 
     assert mismatch.status_code == 400
     protected["password_confirmation"] = protected["password"] = "WrongPassword987"
     wrong = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)
-    assert wrong.status_code == 401
+    assert wrong.status_code == 403
     protected["password_confirmation"] = protected["password"] = "SuperTest987"
     protected["confirmed"] = False
     unconfirmed = client.post("/api/v1/r3-live/control/reset", headers=super_headers, json=protected)

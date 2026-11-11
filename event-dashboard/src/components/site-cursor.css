@@ -1,0 +1,41 @@
+.site-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2147483647;
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-24px, -24px, 0);
+  will-change: transform;
+  contain: layout style paint;
+}
+
+.site-cursor span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid #a9edfa;
+  border-radius: 50%;
+  background: rgba(9, 43, 62, .35);
+  box-shadow: 0 0 0 1px rgba(3, 22, 38, .62), 0 0 6px rgba(111, 222, 246, .28);
+  transition: transform 150ms ease-out;
+}
+
+.site-cursor[data-hover="true"] span { transform: scale(1.45); }
+.site-cursor[data-pressed="true"] span { transform: scale(.72); transition-duration: 90ms; }
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  html.site-cursor-active,
+  html.site-cursor-active * { cursor: none !important; }
+  html.site-cursor-active :where(input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+    textarea, select, [contenteditable], [role="textbox"], p, h1, h2, h3, h4, h5, h6,
+    span, small, strong, em, b, li, td, th, label, blockquote, pre, code) { cursor: auto !important; }
+  html.site-cursor-active :where(input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+    textarea, [contenteditable], [role="textbox"]) { cursor: text !important; }
+  html.site-cursor-active :where(a, button, summary, [role="button"], [role="link"]) *,
+  html.site-cursor-active :where(a, button, summary, [role="button"], [role="link"]) { cursor: none !important; }
+  html.site-cursor-active .site-cursor { opacity: 1; }
+  html.site-cursor-active .site-cursor[data-text="true"] { opacity: 0; }
+}

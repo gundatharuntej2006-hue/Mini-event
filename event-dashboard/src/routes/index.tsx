@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ComponentType } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
+import { GuestRoute, ProtectedRoute } from './SessionRoutes';
 
 function lazyNamed<T extends Record<string, ComponentType<object>>>(loader: () => Promise<T>, name: keyof T) {
   return lazy(async () => ({ default: (await loader())[name] }));
@@ -30,21 +31,23 @@ export function AppRoutes() {
   return (
     <Suspense fallback={<RouteFallback />}><Routes>
       <Route path="/" element={<AxiomLandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/axiom" element={<AxiomDashboardPage />} />
-      <Route path="/axiom/control" element={<AxiomControlPage />} />
+      <Route element={<GuestRoute />}><Route path="/login" element={<LoginPage />} /></Route>
       <Route path="/past-events" element={<PastEventsPage />} />
-      <Route path="/play" element={<ParticipantEntryPage />} />
-      <Route path="/scan/:location" element={<ParticipantEntryPage />} />
-      <Route path="/station" element={<AdminPage />} />
-      <Route path="/control" element={<SuperAdminPage />} />
-      <Route path="/accounts" element={<AccountManagementPage />} />
-      <Route path="/round2/control" element={<Round2SuperPage />} />
-      <Route path="/round2/station" element={<Round2AdminPage />} />
-      <Route path="/round3/play" element={<Round3PuzzleParticipantPage />} />
-      <Route path="/round3/control" element={<Round3SuperPage />} />
-      <Route path="/round3/station" element={<Round3PuzzleStationPage />} />
-      <Route path="/round3/demo" element={<Round3PuzzleDemoPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route path="/axiom" element={<AxiomDashboardPage />} />
+        <Route path="/axiom/control" element={<AxiomControlPage />} />
+        <Route path="/play" element={<ParticipantEntryPage />} />
+        <Route path="/scan/:location" element={<ParticipantEntryPage />} />
+        <Route path="/station" element={<AdminPage />} />
+        <Route path="/control" element={<SuperAdminPage />} />
+        <Route path="/accounts" element={<AccountManagementPage />} />
+        <Route path="/round2/control" element={<Round2SuperPage />} />
+        <Route path="/round2/station" element={<Round2AdminPage />} />
+        <Route path="/round3/play" element={<Round3PuzzleParticipantPage />} />
+        <Route path="/round3/control" element={<Round3SuperPage />} />
+        <Route path="/round3/station" element={<Round3PuzzleStationPage />} />
+        <Route path="/round3/demo" element={<Round3PuzzleDemoPage />} />
+      </Route>
       <Route path="/round3/games/*" element={<Navigate to="/round3/play" replace />} />
       <Route path="/results" element={<ResultsPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

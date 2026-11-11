@@ -819,7 +819,7 @@ def reset_round(payload: ResetInput, account: EventAccount = Depends(require_rol
     if payload.password != payload.password_confirmation:
         raise HTTPException(400, "The two password entries do not match.")
     if not verify_password(payload.password, account.password_hash):
-        raise HTTPException(401, "Super admin password confirmation failed.")
+        raise HTTPException(403, "Super admin password confirmation failed.")
 
     ensure_setup(db)
     cfg = db.query(Round3LiveConfig).filter(Round3LiveConfig.id == 1).with_for_update().one()

@@ -230,9 +230,12 @@ def current_account(
     account = db.query(EventAccount).filter(EventAccount.id == payload["sub"]).first()
     if not account:
         raise HTTPException(status_code=401, detail="Your account is not active.")
+    axiom_profile = db.get(AxiomProfile, account.id)
     if not account.is_active:
-        if account.role == EventRole.PARTICIPANT:
+        if account.role == EventRole.PARTICIPANT and axiom_profile is None:
             raise HTTPException(status_code=403, detail="Round 1 has ended for this team. Please see Instagram for results.")
+        raise HTTPException(status_code=401, detail="Your account is not active.")
+    if axiom_profile and not axiom_profile.is_program_active:
         raise HTTPException(status_code=401, detail="Your account is not active.")
     account._event_jti = payload.get("jti")
     return account
@@ -412,7 +415,8 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
     if not account:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
-    is_axiom = account.role == EventRole.SUPER_ADMIN or db.get(AxiomProfile, account.id) is not None
+    axiom_profile = db.get(AxiomProfile, account.id)
+    is_axiom = account.role == EventRole.SUPER_ADMIN or axiom_profile is not None
     if is_axiom:
         check_axiom_lock(db, account.id)
     stored_verifier = db.get(EventPasswordVerifier, account.id)
@@ -449,8 +453,8 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
             password_hash_digest=_password_hash_digest(account.password_hash),
         ))
         db.commit()
-    if not account.is_active:
-        if account.role == EventRole.PARTICIPANT:
+    if not account.is_active or (axiom_profile and not axiom_profile.is_program_active):
+        if account.role == EventRole.PARTICIPANT and not is_axiom:
             return {"success": True, "data": {"redirect": "instagram"}, "message": "Round 1 has ended for this team. Please see Instagram for results."}
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect ID or password.")
     session_id = None
@@ -478,8 +482,9 @@ async def login(payload: LoginInput, request: Request, db: Session = Depends(get
 
 
 @router.get("/me")
-def me(account: EventAccount = Depends(current_account)):
-    return {"success": True, "data": {"role": account.role.value, "display_name": account.display_name, "location_number": account.location_number}, "message": "Account loaded."}
+def me(account: EventAccount = Depends(current_account), db: Session = Depends(get_db)):
+    is_axiom = account.role == EventRole.SUPER_ADMIN or db.get(AxiomProfile, account.id) is not None
+    return {"success": True, "data": {"role": account.role.value, "display_name": account.display_name, "location_number": account.location_number, "experience": "axiom" if is_axiom else "event"}, "message": "Account loaded."}
 
 
 @router.get("/participant/state")
@@ -615,7 +620,7 @@ def change_account_password(payload: PasswordChangeInput, account: EventAccount 
     if payload.new_password != payload.new_password_confirmation:
         raise HTTPException(status_code=400, detail="The two new password entries do not match.")
     if not verify_password(payload.current_super_password, account.password_hash):
-        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+        raise HTTPException(status_code=403, detail="Super admin password confirmation failed.")
     target = db.query(EventAccount).filter(EventAccount.login_id == payload.target_login_id.strip().upper()).first()
     if not target:
         raise HTTPException(status_code=404, detail="Login account not found.")
@@ -650,7 +655,7 @@ def start(account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)),
 @router.post("/control/override")
 def override(payload: OverrideInput, account: EventAccount = Depends(require_roles(EventRole.SUPER_ADMIN)), db: Session = Depends(get_db)):
     if not verify_password(payload.password, account.password_hash):
-        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+        raise HTTPException(status_code=403, detail="Super admin password confirmation failed.")
     allocation = db.query(Round1RouteAllocationModel).filter(Round1RouteAllocationModel.team_identifier == payload.team_identifier).first()
     if not allocation:
         raise HTTPException(status_code=404, detail="Team route not found.")
@@ -678,7 +683,7 @@ def reset_round(payload: ResetInput, account: EventAccount = Depends(require_rol
     if payload.password != payload.password_confirmation:
         raise HTTPException(status_code=400, detail="The two password entries do not match.")
     if not verify_password(payload.password, account.password_hash):
-        raise HTTPException(status_code=401, detail="Super admin password confirmation failed.")
+        raise HTTPException(status_code=403, detail="Super admin password confirmation failed.")
 
     get_or_create_route_allocations(db)
     result = reset_round1_live_state(db, actor=account)
